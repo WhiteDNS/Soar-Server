@@ -1,3 +1,5 @@
+Fix the Ubuntu OS-version variable collision in the download bootstrap.
+
 Guided Soar server installation for Ubuntu 24.04 amd64. Includes explained
 English terminal prompts, Persian instructions, DNS conflict checks, dedicated
 systemd service, key-preserving updates/rollback and certificate-verified

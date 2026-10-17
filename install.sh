@@ -5,7 +5,7 @@ set -Eeuo pipefail
 export LC_ALL=C
 umask 077
 
-SETUP_VERSION=0.1.2
+SETUP_VERSION=0.1.3
 SOAR_VERSION=v0.2.2
 BUNDLE_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
 TXN_ACTIVE=0
@@ -886,7 +886,7 @@ menu() {
 }
 usage() {
     cat <<'HELP'
-Soar server setup 0.1.2 - Ubuntu 24.04 LTS, amd64
+Soar server setup 0.1.3 - Ubuntu 24.04 LTS, amd64
 
 First install: extract the complete bundle, then run sudo bash install.sh
 Later:        sudo soar-manager

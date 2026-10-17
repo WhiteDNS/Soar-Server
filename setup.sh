@@ -3,7 +3,7 @@
 set -Eeuo pipefail
 export LC_ALL=C
 umask 077
-SETUP_RELEASE=0.1.2
+SETUP_RELEASE=0.1.3
 REPOSITORY=WhiteDNS/Soar-Server
 WORK=
 fail() { printf '[ERROR] %s\n' "$*" >&2; exit 1; }

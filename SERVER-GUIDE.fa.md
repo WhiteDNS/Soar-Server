@@ -1,6 +1,6 @@
 # راهنمای نصب سرور Soar برای کاربر کم‌تجربه
 
-این راهنما مربوط به بستهٔ آزمایشی `0.1.2` است. سرور پشتیبانی‌شده در این نسخه **Ubuntu 24.04 LTS با معماری amd64/x86_64** است. برنامهٔ گوشی و کامپیوتر در این مرحله نصب نمی‌شود. تست روی اینترنت واقعی کاربر در مرحلهٔ کلاینت انجام خواهد شد.
+این راهنما مربوط به بستهٔ آزمایشی `0.1.3` است. سرور پشتیبانی‌شده در این نسخه **Ubuntu 24.04 LTS با معماری amd64/x86_64** است. برنامهٔ گوشی و کامپیوتر در این مرحله نصب نمی‌شود. تست روی اینترنت واقعی کاربر در مرحلهٔ کلاینت انجام خواهد شد.
 
 متن داخل SSH عمداً انگلیسی ساده است تا نمایش فارسی و راست‌به‌چپ لازم نباشد. شمارهٔ هفت مرحلهٔ این راهنما با `Step 1/7` تا `Step 7/7` در اسکریپت یکی است. هرجا اسکریپت ورودی می‌خواهد، مقدار پیشنهادی داخل کروشه است؛ با Enter همان مقدار انتخاب می‌شود.
 
@@ -9,7 +9,7 @@
 1. یک VPS با Ubuntu 24.04 و دسترسی `root` یا کاربری که `sudo` دارد. IP عمومی IPv4 آن را از پنل فروشنده یادداشت کنید.
 2. یک دامنه که کنترل DNS آن دست شماست. خرید VPS به‌تنهایی دامنه فراهم نمی‌کند.
 3. دسترسی به پنل فایروال VPS؛ ممکن است نام آن `Firewall`، `Security group` یا `Network rules` باشد.
-4. بستهٔ کامل `soar-server-setup-0.1.2-linux-amd64.tar.gz` و فایل checksum کنار آن. فقط `install.sh` را کپی نکنید؛ باینری‌های آماده داخل بسته لازم‌اند.
+4. بستهٔ کامل `soar-server-setup-0.1.3-linux-amd64.tar.gz` و فایل checksum کنار آن. فقط `install.sh` را کپی نکنید؛ باینری‌های آماده داخل بسته لازم‌اند.
 
 بستهٔ رسمی را از Releases ریپوی WhiteDNS/Soar-Server دریافت کنید. checksum خرابی دانلود را مشخص می‌کند؛ آن را امضای مستقل ناشر ندانید.
 
@@ -47,7 +47,7 @@ uname -m
 حالا **در یک پنجرهٔ محلی دیگر**، به پوشه‌ای بروید که بسته و فایل `.sha256` را ذخیره کرده‌اید. سپس کپی کنید:
 
 ```text
-scp soar-server-setup-0.1.2-linux-amd64.tar.gz soar-server-setup-0.1.2-linux-amd64.tar.gz.sha256 root@YOUR_SERVER_IP:~/
+scp soar-server-setup-0.1.3-linux-amd64.tar.gz soar-server-setup-0.1.3-linux-amd64.tar.gz.sha256 root@YOUR_SERVER_IP:~/
 ```
 
 این دستور باید روی دستگاه خودتان اجرا شود؛ اجرای آن داخل SSH فایل‌های کامپیوتر شما را پیدا نمی‌کند. اگر SSH شما پورت اختصاصی دارد، برای `ssh` از `-p PORT` و برای `scp` از `-P PORT` استفاده کنید.
@@ -56,9 +56,9 @@ scp soar-server-setup-0.1.2-linux-amd64.tar.gz soar-server-setup-0.1.2-linux-amd
 
 ```bash
 cd ~
-sha256sum -c soar-server-setup-0.1.2-linux-amd64.tar.gz.sha256
-tar -xzf soar-server-setup-0.1.2-linux-amd64.tar.gz
-cd soar-server-setup-0.1.2-linux-amd64
+sha256sum -c soar-server-setup-0.1.3-linux-amd64.tar.gz.sha256
+tar -xzf soar-server-setup-0.1.3-linux-amd64.tar.gz
+cd soar-server-setup-0.1.3-linux-amd64
 bash install.sh --check-bundle
 sudo bash install.sh
 ```

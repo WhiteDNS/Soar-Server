@@ -28,7 +28,7 @@ go mod verify
 go test ./... -count=1 -timeout 60s
 go vet ./...
 python3 scripts/build_bundle.py
-bash dist/soar-server-setup-0.1.2-linux-amd64/install.sh --check-bundle
+bash dist/soar-server-setup-0.1.3-linux-amd64/install.sh --check-bundle
 ```
 
 Git Bash on Windows needs MSYS=winsymlinks:nativestrict for native symlink cases.

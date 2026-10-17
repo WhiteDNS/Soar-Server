@@ -4,7 +4,7 @@
 
 ## سرور
 
-بستهٔ `soar-server-setup-0.1.2-linux-amd64.tar.gz` برای Ubuntu 24.04 amd64 است. راهنمای هفت مرحله‌ای در `SERVER-GUIDE.fa.md` قرار دارد و متن SSH انگلیسی و ASCII است. یک زیردامنهٔ جدا برای Soar بسازید؛ NS تونل MasterDNS/CottenDNS قبلی را تغییر ندهید.
+بستهٔ `soar-server-setup-0.1.3-linux-amd64.tar.gz` برای Ubuntu 24.04 amd64 است. راهنمای هفت مرحله‌ای در `SERVER-GUIDE.fa.md` قرار دارد و متن SSH انگلیسی و ASCII است. یک زیردامنهٔ جدا برای Soar بسازید؛ NS تونل MasterDNS/CottenDNS قبلی را تغییر ندهید.
 
 پس از نصب، این دستور یک لینک کامل برای گوشی می‌سازد:
 
