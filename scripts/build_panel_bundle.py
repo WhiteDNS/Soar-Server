@@ -11,7 +11,7 @@ import subprocess
 import tarfile
 
 ROOT=Path(__file__).resolve().parents[1]
-VERSION="0.2.0-beta3"
+VERSION="0.2.0-beta4"
 NAME=f"soar-panel-{VERSION}-linux-amd64"
 
 def run(*args):
@@ -27,7 +27,7 @@ def main():
     env=dict(os.environ,GOOS="linux",GOARCH="amd64",CGO_ENABLED="0")
     for name,package in [("soar-panel","./cmd/soar-panel"),("soar-check","./cmd/soar-check")]:
         subprocess.run(["go","build","-mod=readonly","-trimpath","-buildvcs=false","-ldflags=-s -w","-o",str(binary/name),package],cwd=ROOT,env=env,check=True)
-    for name in ["panel-install.sh","LICENSE","NOTICE","docs/PANEL.fa.md","docs/PANEL-DESIGN.md"]:
+    for name in ["panel-install.sh","LICENSE","NOTICE","docs/PANEL.fa.md","docs/PANEL-DESIGN.md","docs/PANEL-TUNING-2026-10-17.fa.md"]:
         target=bundle/name;target.parent.mkdir(parents=True,exist_ok=True)
         target.write_bytes((ROOT/name).read_text(encoding="utf8").replace("\r\n","\n").encode("utf8"))
     (bundle/"lib").mkdir(exist_ok=True)

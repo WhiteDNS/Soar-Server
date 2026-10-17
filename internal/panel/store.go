@@ -27,10 +27,11 @@ var ErrConflict = errors.New("account changed; refresh and retry")
 const MaxClients = 512
 
 type Settings struct {
-	BaseZone   string   `json:"base_zone"`
-	Resolvers  []string `json:"resolvers"`
-	Country    string   `json:"country"`
-	AllowPorts []uint16 `json:"allow_ports"`
+	BaseZone     string           `json:"base_zone"`
+	Resolvers    []string         `json:"resolvers"`
+	Country      string           `json:"country"`
+	AllowPorts   []uint16         `json:"allow_ports"`
+	SoarSettings *ProfileSettings `json:"soarSettings,omitempty"`
 }
 
 func (s Settings) Validate() error {
@@ -65,7 +66,7 @@ func (s Settings) Validate() error {
 			return errors.New("invalid destination port")
 		}
 	}
-	return nil
+	return s.profileSettings().Validate()
 }
 
 type Client struct {
@@ -218,6 +219,10 @@ func (s *Store) ResetAdmin(name, password string) error {
 }
 func (s *Store) Settings() (v Settings, e error) {
 	e = s.db.View(func(tx *bolt.Tx) error { return json.Unmarshal(tx.Bucket(meta).Get([]byte("settings")), &v) })
+	if e == nil && v.SoarSettings == nil {
+		p := DefaultProfileSettings()
+		v.SoarSettings = &p
+	}
 	return
 }
 func (s *Store) SaveSettings(v Settings) error {
@@ -232,6 +237,15 @@ func (s *Store) SaveSettings(v Settings) error {
 		}
 		if old.BaseZone != v.BaseZone {
 			return errors.New("base zone is fixed; changing it invalidates existing profiles")
+		}
+		// Older API callers and databases omit this field. Preserve saved tuning
+		// instead of silently reverting it when they change resolver/port settings.
+		if v.SoarSettings == nil {
+			p := old.profileSettings()
+			v.SoarSettings = &p
+		}
+		if e := v.Validate(); e != nil {
+			return e
 		}
 		if e := putJSON(b, []byte("settings"), v); e != nil {
 			return e
@@ -519,17 +533,10 @@ func (s *Store) Profile(id string) (link string, e error) {
 	if e != nil {
 		return
 	}
-	// Pin the supported WhiteDNS settings rather than inheriting the app's
-	// throughput-oriented defaults. Public recursive paths may answer small
-	// probes but drop larger DNS packets. Keep discovery as a fallback without
-	// filling the scheduler with extra paths after a working one is verified.
-	settings := map[string]any{
-		"transport": "auto", "country": cfg.Country, "discovery": true,
-		"dialTimeoutSeconds": 90, "discoveryWant": 1,
-		"discoveryConcurrency": 1, "discoveryPaceMs": 1500,
-		"maxInflight": 32, "maxPathWindow": 8,
-		"maxAnswer": 512, "maxQName": 101, "maxStreams": 128,
-	}
+	settings := struct {
+		ProfileSettings
+		Country string `json:"country"`
+	}{cfg.profileSettings(), cfg.Country}
 	body := map[string]any{"schema": "whitedns.profile", "version": 1, "profile": map[string]any{"name": c.Name, "server": map[string]string{"domain": c.Zone, "public_key": c.PublicKey}, "resolvers": cfg.Resolvers, "soarSettings": settings}}
 	raw, e := json.Marshal(body)
 	if e != nil {

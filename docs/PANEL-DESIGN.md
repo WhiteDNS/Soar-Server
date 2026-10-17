@@ -65,6 +65,14 @@ dark/light theme. Unknown host metrics show a dash, not invented zero values.
 All account names and notes are inserted as text, never HTML. CSV formula cells
 are escaped. Client files use the existing `whitedns.profile` v1 schema and `soar://`.
 
+Global `soarSettings` persist the 16 supported profile transport controls. A
+missing object in a legacy database reads as the beta3 stability defaults;
+legacy settings writes preserve saved tuning. Invalid ranges or crossed name
+lengths fail before committing. The API does not accept cipher/MTU switches the
+engine cannot apply. Exported links embed a snapshot: changes require reimport,
+without rotating identity or changing server-side quotas. Every settings field
+has a text explanation available on hover, keyboard focus and a touch button.
+
 The CLI defaults to loopback. Public binds require TLS or an explicit
 `--allow-insecure-http` choice for a test server. The wizard offers direct IP/port
 HTTP and private SSH/HTTPS-proxy modes, shows the resulting URL, and preserves

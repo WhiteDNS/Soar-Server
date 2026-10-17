@@ -1,21 +1,29 @@
-# WhiteDNS Soar Panel 0.2.0-beta3
+# WhiteDNS Soar Panel 0.2.0-beta4
 
 An opt-in **server-side** management panel for Lantern Soar. The familiar sidebar,
 dashboard and account editor are inspired by Sanaei/3x-ui; the implementation is
 original. Lantern remains the author of the Soar tunneling engine.
 
-This update fixes the exported profile defaults that reproduced slow or failed
-HTTPS requests through public DNS. Exports now pin smaller DNS packet budgets
-(QName 101, answer 512), bounded in-flight windows and paced discovery that stops
-seeking additional healthy paths once one is verified. Iran discovery remains
-enabled as a fallback. New accounts default to 128 concurrent TCP streams so
-background apps do not exhaust the previous 16-stream default so easily.
-Existing account limits remain unchanged; administrators can adjust them.
+This update adds 16 editable Soar profile settings to the panel: DNS packet
+budgets, in-flight windows, UDP/TCP behavior, discovery, buffers, stream limits
+and timeouts. All 20 fields on the settings page have Persian explanations on
+hover, keyboard focus or touch. Presets fill the form without saving it.
 
-**Previously imported profiles must be imported again from the panel** to receive
-these settings. Account zones, keys, usage and quotas are preserved; an APK update
-is not needed. This improves the tested paths without guaranteeing connectivity
-on every network or the speed of a conventional VPN.
+Settings are validated and persisted in the server database and included in
+links/QRs for all accounts. Existing databases retain beta3 stability defaults;
+legacy API callers cannot silently reset saved tuning. Accounts, keys, quotas
+and counters are preserved. Encryption remains fixed by the Soar protocol.
+
+**Reimport the same account link after saving tuning changes.** An existing
+phone profile does not receive changes automatically. No APK update is needed.
+
+Live comparison tested the same isolated account with stability, balanced and
+performance settings twice in reverse order (120 HTTPS requests): stability
+40/40 successful, balanced 39/40, performance 39/40. Larger settings sometimes
+improved transfer time, but did not provide consistent gains and each had a
+failed request. Stability remains the default. These finite native-engine tests
+do not establish Android Full VPN behavior, Iranian-network reliability or
+comparative speed against a live MasterDNS server.
 
 - Create independent accounts and export existing WhiteDNS-compatible links/QRs.
 - Set combined upload/download quota, expiry, shared speed and concurrent TCP streams.
@@ -42,7 +50,7 @@ access-network validation and production load qualification remain outstanding.
 Install the explicit panel beta (in an interactive SSH terminal):
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/WhiteDNS/Soar-Server/panel-v0.2.0-beta3/panel-setup.sh)
+bash <(curl -fsSL https://raw.githubusercontent.com/WhiteDNS/Soar-Server/panel-v0.2.0-beta4/panel-setup.sh)
 ```
 
-[Persian installation, migration and recovery guide](https://github.com/WhiteDNS/Soar-Server/blob/panel-v0.2.0-beta3/docs/PANEL.fa.md)
+[Persian installation, migration and recovery guide](https://github.com/WhiteDNS/Soar-Server/blob/panel-v0.2.0-beta4/docs/PANEL.fa.md)
