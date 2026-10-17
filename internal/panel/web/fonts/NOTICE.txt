@@ -1,0 +1,1 @@
+The panel uses operating-system fonts (Tahoma, Segoe UI). No third-party font is distributed.

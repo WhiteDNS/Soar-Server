@@ -4,6 +4,20 @@ Guided Soar server installer for **Ubuntu 24.04 LTS, amd64/x86_64**.
 The SSH terminal uses English ASCII text. Each installation step explains what
 to enter and why; a full Persian guide is included.
 
+## Optional management panel (experimental)
+
+An original server-side panel is being added with a familiar 3x-ui/Sanaei workflow:
+dashboard, independent accounts, durable traffic quotas, expiry, rate/stream limits,
+QR/profile links, audit events and backups. It works with the existing WhiteDNS
+client. The stable installer below remains the standalone server installer.
+
+**[راهنمای پنل آزمایشی، نصب و مهاجرت](docs/PANEL.fa.md)** ·
+[Architecture and limitations](docs/PANEL-DESIGN.md)
+
+The layout is inspired by [MHSanaei/3x-ui](https://github.com/MHSanaei/3x-ui);
+its code/assets are not incorporated. This beta is not yet a production-capacity
+or Iran-network certification.
+
 ## Upstream project and credits / پروژهٔ اصلی و اعتبار
 
 The **Soar engine is developed by Lantern / GetLantern**, under the

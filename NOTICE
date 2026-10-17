@@ -13,3 +13,11 @@ Pinned version: https://github.com/getlantern/soar/tree/v0.2.2
 
 The WhiteDNS copyright above concerns this installer and integration.
 Upstream engine code retains its original authorship and license notices.
+
+The optional WhiteDNS Soar Panel also includes bbolt (MIT) and go-qrcode (MIT).
+Their notices are shipped in the panel bundle's licenses/ directory.
+
+Panel layout/workflow reference: MHSanaei/3x-ui (Sanaei),
+https://github.com/MHSanaei/3x-ui . The panel is an original implementation;
+no 3x-ui source code, assets, or dependencies are included. No affiliation
+with or endorsement by the 3x-ui maintainers is implied.
