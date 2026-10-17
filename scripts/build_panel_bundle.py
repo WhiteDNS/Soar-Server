@@ -30,6 +30,8 @@ def main():
     for name in ["panel-install.sh","LICENSE","NOTICE","docs/PANEL.fa.md","docs/PANEL-DESIGN.md"]:
         target=bundle/name;target.parent.mkdir(parents=True,exist_ok=True)
         target.write_bytes((ROOT/name).read_text(encoding="utf8").replace("\r\n","\n").encode("utf8"))
+    (bundle/"lib").mkdir(exist_ok=True)
+    (bundle/"lib/standalone-install.sh").write_bytes((ROOT/"install.sh").read_text(encoding="utf8").replace("\r\n","\n").encode("utf8"))
     licenses=bundle/"licenses";licenses.mkdir(exist_ok=True)
     for mod,label in [("github.com/getlantern/soar","Soar"),("go.etcd.io/bbolt","bbolt"),("github.com/skip2/go-qrcode","go-qrcode"),("golang.org/x/crypto","x-crypto"),("golang.org/x/sys","x-sys")]:
         module=Path(run("go","list","-m","-f","{{.Dir}}",mod))

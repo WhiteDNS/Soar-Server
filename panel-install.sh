@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 # Original WhiteDNS installer. English-only terminal output for SSH compatibility.
 set -Eeuo pipefail
+export LC_ALL=C
 umask 077
 ROOT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
-VERSION=0.2.0-beta1
+PANEL_VERSION=0.2.0-beta1
 DB=/var/lib/soar-panel/panel.db
 SERVICE=/etc/systemd/system/soar-panel.service
 BIN="$ROOT_DIR/bin/linux-amd64/soar-panel"
@@ -20,10 +21,10 @@ if [[ ${1:-} == --check-bundle ]]; then check_bundle; exit 0; fi
 . /etc/os-release
 case "$ID:${VERSION_ID%%.*}" in ubuntu:22|ubuntu:24|ubuntu:26|debian:12|debian:13) ;; *) die 'Supported systems: Ubuntu 22.04/24.04/26.04, Debian 12/13.' ;; esac
 [[ $(uname -m) == x86_64 ]] || die 'This beta bundle is for amd64 servers only.'
-for command in systemctl ss ip sha256sum install useradd awk curl; do command -v "$command" >/dev/null || die "Required command is missing: $command"; done
+for command in systemctl ss ip sha256sum install useradd awk curl dig; do command -v "$command" >/dev/null || die "Required command is missing: $command. On Ubuntu/Debian, run apt-get update && apt-get install -y curl dnsutils iproute2, then retry."; done
 [[ -t 0 ]] || die 'Run in an interactive SSH terminal; do not pipe the installer into bash.'
 check_bundle
-printf '\nWhiteDNS Soar Panel %s - EXPERIMENTAL\n' "$VERSION"
+printf '\nWhiteDNS Soar Panel %s - EXPERIMENTAL\n' "$PANEL_VERSION"
 printf 'This is a server-side panel. Existing WhiteDNS apps do not need an update.\n'
 printf 'The Soar tunneling engine is developed by Lantern: https://soar.lantern.io/\n'
 printf 'Use a test server first. This wizard will explain every change before activation.\n'
@@ -39,6 +40,10 @@ printf 'Then create NS: soar -> ns-soar.example.com. Replace example.com with yo
 printf 'Keep all existing MasterDNS/Cotton records unchanged. Each panel account needs no extra record.\n'
 read -r -p 'Delegated base zone (max 24 ASCII characters): ' zone
 [[ ${#zone} -ge 3 && ${#zone} -le 24 && $zone =~ ^[a-z0-9][a-z0-9.-]*[a-z0-9]$ && $zone == *.* ]] || die 'Invalid or too-long base zone.'
+read -r -p "Main DNS zone [${zone#*.}]: " parent_zone
+parent_zone=${parent_zone:-${zone#*.}}
+read -r -p "Nameserver hostname [ns-soar.$parent_zone]: " ns_host
+ns_host=${ns_host:-ns-soar.$parent_zone}
 default_ip=$(ip -o -4 addr show scope global | awk 'NR==1{split($4,a,"/");print a[1]}')
 read -r -p "Local IPv4 to bind DNS [${default_ip:-none}]: " listen_ip
 listen_ip=${listen_ip:-$default_ip}
@@ -46,7 +51,24 @@ listen_ip=${listen_ip:-$default_ip}
 ip -o -4 addr show | awk '{split($4,a,"/");print a[1]}' | awk -v target="$listen_ip" '$0==target{found=1}END{exit !found}' || die 'That IP is not assigned to a local interface. Behind NAT, use the local IP here.'
 read -r -p "Public IP or SSH hostname for your access instructions [$listen_ip]: " ssh_host
 ssh_host=${ssh_host:-$listen_ip};[[ $ssh_host =~ ^[a-zA-Z0-9][a-zA-Z0-9.-]*$ ]] || die 'Invalid SSH hostname.'
+read -r -p "Public IPv4 in your nameserver A record [$listen_ip]: " public_ip
+public_ip=${public_ip:-$listen_ip}
 printf 'UDP/53 must reach %s through your provider firewall and any NAT.\n' "$listen_ip"
+# Run the stable installer's extensively tested DNS checks in a subshell. Sourcing
+# the library never calls its main or alters the panel installer's variables/traps.
+(
+ source "$ROOT_DIR/lib/standalone-install.sh"
+ ZONE=$zone;PARENT_ZONE=$parent_zone;NS_HOST=$ns_host;PUBLIC_IP=$public_ip;RESOLVERS=1.1.1.1,8.8.8.8
+ valid_zone "$ZONE" && valid_domain "$PARENT_ZONE" && valid_domain "$NS_HOST" && public_ipv4 "$PUBLIC_IP" || die 'Invalid DNS names or public IPv4.'
+ [[ $ZONE == *."$PARENT_ZONE" && $NS_HOST != "$ZONE" && $NS_HOST != *."$ZONE" ]] || die 'Use a child tunnel zone and an independent nameserver hostname.'
+ dns_preflight || die 'DNS conflict or unreachable authoritative DNS. Correct the records before installing the panel.'
+ # SOA may be unavailable on a fresh server until this service starts. Delegation
+ # and A records must already exist, and the tunnel must not carry a stale DS.
+ if ! dns_check;then
+  read -r -p 'DNS is not fully ready. Type CONTINUE only if A/NS are correct and you accept a test installation: ' dns_answer
+  [[ $dns_answer == CONTINUE ]] || die 'Cancelled before service changes. Fix DNS records and retry.'
+ fi
+)
 printf '\n[3/7] Administrator account\n'
 password='';pwfile=''
 cleanup(){ [[ -z $pwfile ]] || rm -f -- "$pwfile"; unset password password2; }
@@ -59,7 +81,7 @@ else
  printf 'Choose a unique 12-72 character ASCII password. Input is hidden.\n'
  read -r -s -p 'New administrator password: ' password;printf '\n'
  read -r -s -p 'Repeat password: ' password2;printf '\n'
- [[ $password == "$password2" && ${#password} -ge 12 && ${#password} -le 72 && $password != *[$'\n\r']* ]] || die 'Passwords must match and be 12-72 characters.'
+ [[ $password == "$password2" && ${#password} -ge 12 && ${#password} -le 72 && $password != *[![:print:]]* ]] || die 'Passwords must match and be 12-72 printable ASCII characters.'
  unset password2
 fi
 printf '\n[4/7] Secure panel access\n'
