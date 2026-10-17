@@ -160,7 +160,9 @@ PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=true
 ReadWritePaths=/var/lib/soar-panel
-RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+# Go net.InterfaceAddrs uses NETLINK to reject the server's own addresses.
+# Without it Lantern PublicOnly deliberately fails closed for every destination.
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX AF_NETLINK
 UMask=0077
 LimitNOFILE=8192
 
@@ -188,4 +190,4 @@ printf 'Verify the phone opens websites and its public IP matches this server.\n
 printf 'If it does not connect, check NS/A records, UDP/53 and client resolver reachability.\n'
 printf 'Service: systemctl status soar-panel\nLogs: journalctl -u soar-panel -n 40 --no-pager\n'
 printf 'Private rollback backup: %s\n' "$backup"
-printf 'Guide: https://github.com/WhiteDNS/Soar-Server/blob/main/docs/PANEL.fa.md\n'
+printf 'Guide: https://github.com/WhiteDNS/Soar-Server/blob/panel-v0.2.0-beta1/docs/PANEL.fa.md\n'

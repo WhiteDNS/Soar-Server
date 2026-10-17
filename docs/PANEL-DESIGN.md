@@ -26,6 +26,9 @@ Custom `Dial` enforces ports and upstream `soar.PublicOnly` on the actual resolv
 destination. Keep this guard: supplying custom Dial bypasses upstream defaults.
 Private destinations are overridden only by unexported integration-test wiring;
 there is no production option to bypass the guard.
+The systemd unit permits AF_NETLINK because Go's interface-address enumeration
+needs it for that guard. Denying it makes PublicOnly fail closed for all targets;
+an authenticated DNS handshake alone therefore is not a deployment health check.
 
 ## Durable accounting
 

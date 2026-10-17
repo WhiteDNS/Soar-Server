@@ -262,12 +262,14 @@ func (h *HTTP) dashboard(w http.ResponseWriter) {
 	}
 	counts := h.manager.ActiveCounts()
 	online := 0
+	connected := 0
 	for _, n := range counts {
+		connected += n
 		if n > 0 {
 			online++
 		}
 	}
-	jsonReply(w, 200, map[string]any{"accounts": len(list), "states": states, "upload_bytes": up, "download_bytes": down, "active_streams": h.manager.active.Load(), "accounts_with_streams": online, "dns_received_bytes": h.manager.dnsIn.Load(), "dns_sent_bytes": h.manager.dnsOut.Load(), "uptime_seconds": int64(time.Since(h.manager.started).Seconds()), "host": h.metrics.sample(), "version": "0.2.0-beta1"})
+	jsonReply(w, 200, map[string]any{"accounts": len(list), "states": states, "upload_bytes": up, "download_bytes": down, "active_streams": connected, "accounts_with_streams": online, "dns_received_bytes": h.manager.dnsIn.Load(), "dns_sent_bytes": h.manager.dnsOut.Load(), "uptime_seconds": int64(time.Since(h.manager.started).Seconds()), "host": h.metrics.sample(), "version": "0.2.0-beta1"})
 }
 func (h *HTTP) settings(w http.ResponseWriter, r *http.Request) {
 	if r.Method == "GET" {

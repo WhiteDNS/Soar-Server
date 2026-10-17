@@ -134,6 +134,12 @@ func execute(args []string) error {
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	// Lantern's public-destination guard enumerates local interface addresses.
+	// Fail with an actionable error instead of accepting handshakes that cannot
+	// reach any website when systemd accidentally denies AF_NETLINK.
+	if _, err = net.InterfaceAddrs(); err != nil {
+		return fmt.Errorf("cannot enumerate local addresses; Linux service must permit AF_NETLINK: %w", err)
+	}
 	pc, err := net.ListenPacket("udp", *dns)
 	if err != nil {
 		return fmt.Errorf("DNS listener: %w", err)
