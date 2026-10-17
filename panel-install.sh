@@ -4,7 +4,7 @@ set -Eeuo pipefail
 export LC_ALL=C
 umask 077
 ROOT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
-PANEL_VERSION=0.2.0-beta1
+PANEL_VERSION=0.2.0-beta2
 DB=/var/lib/soar-panel/panel.db
 SERVICE=/etc/systemd/system/soar-panel.service
 BIN="$ROOT_DIR/bin/linux-amd64/soar-panel"
@@ -84,12 +84,30 @@ else
  [[ $password == "$password2" && ${#password} -ge 12 && ${#password} -le 72 && $password != *[![:print:]]* ]] || die 'Passwords must match and be 12-72 printable ASCII characters.'
  unset password2
 fi
-printf '\n[4/7] Secure panel access\n'
-printf 'Management listens on 127.0.0.1:2053 only. It is not exposed to the Internet.\n'
-printf 'From your own computer, use an SSH tunnel and open http://127.0.0.1:2053 .\n'
-printf 'For public HTTPS, follow docs/PANEL.fa.md; no automatic web-server changes are made.\n'
+printf '\n[4/7] Choose how to open the panel\n'
+printf '1) Direct IP and port over HTTP (test server; passwords are not encrypted).\n'
+printf '2) Private access through SSH, or through an HTTPS proxy you configure.\n'
+access_default=1
+if [[ -f $SERVICE ]] && ! grep -q -- --allow-insecure-http "$SERVICE";then access_default=2;fi
+read -r -p "Access mode [$access_default]: " panel_access
+panel_access=${panel_access:-$access_default}
+read -r -p 'Management TCP port [2053]: ' panel_port
+panel_port=${panel_port:-2053}
+[[ $panel_port =~ ^[1-9][0-9]{0,4}$ ]] && ((panel_port<=65535)) || die 'Enter a TCP port from 1 to 65535.'
+case "$panel_access" in
+ 1) panel_bind="$listen_ip:$panel_port";panel_options=--allow-insecure-http;panel_url="http://$public_ip:$panel_port";;
+ 2) panel_bind="127.0.0.1:$panel_port";panel_options=--trust-loopback-proxy;panel_url="http://127.0.0.1:$panel_port";;
+ *) die 'Choose access mode 1 or 2.';;
+esac
+printf 'Panel address: %s\n' "$panel_url"
+if [[ $panel_access == 1 ]];then
+ printf 'Allow inbound TCP/%s in your provider firewall and NAT. Use HTTPS for production.\n' "$panel_port"
+ printf 'If UFW is active, this installation adds one TCP/%s allow rule.\n' "$panel_port"
+else
+ printf 'SSH instructions will be shown at the end. See docs/PANEL.fa.md for HTTPS.\n'
+fi
 printf '\n[5/7] Review before activation\n'
-printf 'DNS listener: %s:53/UDP\nPanel listener: 127.0.0.1:2053\nDatabase: %s\n' "$listen_ip" "$DB"
+printf 'DNS listener: %s:53/UDP\nPanel listener: %s\nPanel URL: %s\nDatabase: %s\n' "$listen_ip" "$panel_bind" "$panel_url" "$DB"
 printf 'Service user: soar-panel; destination ports: 80 and 443 (editable in panel).\n'
 printf 'Default discovery hint: Iran; bootstrap DNS: 1.1.1.1 and 8.8.8.8 (editable).\n'
 printf 'These resolvers are starting points, not a guarantee of reachability in every network.\n'
@@ -149,7 +167,7 @@ Wants=network-online.target
 Type=simple
 User=soar-panel
 Group=soar-panel
-ExecStart=/usr/local/bin/soar-panel run --db /var/lib/soar-panel/panel.db --dns-listen $listen_ip:53 --listen 127.0.0.1:2053 --trust-loopback-proxy
+ExecStart=/usr/local/bin/soar-panel run --db /var/lib/soar-panel/panel.db --dns-listen $listen_ip:53 --listen $panel_bind $panel_options
 Restart=on-failure
 RestartSec=3
 TimeoutStopSec=10
@@ -176,18 +194,26 @@ sleep 2
 systemctl is-active --quiet soar-panel.service || die 'Panel failed to start. See journalctl -u soar-panel -n 40.'
 ss -H -lun | awk -v target="$listen_ip:53" '$4==target{found=1}END{exit !found}' || die 'The expected UDP/53 listener was not found.'
 command -v curl >/dev/null || die 'curl is required for the management health check; install it and rerun.'
-code=$(curl --noproxy '*' --max-time 5 -s -o /dev/null -w '%{http_code}' http://127.0.0.1:2053/api/session)
+code=$(curl --noproxy '*' --max-time 5 -s -o /dev/null -w '%{http_code}' "http://$panel_bind/api/session")
 [[ $code == 401 ]] || die 'Management authentication health check failed.'
+if [[ $panel_access == 1 ]] && command -v ufw >/dev/null && ufw status | grep -q '^Status: active';then
+ ufw allow "$panel_port/tcp" comment 'soar-panel-management'
+fi
 systemctl enable soar-panel.service
 (( ! old_active )) || systemctl disable soar-server.service
 activated=1
 printf '\n[7/7] Open the panel and create the first account\n'
-printf 'On YOUR COMPUTER, open another terminal and run:\n\n  ssh -N -L 2053:127.0.0.1:2053 root@%s\n\n' "$ssh_host"
-printf 'Keep that terminal open. Open http://127.0.0.1:2053 in your browser.\n'
+if [[ $panel_access == 1 ]];then
+ printf 'Open this address directly in your browser: %s\n' "$panel_url"
+ printf 'No SSH tunnel is required. This test HTTP connection is not encrypted.\n'
+else
+ printf 'On YOUR COMPUTER, open another terminal and run:\n\n  ssh -N -L %s:127.0.0.1:%s root@%s\n\n' "$panel_port" "$panel_port" "$ssh_host"
+ printf 'Keep that terminal open. Open %s in your browser.\n' "$panel_url"
+fi
 printf 'Sign in, open Accounts, choose New account, set quota/expiry, then save.\n'
 printf 'Open Link / QR and import the soar:// link into your existing WhiteDNS app.\n'
 printf 'Verify the phone opens websites and its public IP matches this server.\n'
 printf 'If it does not connect, check NS/A records, UDP/53 and client resolver reachability.\n'
 printf 'Service: systemctl status soar-panel\nLogs: journalctl -u soar-panel -n 40 --no-pager\n'
 printf 'Private rollback backup: %s\n' "$backup"
-printf 'Guide: https://github.com/WhiteDNS/Soar-Server/blob/panel-v0.2.0-beta1/docs/PANEL.fa.md\n'
+printf 'Guide: https://github.com/WhiteDNS/Soar-Server/blob/panel-v0.2.0-beta2/docs/PANEL.fa.md\n'

@@ -1,4 +1,4 @@
-# WhiteDNS Soar Panel 0.2.0-beta1
+# WhiteDNS Soar Panel 0.2.0-beta2
 
 An opt-in **server-side** management panel for Lantern Soar. The familiar sidebar,
 dashboard and account editor are inspired by Sanaei/3x-ui; the implementation is
@@ -15,7 +15,10 @@ original. Lantern remains the author of the Soar tunneling engine.
 per-account profile links. The old shared-root profile stops working after migration;
 the installer explains this and preserves the previous service/config for rollback.
 
-The panel defaults to loopback access through SSH, with an optional HTTPS proxy.
+The installer now offers direct browser access using the server IP and chosen
+TCP port, plus a private SSH/HTTPS-proxy option. It displays the actual access URL.
+Direct HTTP is an explicit test-server mode and is unencrypted; the CLI otherwise
+retains its TLS/private-access checks. Upgrades preserve accounts, links and usage.
 Backups contain private account keys. A TCP stream limit is not a device limit;
 anyone sharing one profile shares its budget. Payload accounting excludes DNS overhead.
 
@@ -26,7 +29,7 @@ access-network validation and production load qualification remain outstanding.
 Install the explicit panel beta (in an interactive SSH terminal):
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/WhiteDNS/Soar-Server/panel-v0.2.0-beta1/panel-setup.sh)
+bash <(curl -fsSL https://raw.githubusercontent.com/WhiteDNS/Soar-Server/panel-v0.2.0-beta2/panel-setup.sh)
 ```
 
-[Persian installation, migration and recovery guide](https://github.com/WhiteDNS/Soar-Server/blob/panel-v0.2.0-beta1/docs/PANEL.fa.md)
+[Persian installation, migration and recovery guide](https://github.com/WhiteDNS/Soar-Server/blob/panel-v0.2.0-beta2/docs/PANEL.fa.md)

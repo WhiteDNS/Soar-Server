@@ -65,8 +65,12 @@ dark/light theme. Unknown host metrics show a dash, not invented zero values.
 All account names and notes are inserted as text, never HTML. CSV formula cells
 are escaped. Client files use the existing `whitedns.profile` v1 schema and `soar://`.
 
-Management defaults to loopback. Public binds require TLS; a local HTTPS proxy
-can be explicitly trusted only from loopback. Passwords are bcrypt cost 12. Sessions
+The CLI defaults to loopback. Public binds require TLS or an explicit
+`--allow-insecure-http` choice for a test server. The wizard offers direct IP/port
+HTTP and private SSH/HTTPS-proxy modes, shows the resulting URL, and preserves
+the prior access mode as the rerun default. Fresh installations suggest direct
+HTTP with a clear plaintext notice. A local HTTPS proxy can be explicitly trusted
+only from loopback. Passwords are bcrypt cost 12. Sessions
 are memory-only, expire after 12 hours, and are invalidated by restart. Cookies are
 HttpOnly/SameSite Strict and Secure over HTTPS. State-changing API requests require
 a session CSRF token and reject foreign Origin. Login attempts are throttled;

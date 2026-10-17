@@ -35,6 +35,7 @@ func execute(args []string) error {
 	country := f.String("country", "IR", "Discovery hint: IR or GLOBAL")
 	resolvers := f.String("resolvers", "1.1.1.1,8.8.8.8", "Comma separated bootstrap resolvers")
 	bind := f.String("listen", "127.0.0.1:2053", "Management HTTP listen address; use an SSH tunnel or HTTPS proxy")
+	insecureHTTP := f.Bool("allow-insecure-http", false, "Explicitly permit unencrypted public HTTP for a test server")
 	dns := f.String("dns-listen", ":53", "Authoritative DNS UDP listen address")
 	cert := f.String("tls-cert", "", "HTTPS certificate PEM file")
 	key := f.String("tls-key", "", "HTTPS private key PEM file")
@@ -52,16 +53,8 @@ func execute(args []string) error {
 		return errors.New("unknown command")
 	}
 	if args[0] == "run" {
-		host, _, err := net.SplitHostPort(*bind)
-		if err != nil {
+		if err := validateManagementListen(*bind, *cert, *key, *insecureHTTP); err != nil {
 			return err
-		}
-		ip := net.ParseIP(host)
-		if (ip == nil || !ip.IsLoopback()) && (*cert == "" || *key == "") {
-			return errors.New("public management access requires --tls-cert and --tls-key; otherwise bind to 127.0.0.1 and use an SSH tunnel or HTTPS proxy")
-		}
-		if (*cert == "") != (*key == "") {
-			return errors.New("provide both TLS certificate and key")
 		}
 	}
 	s, err := panel.OpenStore(*db)
@@ -190,4 +183,19 @@ func execute(args []string) error {
 		return nil
 	}
 	return err
+}
+
+func validateManagementListen(bind, cert, key string, allowHTTP bool) error {
+	host, _, err := net.SplitHostPort(bind)
+	if err != nil {
+		return err
+	}
+	if (cert == "") != (key == "") {
+		return errors.New("provide both TLS certificate and key")
+	}
+	ip := net.ParseIP(host)
+	if (ip == nil || !ip.IsLoopback()) && cert == "" && !allowHTTP {
+		return errors.New("public management requires TLS or explicit --allow-insecure-http for a test server; otherwise use loopback with SSH or an HTTPS proxy")
+	}
+	return nil
 }

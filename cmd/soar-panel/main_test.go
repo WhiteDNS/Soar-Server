@@ -29,3 +29,26 @@ func TestCLIInitializesAndProtectsManagementBind(t *testing.T) {
 		t.Fatal(e)
 	}
 }
+
+func TestDirectManagementAccessRequiresExplicitTransportChoice(t *testing.T) {
+	for _, tc := range []struct {
+		name, bind, cert, key string
+		allowHTTP, valid      bool
+	}{
+		{name: "private SSH", bind: "127.0.0.1:2053", valid: true},
+		{name: "private IPv6", bind: "[::1]:2053", valid: true},
+		{name: "public HTTP without opt-in", bind: "0.0.0.0:2053"},
+		{name: "direct test HTTP", bind: "0.0.0.0:2053", allowHTTP: true, valid: true},
+		{name: "direct specific IPv4", bind: "203.0.113.10:2053", allowHTTP: true, valid: true},
+		{name: "public HTTPS", bind: ":2053", cert: "cert.pem", key: "key.pem", valid: true},
+		{name: "partial TLS must not fall back to HTTP", bind: ":2053", cert: "cert.pem", allowHTTP: true},
+		{name: "invalid bind", bind: "invalid", allowHTTP: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			err := validateManagementListen(tc.bind, tc.cert, tc.key, tc.allowHTTP)
+			if (err == nil) != tc.valid {
+				t.Fatalf("valid=%v, error=%v", tc.valid, err)
+			}
+		})
+	}
+}
