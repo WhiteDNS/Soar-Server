@@ -10,8 +10,9 @@ checks and their limits.
   managed paths, symlink activation, rollback, interrupted activation recovery,
   repeat installation, public profile generation and exact key preservation.
   They use temporary files and fake service commands; they do not install services.
-- Five bootstrap checks cover a valid checksum, corrupt bytes, a mismatched
-  checksum filename, archive traversal/wrong root and invalid invocation.
+- Six bootstrap checks cover a valid checksum, corrupt bytes, a mismatched
+  checksum filename, archive traversal/wrong root, invalid invocation and
+  Ubuntu OS metadata overwriting the unrelated VERSION shell variable.
 - Six Go tests exercise a real loopback DNS tunnel and HTTPS origin, server-key
   rejection, TLS trust rejection, HTTP status handling and CLI input validation.
 - CI builds the Linux bundle and verifies its internal runtime manifest before

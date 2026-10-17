@@ -3,7 +3,7 @@
 set -Eeuo pipefail
 export LC_ALL=C
 umask 077
-VERSION=0.1.2
+SETUP_RELEASE=0.1.2
 REPOSITORY=WhiteDNS/Soar-Server
 WORK=
 fail() { printf '[ERROR] %s\n' "$*" >&2; exit 1; }
@@ -33,9 +33,9 @@ main() {
     for command in curl tar sha256sum mktemp; do command -v "$command" >/dev/null || fail "Missing command: $command"; done
     WORK=$(mktemp -d "${TMPDIR:-/tmp}/whitedns-soar.XXXXXXXX")
     trap cleanup EXIT
-    asset="soar-server-setup-$VERSION-linux-amd64.tar.gz"
-    base="https://github.com/$REPOSITORY/releases/download/v$VERSION"
-    printf 'WhiteDNS Soar server setup %s\nDownloading the versioned bundle and SHA-256 checksum...\n' "$VERSION"
+    asset="soar-server-setup-$SETUP_RELEASE-linux-amd64.tar.gz"
+    base="https://github.com/$REPOSITORY/releases/download/v$SETUP_RELEASE"
+    printf 'WhiteDNS Soar server setup %s\nDownloading the versioned bundle and SHA-256 checksum...\n' "$SETUP_RELEASE"
     for member in "$asset" "$asset.sha256"; do
         curl --fail --show-error --silent --location --retry 3 --connect-timeout 15 --max-time 180 \
             --proto '=https' --proto-redir '=https' "$base/$member" -o "$WORK/$member" || fail 'Download failed. Check GitHub access and try the same command again.'
@@ -43,10 +43,10 @@ main() {
     valid_checksum "$WORK/$asset.sha256" "$WORK/$asset" "$asset" || fail 'Checksum mismatch. No installation was started.'
     tar -tzf "$WORK/$asset" > "$WORK/members" || fail 'The downloaded archive is invalid.'
     while IFS= read -r member; do
-        valid_member "$member" "soar-server-setup-$VERSION-linux-amd64" || fail 'Unexpected archive path. No installation was started.'
+        valid_member "$member" "soar-server-setup-$SETUP_RELEASE-linux-amd64" || fail 'Unexpected archive path. No installation was started.'
     done < "$WORK/members"
     tar --no-same-owner --no-same-permissions -xzf "$WORK/$asset" -C "$WORK"
-    local installer="$WORK/soar-server-setup-$VERSION-linux-amd64/install.sh"
+    local installer="$WORK/soar-server-setup-$SETUP_RELEASE-linux-amd64/install.sh"
     bash "$installer" --check-bundle
     if [[ $mode == --check-download ]]; then
         printf '[OK] Download, archive checksum and bundled runtime checksums passed. No server changes made.\n'
