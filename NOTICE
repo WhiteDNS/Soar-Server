@@ -1,0 +1,7 @@
+WhiteDNS Soar Server installer
+Copyright 2026 WhiteDNS
+
+Includes Lantern Soar v0.2.2 (Apache-2.0), golang.org/x/crypto and
+golang.org/x/sys (BSD-style), and Go runtime code. The binary distribution
+includes licenses/ with their original notices. Resolver dataset provenance
+is retained in licenses/Soar-data-THIRD-PARTY.md.

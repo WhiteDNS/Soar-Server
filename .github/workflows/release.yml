@@ -1,0 +1,57 @@
+name: Test and release server
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26.1'
+          cache-dependency-path: go.sum
+      - name: Verify installer, bootstrap and diagnostics
+        run: |
+          bash -n install.sh setup.sh
+          bash tests/installer_test.sh
+          bash tests/bootstrap_test.sh
+          go mod verify
+          go test ./... -count=1 -timeout 60s
+          go vet ./...
+      - name: Build release bundle
+        run: |
+          python3 scripts/build_bundle.py
+          bash dist/soar-server-setup-0.1.2-linux-amd64/install.sh --check-bundle
+          if [[ "$GITHUB_REF_TYPE" == tag ]]; then
+            test "$GITHUB_REF_NAME" = "v$(sed -n 's/^VERSION=//p' setup.sh)"
+          fi
+      - uses: actions/upload-artifact@v4
+        with:
+          name: soar-server-linux-amd64
+          path: |
+            dist/*.tar.gz
+            dist/*.sha256
+          if-no-files-found: error
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: verify
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: soar-server-linux-amd64
+          path: dist
+      - name: Publish tested bundle
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" dist/* --verify-tag --title "WhiteDNS Soar Server $GITHUB_REF_NAME" --notes-file RELEASE-NOTES.md
