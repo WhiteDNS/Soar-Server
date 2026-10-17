@@ -4,6 +4,23 @@ Guided Soar server installer for **Ubuntu 24.04 LTS, amd64/x86_64**.
 The SSH terminal uses English ASCII text. Each installation step explains what
 to enter and why; a full Persian guide is included.
 
+## Upstream project and credits / پروژهٔ اصلی و اعتبار
+
+The **Soar engine is developed by Lantern / GetLantern**, under the
+[Apache-2.0 license](https://github.com/getlantern/soar/blob/v0.2.2/LICENSE).
+This repository provides the WhiteDNS installation, service management and
+client-profile integration around that engine. This installer is independently
+maintained by WhiteDNS.
+
+موتور اصلی **Soar توسط تیم Lantern / GetLantern توسعه یافته است**. کار این ریپو
+نصب‌کننده، مدیریت سرویس و یکپارچه‌سازی با WhiteDNS است؛ توسعهٔ موتور اصلی
+به تیم Lantern ارجاع داده می‌شود.
+
+- [Original Soar source / سورس اصلی](https://github.com/getlantern/soar)
+- [Official Soar website / وب‌سایت اصلی](https://soar.lantern.io/)
+- [Pinned upstream release: v0.2.2](https://github.com/getlantern/soar/tree/v0.2.2)
+- [Third-party attribution / اعتبار و مجوز وابستگی‌ها](NOTICE)
+
 ## نصب با یک دستور
 
 ابتدا با SSH وارد VPS شوید. سپس همین دستور را در ترمینال سرور اجرا کنید:
