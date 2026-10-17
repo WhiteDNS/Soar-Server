@@ -12,7 +12,9 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -90,6 +92,62 @@ func TestUnmodifiedClientHTTPSAndIsolation(t *testing.T) {
 	}
 	if m.dnsIn.Load() == 0 || m.dnsOut.Load() == 0 {
 		t.Fatal("DNS metrics missing")
+	}
+}
+
+// Exercise flow control, half-close and accounting across many 32-KiB boundaries,
+// rather than considering a tiny successful startup request sufficient.
+func TestConcurrentLargeTLSBodiesRemainIntact(t *testing.T) {
+	s := testStore(t)
+	a := account(t, s, 16<<20)
+	origin := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		i, e := strconv.Atoi(strings.TrimPrefix(r.URL.Path, "/"))
+		if e != nil {
+			w.WriteHeader(400)
+			return
+		}
+		body, e := io.ReadAll(io.LimitReader(r.Body, (128<<10)+1))
+		if e != nil || !bytes.Equal(body, bytes.Repeat([]byte{byte(i)}, 128<<10)) {
+			w.WriteHeader(400)
+			return
+		}
+		_, _ = w.Write(bytes.Repeat([]byte{byte(i + 1)}, 256<<10))
+	}))
+	defer origin.Close()
+	m := testManager(t, s, func(ctx context.Context, network, _ string) (net.Conn, error) {
+		return (&net.Dialer{}).DialContext(ctx, network, origin.Listener.Addr().String())
+	})
+	client := nativeClient(t, m, a)
+	roots := x509.NewCertPool()
+	roots.AddCert(origin.Certificate())
+	tr := &http.Transport{DialContext: client.DialContext, TLSClientConfig: &tls.Config{RootCAs: roots, MinVersion: tls.VersionTLS12}, DisableKeepAlives: true, DisableCompression: true}
+	defer tr.CloseIdleConnections()
+	hc := &http.Client{Transport: tr, Timeout: 45 * time.Second}
+	var wg sync.WaitGroup
+	for i := 0; i < 8; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			url := "https://" + origin.Certificate().DNSNames[0] + "/" + strconv.Itoa(i)
+			r, e := hc.Post(url, "application/octet-stream", bytes.NewReader(bytes.Repeat([]byte{byte(i)}, 128<<10)))
+			if e != nil {
+				t.Error(e)
+				return
+			}
+			defer r.Body.Close()
+			body, e := io.ReadAll(r.Body)
+			if e != nil || r.StatusCode != 200 || !bytes.Equal(body, bytes.Repeat([]byte{byte(i + 1)}, 256<<10)) {
+				t.Errorf("response %d corrupted: status=%d bytes=%d error=%v", i, r.StatusCode, len(body), e)
+			}
+		}()
+	}
+	wg.Wait()
+	actual, e := s.Get(a.ID)
+	if e != nil {
+		t.Fatal(e)
+	}
+	if actual.UploadBytes < 8*(128<<10) || actual.DownloadBytes < 8*(256<<10) || actual.Used() >= actual.QuotaBytes {
+		t.Fatalf("unexpected payload accounting: up=%d down=%d", actual.UploadBytes, actual.DownloadBytes)
 	}
 }
 func TestDisableRotateAndAnonymousRoot(t *testing.T) {

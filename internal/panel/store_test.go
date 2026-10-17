@@ -133,8 +133,18 @@ func TestDurableBackupAndExistingProfileFormat(t *testing.T) {
 			}
 			Resolvers    []string
 			SoarSettings struct {
-				Country   string
-				Discovery bool
+				Country              string
+				Discovery            bool
+				Transport            string
+				DialTimeoutSeconds   int
+				DiscoveryWant        int
+				DiscoveryConcurrency int
+				DiscoveryPaceMs      int
+				MaxInflight          int
+				MaxPathWindow        int
+				MaxAnswer            int
+				MaxQName             int
+				MaxStreams           int
 			}
 		}
 	}
@@ -143,6 +153,13 @@ func TestDurableBackupAndExistingProfileFormat(t *testing.T) {
 	}
 	if v.Schema != "whitedns.profile" || v.Version != 1 || v.Profile.Server.Domain != a.Zone || v.Profile.Server.PublicKey != a.PublicKey || !v.Profile.SoarSettings.Discovery || v.Profile.SoarSettings.Country != "IR" || len(v.Profile.Resolvers) == 0 || len(a.Zone) > 45 {
 		t.Fatal("profile incompatible")
+	}
+	settings := v.Profile.SoarSettings
+	if settings.Transport != "auto" || settings.DialTimeoutSeconds != 90 || settings.DiscoveryWant != 1 || settings.DiscoveryConcurrency != 1 || settings.DiscoveryPaceMs != 1500 {
+		t.Fatal("export must retain paced fallback discovery without seeking eight healthy paths")
+	}
+	if settings.MaxInflight != 32 || settings.MaxPathWindow != 8 || settings.MaxAnswer != 512 || settings.MaxQName != 101 || settings.MaxStreams != 128 {
+		t.Fatal("export must pin DNS packet budgets and allow full-device concurrent streams")
 	}
 	if strings.Contains(string(raw), "seed") || strings.Contains(string(raw), "private") {
 		t.Fatal("private key leaked")

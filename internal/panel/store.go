@@ -519,7 +519,18 @@ func (s *Store) Profile(id string) (link string, e error) {
 	if e != nil {
 		return
 	}
-	body := map[string]any{"schema": "whitedns.profile", "version": 1, "profile": map[string]any{"name": c.Name, "server": map[string]string{"domain": c.Zone, "public_key": c.PublicKey}, "resolvers": cfg.Resolvers, "soarSettings": map[string]any{"transport": "auto", "country": cfg.Country, "discovery": true, "dialTimeoutSeconds": 90, "discoveryConcurrency": 4}}}
+	// Pin the supported WhiteDNS settings rather than inheriting the app's
+	// throughput-oriented defaults. Public recursive paths may answer small
+	// probes but drop larger DNS packets. Keep discovery as a fallback without
+	// filling the scheduler with extra paths after a working one is verified.
+	settings := map[string]any{
+		"transport": "auto", "country": cfg.Country, "discovery": true,
+		"dialTimeoutSeconds": 90, "discoveryWant": 1,
+		"discoveryConcurrency": 1, "discoveryPaceMs": 1500,
+		"maxInflight": 32, "maxPathWindow": 8,
+		"maxAnswer": 512, "maxQName": 101, "maxStreams": 128,
+	}
+	body := map[string]any{"schema": "whitedns.profile", "version": 1, "profile": map[string]any{"name": c.Name, "server": map[string]string{"domain": c.Zone, "public_key": c.PublicKey}, "resolvers": cfg.Resolvers, "soarSettings": settings}}
 	raw, e := json.Marshal(body)
 	if e != nil {
 		return
