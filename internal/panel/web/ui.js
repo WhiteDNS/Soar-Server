@@ -1,7 +1,7 @@
 'use strict';
 const panelUI = (() => {
  const get=id=>document.getElementById(id), ns='http://www.w3.org/2000/svg';
- const fmt=new Intl.NumberFormat('fa-IR',{maximumFractionDigits:1});
+ const fmt=new Intl.NumberFormat(panelI18n.locale,{maximumFractionDigits:1});
  const readingFmt=new Intl.NumberFormat('en-US',{minimumFractionDigits:1,maximumFractionDigits:1});
  const icons={
   dashboard:'M3 3h7v7H3z M14 3h7v7h-7z M3 14h7v7H3z M14 14h7v7h-7z',
@@ -41,7 +41,7 @@ const panelUI = (() => {
  const selectMenu=document.createElement('div');selectMenu.id='panel-select-options';selectMenu.className='select-menu';selectMenu.hidden=true;selectMenu.setAttribute('role','listbox');
  const selectPopover=typeof selectMenu.showPopover==='function';if(selectPopover)selectMenu.popover='auto';document.body.append(selectMenu);
  const selects=new Map();let currentSelect=null,activeOption=-1,searchText='',searchAt=0;
- function syncSelects(){for(const [select,button] of selects){button.querySelector('.select-value').textContent=select.selectedOptions[0]?.textContent||'انتخاب کنید';button.disabled=select.disabled;}}
+ function syncSelects(){for(const [select,button] of selects){button.querySelector('.select-value').textContent=select.selectedOptions[0]?.textContent||panelText("انتخاب کنید");button.disabled=select.disabled;}}
  function resetSelect(){if(currentSelect){const button=selects.get(currentSelect);button.setAttribute('aria-expanded','false');button.removeAttribute('aria-activedescendant');}currentSelect=null;activeOption=-1;searchText='';selectMenu.hidden=true;}
  function closeSelectMenu(){if(selectPopover&&selectMenu.matches(':popover-open'))selectMenu.hidePopover();resetSelect();}
  function positionSelectMenu(){
@@ -99,7 +99,7 @@ const panelUI = (() => {
  document.addEventListener('scroll',e=>{if(!selectMenu.contains(e.target))positionSelectMenu();},{capture:true});
  document.addEventListener('reset',()=>setTimeout(syncSelects,0));
  const actionMenu=document.createElement('div');actionMenu.id='account-actions-menu';actionMenu.className='account-actions-menu';
- actionMenu.setAttribute('role','menu');actionMenu.setAttribute('aria-label','عملیات حساب');actionMenu.hidden=true;
+ actionMenu.setAttribute('role','menu');actionMenu.setAttribute('aria-label',panelText("عملیات حساب"));actionMenu.hidden=true;
  const nativePopover=typeof actionMenu.showPopover==='function';if(nativePopover)actionMenu.popover='auto';document.body.append(actionMenu);
  let actionTrigger=null;
  function resetActionMenu(){if(actionTrigger)actionTrigger.setAttribute('aria-expanded','false');actionTrigger=null;actionMenu.hidden=true;}
@@ -115,7 +115,7 @@ const panelUI = (() => {
   if(actionTrigger===trigger){closeActionMenu();return;}
   closeSelectMenu();closeActionMenu(false);actionTrigger=trigger;trigger.setAttribute('aria-expanded','true');
   const heading=document.createElement('div');heading.className='action-menu-heading';heading.textContent=client.name;actionMenu.replaceChildren(heading);
-  for(const [key,label,glyph] of [['toggle',client.enabled?'غیرفعال کردن حساب':'فعال کردن حساب','power'],['disconnect','قطع اتصال‌های باز','unlink'],['reset','صفر کردن مصرف','refresh'],['rotate','تعویض لینک و کلید','key'],['delete','حذف حساب','trash']]){
+  for(const [key,label,glyph] of [['toggle',client.enabled?panelText("غیرفعال کردن حساب"):panelText("فعال کردن حساب"),'power'],['disconnect',panelText("قطع اتصال‌های باز"),'unlink'],['reset',panelText("صفر کردن مصرف"),'refresh'],['rotate',panelText("تعویض لینک و کلید"),'key'],['delete',panelText("حذف حساب"),'trash']]){
    const item=document.createElement('button');item.type='button';item.className='action-menu-item'+(key==='delete'?' destructive':'');item.dataset.action=key;item.setAttribute('role','menuitem');item.tabIndex=-1;
    const labelNode=document.createElement('span');labelNode.textContent=label;item.append(icon(glyph),labelNode);
    item.onclick=()=>{closeActionMenu();onAction(key,trigger);};actionMenu.append(item);
@@ -125,8 +125,8 @@ const panelUI = (() => {
  }
  function accountActions(client,onAction){
   const button=document.createElement('button');button.type='button';button.className='account-actions-trigger';button.dataset.clientId=client.id;
-  button.setAttribute('aria-haspopup','menu');button.setAttribute('aria-expanded','false');button.setAttribute('aria-controls',actionMenu.id);button.setAttribute('aria-label','عملیات بیشتر برای '+client.name);
-  const text=document.createElement('span');text.textContent='بیشتر';button.append(icon('more'),text,icon('chevron'));
+  button.setAttribute('aria-haspopup','menu');button.setAttribute('aria-expanded','false');button.setAttribute('aria-controls',actionMenu.id);button.setAttribute('aria-label',panelText("عملیات بیشتر برای ")+client.name);
+  const text=document.createElement('span');text.textContent=panelText("بیشتر");button.append(icon('more'),text,icon('chevron'));
   button.onclick=()=>openActionMenu(button,client,onAction);
   button.onkeydown=e=>{if(e.key==='ArrowDown'||e.key==='ArrowUp'){e.preventDefault();openActionMenu(button,client,onAction,e.key==='ArrowUp');}};
   return button;
@@ -143,15 +143,16 @@ const panelUI = (() => {
  function trackActionMenu(){if(!actionTrigger)return;const r=actionTrigger.getBoundingClientRect();if(r.bottom<0||r.top>innerHeight||r.right<0||r.left>innerWidth)closeActionMenu(false);else positionActionMenu();}
  window.addEventListener('resize',trackActionMenu);
  document.addEventListener('scroll',e=>{if(!actionMenu.contains(e.target))trackActionMenu();},{capture:true});
- function setTheme(theme){document.documentElement.dataset.theme=theme;try{localStorage.setItem('soar-theme',theme);}catch{}for(const button of [get('theme-toggle'),get('login-theme')]){button.replaceChildren(icon(theme==='dark'?'sun':'moon'));button.setAttribute('aria-label',theme==='dark'?'فعال کردن تم روشن':'فعال کردن تم تیره');}}
+ function setTheme(theme){document.documentElement.dataset.theme=theme;try{localStorage.setItem('soar-theme',theme);}catch{}for(const button of [get('theme-toggle'),get('login-theme')]){button.replaceChildren(icon(theme==='dark'?'sun':'moon'));button.setAttribute('aria-label',theme==='dark'?panelText("فعال کردن تم روشن"):panelText("فعال کردن تم تیره"));}}
  let theme='dark';try{theme=localStorage.getItem('soar-theme')==='light'?'light':'dark';}catch{}setTheme(theme);
  get('login-theme').onclick=()=>setTheme(document.documentElement.dataset.theme==='dark'?'light':'dark');
- get('password-toggle').onclick=()=>{const input=get('login-password'),shown=input.type==='password';input.type=shown?'text':'password';get('password-toggle').setAttribute('aria-pressed',String(shown));get('password-toggle').setAttribute('aria-label',shown?'پنهان کردن رمز عبور':'نمایش رمز عبور');};
+ get('password-toggle').onclick=()=>{const input=get('login-password'),shown=input.type==='password';input.type=shown?'text':'password';get('password-toggle').setAttribute('aria-pressed',String(shown));get('password-toggle').setAttribute('aria-label',shown?panelText("پنهان کردن رمز عبور"):panelText("نمایش رمز عبور"));};
  function syncDrawer(){if(innerWidth>800){document.body.classList.remove('menu-open');get('menu-toggle').setAttribute('aria-expanded','false');}const closed=innerWidth<=800&&!document.body.classList.contains('menu-open'),rail=document.querySelector('.sidebar');rail.inert=closed;if(closed)rail.setAttribute('aria-hidden','true');else rail.removeAttribute('aria-hidden');}
  function closeMenu(){const opened=document.body.classList.contains('menu-open');document.body.classList.remove('menu-open');get('menu-toggle').setAttribute('aria-expanded','false');if(opened)get('menu-toggle').focus();syncDrawer();}
  function toggleMenu(){const open=document.body.classList.toggle('menu-open');get('menu-toggle').setAttribute('aria-expanded',String(open));syncDrawer();if(open)document.querySelector('nav a[aria-current=page]').focus();}
  window.addEventListener('resize',syncDrawer);syncDrawer();
  get('nav-backdrop').onclick=closeMenu;get('rail-close').onclick=closeMenu;
+ document.querySelectorAll('.sidebar a[href^="#"]').forEach(link=>link.addEventListener('click',closeMenu));
  document.addEventListener('keydown',event=>{if(!document.body.classList.contains('menu-open'))return;if(event.key==='Escape'){closeMenu();get('menu-toggle').focus();}if(event.key==='Tab'){const links=[...document.querySelectorAll('.sidebar a,.sidebar button')].filter(el=>el.getClientRects().length);const first=links[0],last=links.at(-1);if(event.shiftKey&&document.activeElement===first){event.preventDefault();last.focus();}else if(!event.shiftKey&&document.activeElement===last){event.preventDefault();first.focus();}}});
  function size(n){if(n==null)return '—';if(n===0)return '0 B';const units=['B','KiB','MiB','GiB','TiB'];const i=Math.max(0,Math.min(4,Math.floor(Math.log(n)/Math.log(1024))));return `${(n/1024**i).toLocaleString('en-US',{maximumFractionDigits:i?2:0})} ${units[i]}`;}
  function text(id,value){get(id).textContent=value;}
@@ -161,7 +162,7 @@ const panelUI = (() => {
   const container=get(id),w=600,h=spark?80:180,pad=5;
   const values=samples.flatMap(s=>keys.map(k=>s[k])).filter(Number.isFinite);
   container.replaceChildren();
-  if(!values.length){const empty=document.createElement('div');empty.className='spark-empty';empty.textContent=spark?'داده‌ای در دسترس نیست':'در انتظار دو نمونهٔ واقعی از سرور';container.append(empty);return;}
+  if(!values.length){const empty=document.createElement('div');empty.className='spark-empty';empty.textContent=spark?panelText("داده‌ای در دسترس نیست"):panelText("در انتظار دو نمونهٔ واقعی از سرور");container.append(empty);return;}
   const svg=svgEl('svg',{viewBox:`0 0 ${w} ${h}`,preserveAspectRatio:'none','aria-hidden':'true'});
   if(!spark)for(let i=0;i<4;i++){const y=pad+i*(h-2*pad)/3;svg.append(svgEl('line',{x1:0,x2:w,y1:y,y2:y,class:'chart-gridline'}));}
   const max=fixedMax||Math.max(...values,1)*1.18;
@@ -172,7 +173,7 @@ const panelUI = (() => {
   });
   container.append(svg);
  }
- function setConnection(ok){const chip=get('service-chip');chip.dataset.live=String(ok);chip.textContent=ok?'پنل در دسترس':'بررسی ارتباط';}
+ function setConnection(ok){const chip=get('service-chip');chip.dataset.live=String(ok);chip.textContent=ok?panelText("پنل در دسترس"):panelText("بررسی ارتباط");}
  function renderDashboard(d){
   setConnection(true);const h=d.host,now=performance.now(),up=d.dns_received_bytes,down=d.dns_sent_bytes;
   if(last&&(last.uptime>d.uptime_seconds||up<last.up||down<last.down)){samples=[];last=null;}
@@ -181,23 +182,23 @@ const panelUI = (() => {
   const sample={at:now,cpu:h.cpu_percent,ram,disk,streams:d.active_streams,send:dt>0?(down-last.down)/dt:null,receive:dt>0?(up-last.up)/dt:null};
   samples.push(sample);samples=samples.filter(s=>now-s.at<=600000).slice(-120);last={at:now,up,down,uptime:d.uptime_seconds};
   text('cpu-reading',h.cpu_percent==null?'—':readingFmt.format(h.cpu_percent));text('ram-reading',ram==null?'—':readingFmt.format(ram));text('disk-reading',disk==null?'—':readingFmt.format(disk));text('streams',String(d.active_streams));text('connection-count',String(d.active_streams));
-  text('ram-label',h.memory_total?size(h.memory_used)+' / '+size(h.memory_total):'اطلاعات حافظه در دسترس نیست');
-  text('disk-label',h.disk_total?size(h.disk_used)+' / '+size(h.disk_total):'اطلاعات دیسک در دسترس نیست');
-  text('cpu-label',h.cpu_percent==null?(h.platform==='linux'?'پس از نمونهٔ بعدی مشخص می‌شود':'اطلاعات پردازنده در دسترس نیست'):'درصد استفاده از پردازنده');
-  text('stat-online',fmt.format(d.accounts_with_streams)+' حساب دارای جریان باز');
+  text('ram-label',h.memory_total?size(h.memory_used)+' / '+size(h.memory_total):panelText("اطلاعات حافظه در دسترس نیست"));
+  text('disk-label',h.disk_total?size(h.disk_used)+' / '+size(h.disk_total):panelText("اطلاعات دیسک در دسترس نیست"));
+  text('cpu-label',h.cpu_percent==null?(h.platform==='linux'?panelText("پس از نمونهٔ بعدی مشخص می‌شود"):panelText("اطلاعات پردازنده در دسترس نیست")):panelText("درصد استفاده از پردازنده"));
+  text('stat-online',fmt.format(d.accounts_with_streams)+panelText(" حساب دارای جریان باز"));
   text('send-rate',sample.send==null?'—':size(sample.send)+'/s');text('receive-rate',sample.receive==null?'—':size(sample.receive)+'/s');
   text('dns-send-total',size(down));text('dns-receive-total',size(up));text('dns-traffic',size(up+down));
-  text('uptime',fmt.format(Math.floor(d.uptime_seconds/3600))+' ساعت و '+fmt.format(Math.floor(d.uptime_seconds/60)%60)+' دقیقه');
+  text('uptime',fmt.format(Math.floor(d.uptime_seconds/3600))+panelText(" ساعت و ")+fmt.format(Math.floor(d.uptime_seconds/60)%60)+panelText(" دقیقه"));
   text('platform',h.platform);text('panel-version',d.version);text('footer-version',d.version);
-  text('stat-accounts',fmt.format(d.accounts));text('stat-active',fmt.format(d.states.active)+' حساب فعال');text('stat-up',size(d.upload_bytes));text('stat-down',size(d.download_bytes));
-  const states={active:'فعال',disabled:'غیرفعال',expired:'منقضی',exhausted:'حجم تمام‌شده'};
+  text('stat-accounts',fmt.format(d.accounts));text('stat-active',fmt.format(d.states.active)+panelText(" حساب فعال"));text('stat-up',size(d.upload_bytes));text('stat-down',size(d.download_bytes));
+  const states={active:panelText("فعال"),disabled:panelText("غیرفعال"),expired:panelText("منقضی"),exhausted:panelText("حجم تمام‌شده")};
   get('status-breakdown').replaceChildren(...Object.entries(states).map(([key,label])=>{const row=document.createElement('div'),badge=document.createElement('span'),value=document.createElement('strong');badge.className='badge '+key;badge.textContent=label;value.textContent=fmt.format(d.states[key]);row.append(badge,value);return row;}));
   for(const [id,key,max] of [['cpu-spark','cpu',100],['ram-spark','ram',100],['disk-spark','disk',100],['streams-spark','streams',0]])chart(id,[key],max,true);
   chart('traffic-chart',['send','receive']);chart('connections-chart',['streams']);
   const elapsed=Math.floor((samples.at(-1).at-samples[0].at)/1000);
-  text('chart-window',elapsed<60?'نمونه‌های این نشست':fmt.format(Math.floor(elapsed/60))+' دقیقهٔ اخیر');
-  text('chart-start',new Date(Date.now()-(now-samples[0].at)).toLocaleTimeString('fa-IR',{hour:'2-digit',minute:'2-digit'}));
-  text('chart-now','اکنون');
+  text('chart-window',elapsed<60?panelText("نمونه‌های این نشست"):fmt.format(Math.floor(elapsed/60))+panelText(" دقیقهٔ اخیر"));
+  text('chart-start',new Date(Date.now()-(now-samples[0].at)).toLocaleTimeString(panelI18n.locale,{hour:'2-digit',minute:'2-digit'}));
+  text('chart-now',panelText("اکنون"));
  }
  return {icon,renderDashboard,setConnection,closeMenu,toggleMenu,accountActions,closeActionMenu,closeSelectMenu,syncSelects,accountMenuOpen:()=>!!actionTrigger,toggleTheme(){setTheme(document.documentElement.dataset.theme==='dark'?'light':'dark');}};
 })();
