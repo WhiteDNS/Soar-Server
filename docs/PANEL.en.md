@@ -1,0 +1,121 @@
+# Install and use WhiteDNS Soar Panel
+
+WhiteDNS builds the management panel and installer. The tunnel engine is
+[Lantern Soar](https://github.com/getlantern/soar). The dashboard uses original
+code with a workflow inspired by 3x-ui; Xray is not installed.
+
+Supported servers: Ubuntu 22.04/24.04/26.04 or Debian 12/13, amd64/x86_64,
+with root/sudo and systemd. No Docker, Go, Node or external database is required.
+
+## 1. Prepare a server and DNS
+
+Use a server outside a restricted network with a public IP and outbound web
+access. You need a domain and access to its DNS records. The following are
+examples; replace the domain and IP with your own:
+
+| Type | Name | Value |
+| --- | --- | --- |
+| A | `ns-soar.example.com` | Your server's public IPv4 address |
+| NS | `soar.example.com` | `ns-soar.example.com` |
+| A | `panel.example.com` | Your server's public IPv4 address |
+
+Disable DNS proxying for the A records. Choose a new delegated subdomain if
+MasterDNS or another service already uses one: do not add a second unrelated
+nameserver to its delegation. No separate DNS record is needed per account.
+
+Allow UDP/53 for the DNS tunnel, TCP/80 for certificate validation and TCP/443
+for HTTPS. Keep your SSH port accessible. The installer checks conflicts and
+DNS delegation; if another service owns port 53, resolve that conflict first.
+
+## 2. Run the guided installer
+
+Connect over SSH and paste:
+
+```bash
+bash <(curl -fsSL https://raw.githubusercontent.com/WhiteDNS/Soar-Server/main/panel-setup.sh)
+```
+
+If curl is missing:
+
+```bash
+sudo apt-get update
+sudo apt-get install -y curl
+```
+
+Follow the numbered English prompts. Enter your delegated zone, for example
+`soar.example.com`. Pick an administrator username and strong password. The
+installer downloads the pinned stable release, verifies its checksum, installs
+the services and prints the complete login URL. Save that URL: its random path
+is required. The bare IP/domain intentionally does not show a login page.
+
+## 3. Enable HTTPS
+
+Sign in, then open **Domain & security**, or run this in SSH:
+
+```bash
+sudo soar-panel-security
+```
+
+Enter `panel.example.com`. Ensure its A record points to this server, DNS
+proxying is disabled and TCP/80 and TCP/443 are open. Certificate issuance can
+take a few minutes. The old address stays active during preparation. Save the
+new URL, confirm it, then apply. Sign in at the new HTTPS URL with the same
+password. Certificates renew automatically. The random login path supplements
+HTTPS and a strong password; it does not replace them.
+
+Switch between **English** and **فارسی** using the language button on the login
+page or toolbar. The selection is saved in that browser; English uses a left
+sidebar and Gregorian dates, Persian uses a right sidebar and Persian dates.
+
+## 4. Create and connect an account
+
+Open **Accounts → New account**. Set a name, data quota in GiB, expiry, optional
+shared speed in KiB/s and concurrent TCP stream limit. Zero quota/speed means
+unlimited; an empty expiry means no expiry. Streams are connections, not device
+counts. All devices sharing an account also share its quota and limits.
+
+Open **Link / QR**. A **Direct profile** can be imported into existing WhiteDNS
+clients. A **Subscription URL** requires
+[WhiteDNS 1.6.8 or later](https://github.com/WhiteDNS/WhiteDNS-Android/releases/latest)
+and retrieves future configuration changes without importing another profile.
+Read the [subscription guide](SUBSCRIPTIONS.md) for refresh and revocation.
+
+Install the official APK, open **Profiles → Connection → Import**, paste the
+link and confirm. Select that profile, choose Proxy or Full VPN and connect.
+For Full VPN, approve Android's VPN permission. Working DNS paths depend on
+the user's network; no configuration guarantees connectivity in every country.
+
+## 5. Settings, backup, restore and updates
+
+Start with **Automatic (recommended)** under Server settings. Hover over or tap
+the **?** beside a field for its explanation. Save, then refresh the account
+subscription or import its direct profile again. Server quota/expiry limits
+are enforced immediately; exported phone tuning updates on refresh/import.
+
+Use **Backup & restore → Download backup** before upgrades. It contains private
+account keys, subscription credentials, usage and tuning: store it securely.
+To restore, select the compatible `.db` file, check it, review its summary,
+enter your current administrator password and confirm replacement. Current
+login credentials and machine-local HTTPS/access settings are preserved.
+The file must use the same delegated tunnel zone. Restore restarts the service.
+
+**Panel updates → Check for updates → Install update** installs a newer stable
+official release after password confirmation. Packages are checksum-checked,
+and program/data are backed up before replacement. A failed activation rolls
+back. Connections briefly drop during restart. Older installations without the
+maintenance service should rerun the guided installer once.
+
+## Troubleshooting
+
+Use the full URL including its random path. To inspect service status:
+
+```bash
+sudo systemctl status soar-panel soar-panel-ops --no-pager
+```
+
+The security helper can recover/change the login address through SSH. For DNS
+errors, check delegation and UDP/53. For certificates, check A/AAAA records,
+DNS proxying and ports 80/443. If the phone connects but browsing stalls, use
+the latest app, refresh the subscription while disconnected, reconnect and
+review the app diagnostics. A healthy server does not prove every DNS path
+works on every network.

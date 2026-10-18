@@ -1,0 +1,28 @@
+const path = require('node:path');
+module.exports = async ({page, context, out, assert}) => {
+ await page.locator('#share-sub-mode').click();
+ const old = await page.locator('#share-link').inputValue();
+ assert.match(new URL(old).pathname, /^\/sub\/[A-Za-z0-9_-]{43}$/);
+ await page.locator('#copy-link').click();assert.equal(await page.evaluate(()=>navigator.clipboard.readText()),old,'subscription button must copy the full URL');
+ const response = await context.request.get(old);
+ assert.equal(response.status(), 200);
+ assert.match(response.headers()['subscription-userinfo'], /upload=\d+; download=\d+; total=\d+; expire=\d+/);
+ assert.equal(response.headers()['profile-update-interval'], '12');
+ const decoded = Buffer.from((await response.text()).trim(), 'base64').toString();
+ assert.match(decoded, /^soar:\/\//);
+ const originalProfile = await page.locator('#share-profile-mode').click().then(() => page.locator('#share-link').inputValue());
+ assert.equal(decoded.trim(), originalProfile);
+ await page.locator('#share-sub-mode').click();
+ await page.locator('#share-qr').evaluate(img => img.decode());
+ assert.match(await page.locator('#share-qr').getAttribute('src'), /subscription-qr\.png$/);
+ await page.screenshot({path: path.join(out, 'subscription-share-fa.png'), fullPage:true});
+ await page.locator('#rotate-subscription').click();
+ await page.locator('#confirm-ok').click();
+ await page.waitForFunction(value => document.getElementById('share-link').value !== value, old);
+ const replacement = await page.locator('#share-link').inputValue();
+ assert.equal((await context.request.get(old)).status(), 404);
+ assert.equal((await context.request.get(replacement)).status(), 200);
+ await page.locator('#share-profile-mode').click();
+ assert.equal(await page.locator('#share-link').inputValue(), originalProfile, 'subscription rotation must not rotate tunnel keys');
+ console.log('PASS: subscription URL, public body and metadata, QR, rotation and independent tunnel keys.');
+};

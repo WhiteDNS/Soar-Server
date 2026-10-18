@@ -68,7 +68,7 @@ func InspectBackupFile(path string) (summary BackupSummary, err error) {
 			}
 		}
 		if err := tx.ForEach(func(name []byte, _ *bolt.Bucket) error {
-			if !bytes.Equal(name, meta) && !bytes.Equal(name, clients) && !bytes.Equal(name, seeds) && !bytes.Equal(name, events) {
+			if !bytes.Equal(name, meta) && !bytes.Equal(name, clients) && !bytes.Equal(name, seeds) && !bytes.Equal(name, events) && !bytes.Equal(name, subscriptions) && !bytes.Equal(name, subscriptionIndex) {
 				return errors.New("unsupported backup database version")
 			}
 			return nil
@@ -131,6 +131,25 @@ func InspectBackupFile(path string) (summary BackupSummary, err error) {
 		}
 		if tx.Bucket(seeds).Stats().KeyN != summary.Accounts {
 			return errors.New("backup key table mismatch")
+		}
+		// Older backups legitimately omit subscription tables. New backups must
+		// contain a complete, account-bound token/index pair.
+		subs, index := tx.Bucket(subscriptions), tx.Bucket(subscriptionIndex)
+		if (subs == nil) != (index == nil) {
+			return errors.New("backup subscription table mismatch")
+		}
+		if subs != nil {
+			if subs.Stats().KeyN > summary.Accounts || index.Stats().KeyN != subs.Stats().KeyN {
+				return errors.New("backup subscription index mismatch")
+			}
+			if err := subs.ForEach(func(k, v []byte) error {
+				if !identityPattern.Match(k) || tx.Bucket(clients).Get(k) == nil || len(v) != 32 || !bytes.Equal(index.Get(subscriptionDigest(v)), k) {
+					return errors.New("invalid backup subscription")
+				}
+				return nil
+			}); err != nil {
+				return err
+			}
 		}
 		if tx.Bucket(events).Stats().KeyN > 2000 {
 			return errors.New("backup has too many audit events")

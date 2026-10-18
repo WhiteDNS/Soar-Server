@@ -88,12 +88,12 @@ API returns the latest 200. Browsing destinations/content are not recorded.
 
 ## Rollout
 
-Stable standalone setup remains separate. Panel 0.2.0 is the stable default in the README,
+Stable standalone setup remains separate. Panel 0.3.0 is the stable default in the README,
 with IPv4/amd64 support. A running standalone instance is stopped only after
 typing MIGRATE, preserving its keys/config and offering rollback. Migrating root
 shared profiles to individual accounts requires distributing new profile links,
 with the existing profile format. The browser transport fixes require WhiteDNS
-1.6.7-beta2 or newer; a server upgrade cannot replace an installed native core. Never deploy over an
+1.6.7 or newer; a server upgrade cannot replace an installed native core. Never deploy over an
 existing delegated MasterDNS zone. Test on isolated ports before a production switch.
 
 Automated checks cover authenticated HTTPS through unmodified upstream clients,
@@ -102,3 +102,23 @@ stream limits, disable/rotate, private destination protection, old-epoch isolati
 authentication/CSRF, QR generation and responsive browser workflows. Passing these
 checks does not establish reachability on Iranian access networks; field testing
 on those networks remains required.
+
+
+## Subscriptions and interface language (0.3.0)
+
+Two optional Bolt buckets bind independent 32-byte subscription tokens to client
+IDs and index SHA-256(token) to client IDs. Account deletion removes both entries.
+Read-only public GET/HEAD `/sub/<token>` routes precede the private admin prefix
+without revealing it. HTTPS configuration enforces TLS and the configured host.
+Responses use a single transaction snapshot of account data and current settings;
+no cached profile can pin a stale tunnel key. Disabled/expired/exhausted accounts
+receive 403 without profile data. Rotation is an authenticated, CSRF-checked POST
+and never changes tunnel keys or accounting epochs. New backups validate both
+subscription tables; legacy backups migrate lazily. See SUBSCRIPTIONS.md.
+
+The self-hosted `i18n.js` catalog translates authored static DOM nodes once and
+explicit dynamic UI strings at their creation sites. No dynamic DOM rewriting
+or third-party translation service touches account names, notes, keys or input
+values. The browser-local language choice selects `fa-IR`/`en-GB` formatting,
+RTL/LTR layout and contextual help direction. Switching reloads the current page;
+authentication remains under the existing session/cookie rules.

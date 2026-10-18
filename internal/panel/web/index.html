@@ -1,15 +1,15 @@
 <!doctype html>
 <html lang="fa" dir="rtl" data-theme="dark">
-<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="light dark"><title>WhiteDNS · Soar Panel</title><link rel="preload" href="fonts/vazirmatn.woff2" as="font" type="font/woff2" crossorigin><link rel="stylesheet" href="tokens.css"><link rel="stylesheet" href="style.css"><link rel="stylesheet" href="redesign.css"><script src="settings.js" defer></script><script src="ui.js" defer></script><script src="app.js" defer></script><script src="maintenance.js" defer></script></head>
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="light dark"><title>WhiteDNS · Soar Panel</title><link rel="preload" href="fonts/vazirmatn.woff2" as="font" type="font/woff2" crossorigin><link rel="stylesheet" href="tokens.css"><link rel="stylesheet" href="style.css"><link rel="stylesheet" href="redesign.css"><link rel="stylesheet" href="ltr.css"><script src="i18n.js" defer></script><script src="settings.js" defer></script><script src="ui.js" defer></script><script src="app.js" defer></script><script src="maintenance.js" defer></script></head>
 <body>
 <section id="login-view" class="login-view">
- <div class="login-tools"><button id="login-theme" class="icon-button" type="button" aria-label="تغییر تم"></button></div>
+ <div class="login-tools"><button class="language-toggle quiet" type="button" aria-label="Change language">English</button><button id="login-theme" class="icon-button" type="button" aria-label="تغییر تم"></button></div>
  <form id="login-form" class="login-card">
   <div class="login-brand"><strong>WhiteDNS</strong></div><h1>خوش آمدید</h1><p class="muted">برای مدیریت سرور Soar وارد شوید.</p>
   <label for="login-name">نام کاربری</label><div class="input-icon"><span data-icon="user"></span><input id="login-name" name="username" autocomplete="username" dir="ltr" placeholder="Username" required maxlength="64"></div>
   <label for="login-password">رمز عبور</label><div class="input-icon"><span data-icon="lock"></span><input id="login-password" name="password" type="password" autocomplete="current-password" dir="ltr" placeholder="Password" required maxlength="72"><button id="password-toggle" class="icon-button password-toggle" type="button" aria-label="نمایش رمز عبور" aria-pressed="false"><span data-icon="eye"></span></button></div>
   <p id="login-notice" class="hint" role="status"></p><p id="login-error" class="error" role="alert"></p><button class="primary" type="submit">ورود به پنل</button>
-  <p class="login-foot">WhiteDNS Soar Panel · <bdi>0.2.0</bdi><br>موتور تونل از Lantern</p>
+  <p class="login-foot">WhiteDNS Soar Panel · <bdi>0.3.0</bdi><br>موتور تونل از Lantern</p>
  </form>
 </section>
 <div id="app" hidden>
@@ -22,13 +22,13 @@
    <a href="#settings" data-page="settings"><span data-icon="settings"></span>تنظیمات سرور</a>
    <a href="#backup" data-page="backup"><span data-icon="backup"></span>پشتیبان و بازیابی</a><a href="#updates" data-page="updates"><span data-icon="refresh"></span>به‌روزرسانی پنل</a><a href="#security" data-page="security"><span data-icon="lock"></span>دامنه و امنیت</a>
   </nav>
-  <div class="sidebar-foot"><span class="beta">WhiteDNS Panel · 0.2.0</span><p>موتور تونل: Lantern Soar<br>پنل مدیریت: WhiteDNS</p><a href="https://github.com/WhiteDNS/Soar-Server" target="_blank" rel="noopener noreferrer">مستندات و کد منبع ↗</a></div>
+  <div class="sidebar-foot"><span class="beta">WhiteDNS Panel · 0.3.0</span><p>موتور تونل: Lantern Soar<br>پنل مدیریت: WhiteDNS</p><a href="https://github.com/WhiteDNS/Soar-Server" target="_blank" rel="noopener noreferrer">مستندات و کد منبع ↗</a></div>
  </aside>
  <button id="nav-backdrop" class="nav-backdrop" aria-label="بستن منوی کناری" tabindex="-1" type="button"></button>
  <div class="workspace"><header class="topbar">
   <button id="menu-toggle" class="icon-button mobile-only" aria-label="باز کردن منو" aria-expanded="false"><span data-icon="menu"></span></button>
   <div class="breadcrumb"><span class="parent-crumb">WhiteDNS</span><span>/</span><b id="page-title">نمای کلی</b></div>
-  <div class="top-actions"><span id="service-chip" class="service-chip" data-live="false">بررسی ارتباط</span><span id="sync-state" class="sync">در حال دریافت…</span><button id="refresh" class="quiet" aria-label="به‌روزرسانی"><span data-icon="refresh"></span><span class="button-label">به‌روزرسانی</span></button><button id="theme-toggle" class="icon-button" aria-label="تغییر تم"></button><button id="logout" class="quiet" aria-label="خروج"><span data-icon="logout"></span><span class="button-label">خروج</span></button></div>
+  <div class="top-actions"><button class="language-toggle quiet" type="button" aria-label="Change language">English</button><span id="service-chip" class="service-chip" data-live="false">بررسی ارتباط</span><span id="sync-state" class="sync">در حال دریافت…</span><button id="refresh" class="quiet" aria-label="به‌روزرسانی"><span data-icon="refresh"></span><span class="button-label">به‌روزرسانی</span></button><button id="theme-toggle" class="icon-button" aria-label="تغییر تم"></button><button id="logout" class="quiet" aria-label="خروج"><span data-icon="logout"></span><span class="button-label">خروج</span></button></div>
  </header>
  <main id="main"><div id="page-error" class="banner error" role="alert" hidden></div>
  <section id="page-dashboard" class="page">
@@ -51,8 +51,8 @@
  <section id="page-settings" class="page" hidden>
   <div class="page-heading"><div><p class="eyebrow">پیکربندی سرویس</p><h1>تنظیمات سرور</h1><p class="muted">اندازهٔ بسته، ظرفیت مسیر و تنظیمات اتصال در لینک‌های خروجی.</p></div></div>
   <form id="settings-form" class="card settings-card">
-   <p class="banner">تنظیمات تونل روی لینک‌های خروجی همهٔ حساب‌ها اعمال می‌شود. پس از ذخیره، لینک همان حساب را دوباره بگیرید و در WhiteDNS وارد کنید. اصلاح انتقال به WhiteDNS 1.6.7-beta2 یا جدیدتر نیاز دارد؛ تغییر پنل، موتور نصب‌شدهٔ گوشی را عوض نمی‌کند. حجم، انقضا و سقف حساب همچنان از سمت سرور کنترل می‌شوند.</p>
-   <fieldset class="settings-section"><legend>دامنه و دسترسی</legend><p class="hint section-intro">برای دیدن توضیح، نشانگر را روی هر فیلد نگه دارید یا علامت ؟ را لمس کنید.</p><div class="settings-grid">
+   <p class="banner">تنظیمات تونل روی پروفایل همهٔ حساب‌ها اعمال می‌شود. پس از ذخیره، ساب را تازه‌سازی کنید یا لینک مستقیم را دوباره در WhiteDNS وارد کنید. اصلاح انتقال به WhiteDNS 1.6.7 یا جدیدتر نیاز دارد؛ تغییر پنل، موتور نصب‌شدهٔ گوشی را عوض نمی‌کند. حجم، انقضا و سقف حساب از سمت سرور کنترل می‌شوند.</p>
+   <fieldset class="settings-section"><legend>دامنه و دسترسی</legend><p class="hint section-intro">برای دیدن توضیح، نشانگر را روی علامت ؟ نگه دارید یا آن را لمس کنید.</p><div class="settings-grid">
     <div class="setting-field"><div class="field-label"><label for="base-zone">دامنهٔ واگذارشده</label></div><input id="base-zone" dir="ltr" readonly><small class="setting-range">پس از نصب ثابت می‌ماند</small></div>
     <div class="setting-field"><div class="field-label"><label for="country">محدودهٔ جست‌وجوی Resolver</label></div><select id="country"><option value="IR">ایران — اولویت مسیرهای ایران</option><option value="">جهانی</option></select><small class="setting-range">اولویت کشف؛ نه کشور IP خروجی</small></div>
     <div class="setting-field"><div class="field-label"><label for="resolvers">Resolverهای شروع اتصال</label></div><textarea id="resolvers" dir="ltr" rows="3" required></textarea><small class="setting-range">۱ تا ۸ آدرس؛ هر کدام در یک خط</small></div>
@@ -63,7 +63,7 @@
    <fieldset class="settings-section"><legend>ارتباط و کشف مسیر</legend><div id="soar-fields-discovery" class="settings-grid"></div></fieldset>
    <fieldset class="settings-section"><legend>جریان‌ها، حافظه و زمان انتظار</legend><div id="soar-fields-streams" class="settings-grid"></div></fieldset>
    <p class="protocol-note">رمزنگاری Soar ثابت است: ChaCha20-Poly1305، تبادل کلید X25519 و امضای سرور Ed25519. تعویض کلید حساب الگوریتم را تغییر نمی‌دهد؛ انتخاب الگوریتم یا خاموش‌کردن رمزنگاری در این موتور وجود ندارد.</p>
-   <div class="settings-actions"><button type="submit" class="primary">ذخیرهٔ تنظیمات</button><p id="settings-feedback" class="hint" role="status">برای استفاده از تغییرات، لینک حساب را دوباره Import کنید.</p></div>
+   <div class="settings-actions"><button type="submit" class="primary">ذخیرهٔ تنظیمات</button><p id="settings-feedback" class="hint" role="status">برای دریافت تغییرات، ساب را تازه‌سازی کنید یا لینک مستقیم حساب را دوباره Import کنید.</p></div>
   </form>
  </section>
  <section id="page-backup" class="page" hidden>
@@ -94,10 +94,10 @@
   <p class="hint">در ترمینال هم می‌توانید با دستور <bdi class="terminal-command">soar-panel-security</bdi> این تنظیمات را انجام دهید. بازیابی آدرس از SSH در راهنمای نصب توضیح داده شده است.</p>
   </article>
  </section>
- <footer class="main-footer"><span dir="ltr">WhiteDNS Soar Panel · <bdi id="footer-version">0.2.0</bdi></span><a href="https://soar.lantern.io/" target="_blank" rel="noopener noreferrer">موتور تونل از Lantern ↗</a></footer>
+ <footer class="main-footer"><span dir="ltr">WhiteDNS Soar Panel · <bdi id="footer-version">0.3.0</bdi></span><a href="https://soar.lantern.io/" target="_blank" rel="noopener noreferrer">موتور تونل از Lantern ↗</a></footer>
  </main></div></div>
 <dialog id="client-dialog"><form id="client-form"><div class="dialog-heading"><div><p class="eyebrow">مدیریت دسترسی</p><h2 id="client-dialog-title">حساب جدید</h2></div><button type="button" class="icon-button close-dialog" aria-label="بستن">×</button></div><div class="form-grid"><label class="wide">نام حساب<input name="name" required maxlength="160" placeholder="مثلاً: کاربر اول"></label><label>حجم کل (GiB)<input name="quota" type="number" min="0" max="1000000" step="any" value="0" required dir="ltr"><small>آپلود + دانلود؛ صفر = نامحدود</small></label><label>تاریخ انقضا<input name="expires" type="datetime-local" dir="ltr"><small>خالی = بدون انقضا، به وقت دستگاه مدیر</small></label><label>سرعت مشترک (KiB/s)<input name="rate" type="number" min="0" max="1048576" step="any" value="0" dir="ltr" required><small>آپلود و دانلود مشترک؛ صفر = نامحدود</small></label><label>حداکثر جریان TCP<input name="streams" type="number" min="1" max="128" value="128" dir="ltr" required><small>جریان هم‌زمان؛ محدودیت دستگاه نیست</small></label><label class="wide">یادداشت<textarea name="note" rows="2" maxlength="2048"></textarea></label><label class="checkbox wide"><input name="enabled" type="checkbox" checked>حساب فعال باشد</label></div><p id="client-form-error" class="error" role="alert"></p><div class="dialog-actions"><button type="button" class="quiet close-dialog">انصراف</button><button type="submit" class="primary">ذخیرهٔ حساب</button></div></form></dialog>
-<dialog id="share-dialog"><div class="dialog-heading"><div><p class="eyebrow">اتصال با WhiteDNS</p><h2 id="share-title">لینک حساب</h2></div><button class="icon-button close-dialog" aria-label="بستن">×</button></div><img id="share-qr" class="qr" width="256" height="256" alt="QR پروفایل Soar"><label for="share-link">لینک ورود پروفایل</label><textarea id="share-link" dir="ltr" rows="4" readonly></textarea><p class="hint">این لینک را در بخش Import اپ WhiteDNS وارد کنید. لینک را فقط در اختیار صاحب حساب قرار دهید.</p><div class="dialog-actions"><button id="save-profile" class="quiet">دانلود لینک</button><button id="copy-link" class="primary">کپی لینک</button></div></dialog>
+<dialog id="share-dialog"><div class="dialog-heading"><div><p class="eyebrow">اتصال با WhiteDNS</p><h2 id="share-title">لینک حساب</h2></div><button class="icon-button close-dialog" aria-label="بستن">×</button></div><div class="preset-buttons share-tabs" role="group" aria-label="روش اشتراک‌گذاری"><button id="share-profile-mode" class="secondary" type="button" aria-pressed="true">پروفایل مستقیم</button><button id="share-sub-mode" class="quiet" type="button" aria-pressed="false">لینک ساب</button></div><img id="share-qr" class="qr" width="256" height="256" alt="QR پروفایل Soar"><label for="share-link" id="share-link-label">لینک ورود پروفایل</label><textarea id="share-link" dir="ltr" rows="4" readonly></textarea><p class="hint" id="share-hint">این لینک را در بخش Import اپ WhiteDNS وارد کنید. لینک را فقط در اختیار صاحب حساب قرار دهید.</p><button id="rotate-subscription" class="quiet" type="button" hidden>تعویض لینک ساب</button><div class="dialog-actions"><button id="save-profile" class="quiet">دانلود لینک</button><button id="copy-link" class="primary">کپی لینک</button></div></dialog>
 <dialog id="confirm-dialog"><h2 id="confirm-title"></h2><p id="confirm-text"></p><div class="dialog-actions"><button id="confirm-cancel" class="quiet">انصراف</button><button id="confirm-ok" class="danger">تأیید</button></div></dialog>
 <div id="toast" role="status" aria-live="polite" aria-atomic="true" hidden></div>
 <div id="field-tooltip" class="field-tooltip" role="tooltip" dir="rtl" hidden></div>

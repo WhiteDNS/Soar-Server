@@ -118,6 +118,15 @@ func (h *HTTP) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Cache-Control", "no-store")
 		w.Header().Set("Referrer-Policy", "no-referrer")
 		w.Header().Set("X-Content-Type-Options", "nosniff")
+		// Subscription URLs never include or reveal the administrator's private path.
+		if strings.HasPrefix(r.URL.Path, "/sub/") {
+			if cfg.HTTPS && (!h.isSecure(r) || !strings.EqualFold((&url.URL{Host: r.Host}).Hostname(), cfg.Domain)) {
+				http.NotFound(w, r)
+				return
+			}
+			h.serveHTTP(w, r)
+			return
+		}
 		if prefix != "" && !strings.HasPrefix(r.URL.Path, prefix) {
 			http.NotFound(w, r)
 			return
@@ -151,6 +160,10 @@ func (h *HTTP) serveHTTP(w http.ResponseWriter, r *http.Request) {
 	if h.isSecure(r) {
 		w.Header().Set("Strict-Transport-Security", "max-age=31536000")
 	}
+	if strings.HasPrefix(r.URL.Path, "/sub/") {
+		h.serveSubscription(w, r)
+		return
+	}
 	if r.URL.Path == "/api/login" && r.Method == "POST" {
 		h.login(w, r)
 		return
@@ -161,7 +174,7 @@ func (h *HTTP) serveHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		switch r.URL.Path {
-		case "/", "/index.html", "/app.js", "/maintenance.js", "/settings.js", "/ui.js", "/tokens.css", "/redesign.css", "/style.css", "/fonts/vazirmatn.ttf", "/fonts/vazirmatn.woff2":
+		case "/", "/index.html", "/app.js", "/maintenance.js", "/i18n.js", "/ltr.css", "/settings.js", "/ui.js", "/tokens.css", "/redesign.css", "/style.css", "/fonts/vazirmatn.ttf", "/fonts/vazirmatn.woff2":
 			if r.URL.Path == "/" || r.URL.Path == "/index.html" {
 				raw, e := webFiles.ReadFile("web/index.html")
 				if e != nil {
@@ -406,6 +419,10 @@ func (h *HTTP) clientAction(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if r.Method == "GET" {
+		if action == "subscription" || action == "subscription-qr.png" {
+			h.subscriptionAdmin(w, r, id)
+			return
+		}
 		if action == "" {
 			jsonReply(w, 200, c)
 			return
@@ -430,6 +447,10 @@ func (h *HTTP) clientAction(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		http.NotFound(w, r)
+		return
+	}
+	if r.Method == "POST" && action == "subscription-rotate" {
+		h.subscriptionAdmin(w, r, id)
 		return
 	}
 	switch {

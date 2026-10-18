@@ -151,7 +151,7 @@ func OpenStore(path string) (*Store, error) {
 	}
 	s := &Store{db: db}
 	e = db.Update(func(tx *bolt.Tx) error {
-		for _, b := range [][]byte{meta, clients, seeds, events} {
+		for _, b := range [][]byte{meta, clients, seeds, events, subscriptions, subscriptionIndex} {
 			if _, e := tx.CreateBucketIfNotExists(b); e != nil {
 				return e
 			}
@@ -417,6 +417,9 @@ func (s *Store) Delete(id string) error {
 		if _, e := getClient(tx, id); e != nil {
 			return e
 		}
+		if e := removeSubscription(tx, id); e != nil {
+			return e
+		}
 		if e := tx.Bucket(clients).Delete([]byte(id)); e != nil {
 			return e
 		}
@@ -533,14 +536,18 @@ func (s *Store) Profile(id string) (link string, e error) {
 	if e != nil {
 		return
 	}
+	return profileFor(c, cfg)
+}
+
+func profileFor(c Client, cfg Settings) (string, error) {
 	settings := struct {
 		ProfileSettings
 		Country string `json:"country"`
 	}{cfg.profileSettings(), cfg.Country}
-	body := map[string]any{"schema": "whitedns.profile", "version": 1, "profile": map[string]any{"name": c.Name, "server": map[string]string{"domain": c.Zone, "public_key": c.PublicKey}, "resolvers": cfg.Resolvers, "soarSettings": settings}}
+	body := map[string]any{"schema": "whitedns.profile", "version": 1, "profile": map[string]any{"id": c.ID, "name": c.Name, "server": map[string]string{"domain": c.Zone, "public_key": c.PublicKey}, "resolvers": cfg.Resolvers, "soarSettings": settings}}
 	raw, e := json.Marshal(body)
 	if e != nil {
-		return
+		return "", e
 	}
 	return "soar://" + base64.RawURLEncoding.EncodeToString(raw), nil
 }
