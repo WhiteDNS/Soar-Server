@@ -125,7 +125,7 @@ func (h *HTTP) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		switch r.URL.Path {
-		case "/", "/index.html", "/app.js", "/settings.js", "/style.css", "/fonts/vazirmatn.ttf":
+		case "/", "/index.html", "/app.js", "/settings.js", "/ui.js", "/tokens.css", "/redesign.css", "/style.css", "/fonts/vazirmatn.ttf", "/fonts/vazirmatn.woff2":
 			h.assets.ServeHTTP(w, r)
 		default:
 			http.NotFound(w, r)
@@ -269,7 +269,7 @@ func (h *HTTP) dashboard(w http.ResponseWriter) {
 			online++
 		}
 	}
-	jsonReply(w, 200, map[string]any{"accounts": len(list), "states": states, "upload_bytes": up, "download_bytes": down, "active_streams": connected, "accounts_with_streams": online, "dns_received_bytes": h.manager.dnsIn.Load(), "dns_sent_bytes": h.manager.dnsOut.Load(), "uptime_seconds": int64(time.Since(h.manager.started).Seconds()), "host": h.metrics.sample(), "version": "0.2.0-beta4"})
+	jsonReply(w, 200, map[string]any{"accounts": len(list), "states": states, "upload_bytes": up, "download_bytes": down, "active_streams": connected, "accounts_with_streams": online, "dns_received_bytes": h.manager.dnsIn.Load(), "dns_sent_bytes": h.manager.dnsOut.Load(), "uptime_seconds": int64(time.Since(h.manager.started).Seconds()), "host": h.metrics.sample(), "version": "0.2.0-beta5"})
 }
 func (h *HTTP) settings(w http.ResponseWriter, r *http.Request) {
 	if r.Method == "GET" {

@@ -11,7 +11,7 @@ import subprocess
 import tarfile
 
 ROOT=Path(__file__).resolve().parents[1]
-VERSION="0.2.0-beta4"
+VERSION="0.2.0-beta5"
 NAME=f"soar-panel-{VERSION}-linux-amd64"
 
 def run(*args):
@@ -33,6 +33,7 @@ def main():
     (bundle/"lib").mkdir(exist_ok=True)
     (bundle/"lib/standalone-install.sh").write_bytes((ROOT/"install.sh").read_text(encoding="utf8").replace("\r\n","\n").encode("utf8"))
     licenses=bundle/"licenses";licenses.mkdir(exist_ok=True)
+    shutil.copyfile(ROOT/"internal/panel/web/fonts/OFL.txt",licenses/"Vazirmatn-OFL.txt")
     for mod,label in [("github.com/getlantern/soar","Soar"),("go.etcd.io/bbolt","bbolt"),("github.com/skip2/go-qrcode","go-qrcode"),("golang.org/x/crypto","x-crypto"),("golang.org/x/sys","x-sys")]:
         module=Path(run("go","list","-m","-f","{{.Dir}}",mod))
         shutil.copyfile(module/"LICENSE",licenses/(label+"-LICENSE.txt"))

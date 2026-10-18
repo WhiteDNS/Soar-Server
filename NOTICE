@@ -21,3 +21,8 @@ Panel layout/workflow reference: MHSanaei/3x-ui (Sanaei),
 https://github.com/MHSanaei/3x-ui . The panel is an original implementation;
 no 3x-ui source code, assets, or dependencies are included. No affiliation
 with or endorsement by the 3x-ui maintainers is implied.
+
+The panel embeds unmodified Vazirmatn v33.003 variable fonts (SIL OFL 1.1).
+Copyright 2015 The Vazirmatn Project Authors.
+Source: https://github.com/rastikerdar/vazirmatn/tree/v33.003
+The panel bundle includes licenses/Vazirmatn-OFL.txt.

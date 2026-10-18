@@ -1,29 +1,33 @@
-# WhiteDNS Soar Panel 0.2.0-beta4
+# WhiteDNS Soar Panel 0.2.0-beta5
 
 An opt-in **server-side** management panel for Lantern Soar. The familiar sidebar,
 dashboard and account editor are inspired by Sanaei/3x-ui; the implementation is
 original. Lantern remains the author of the Soar tunneling engine.
 
-This update adds 16 editable Soar profile settings to the panel: DNS packet
-budgets, in-flight windows, UDP/TCP behavior, discovery, buffers, stream limits
-and timeouts. All 20 fields on the settings page have Persian explanations on
-hover, keyboard focus or touch. Presets fill the form without saving it.
+This release redesigns the panel around the supplied 3x-ui visual reference:
+compact charcoal surfaces, a consistent blue action color, locally bundled
+Vazirmatn typography, aligned controls and a responsive right navigation rail.
+Login, dashboard, accounts, settings, events, backup and dialogs share the same
+visual system. A light theme and the existing appearance preference are retained.
 
-Settings are validated and persisted in the server database and included in
-links/QRs for all accounts. Existing databases retain beta3 stability defaults;
-legacy API callers cannot silently reset saved tuning. Accounts, keys, quotas
-and counters are preserved. Encryption remains fixed by the Soar protocol.
+The dashboard shows resource readings and real sample history, DNS send/receive
+rates and open tunnel streams. Charts start when the page opens, retain up to ten
+minutes in memory and clear on server counter reset. Missing metrics remain
+unavailable; no historical values are fabricated. DNS rates include DNS overhead
+and are distinct from the per-account TCP payload quota counters.
 
-**Reimport the same account link after saving tuning changes.** An existing
-phone profile does not receive changes automatically. No APK update is needed.
+Login has an accessible password visibility control and a theme toggle. Mobile
+navigation supports dismissal and keyboard focus. All 20 settings explanations
+remain available through hover, focus and touch. The font and icons need no CDN.
 
-Live comparison tested the same isolated account with stability, balanced and
-performance settings twice in reverse order (120 HTTPS requests): stability
-40/40 successful, balanced 39/40, performance 39/40. Larger settings sometimes
-improved transfer time, but did not provide consistent gains and each had a
-failed request. Stability remains the default. These finite native-engine tests
-do not establish Android Full VPN behavior, Iranian-network reliability or
-comparative speed against a live MasterDNS server.
+Existing accounts, keys, usage, quotas and advanced transport tuning are preserved.
+The redesign does not require reimporting a profile or updating the Android app.
+The Soar transport implementation is unchanged.
+
+Validation covers real browser account workflows, persistent tuning, bundled-font
+loading, login controls, light/dark themes, tooltips and responsive layouts at
+320/375/414/768/1440 pixels, plus the existing backend, race and installer checks.
+The font's SIL Open Font License ships with the bundle.
 
 - Create independent accounts and export existing WhiteDNS-compatible links/QRs.
 - Set combined upload/download quota, expiry, shared speed and concurrent TCP streams.
@@ -50,7 +54,7 @@ access-network validation and production load qualification remain outstanding.
 Install the explicit panel beta (in an interactive SSH terminal):
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/WhiteDNS/Soar-Server/panel-v0.2.0-beta4/panel-setup.sh)
+bash <(curl -fsSL https://raw.githubusercontent.com/WhiteDNS/Soar-Server/panel-v0.2.0-beta5/panel-setup.sh)
 ```
 
-[Persian installation, migration and recovery guide](https://github.com/WhiteDNS/Soar-Server/blob/panel-v0.2.0-beta4/docs/PANEL.fa.md)
+[Persian installation, migration and recovery guide](https://github.com/WhiteDNS/Soar-Server/blob/panel-v0.2.0-beta5/docs/PANEL.fa.md)

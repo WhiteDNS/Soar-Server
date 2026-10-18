@@ -48,7 +48,7 @@ module.exports=async function testSettings({page,url,out,assert}){
  const reset=page.waitForResponse(r=>r.url()===url+'/api/settings'&&r.request().method()==='PUT');
  await settings.locator('[type=submit]').click();assert.equal((await reset).status(),200);
  assert.deepEqual((await saved()).soarSettings,initial,'stability preset differs from migrated defaults');
- for(const width of [1440,768,375]){
+ for(const width of [1440,768,414,375,320]){
   await page.setViewportSize({width,height:1100});await page.evaluate(()=>window.scrollTo(0,0));
   assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1),'settings overflow at '+width);
   await page.screenshot({path:path.join(out,`settings-${width}.png`),fullPage:true});

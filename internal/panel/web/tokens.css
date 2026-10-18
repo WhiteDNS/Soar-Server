@@ -1,0 +1,30 @@
+/* WhiteDNS · studied reference: user-provided 3x-ui screenshots · local fonts */
+@font-face{font-family:Vazirmatn;src:url('/fonts/vazirmatn.woff2') format('woff2'),url('/fonts/vazirmatn.ttf') format('truetype');font-style:normal;font-weight:100 900;font-display:swap}
+:root{
+ --font-body:Vazirmatn,Tahoma,sans-serif;
+ --font-display:var(--font-body);
+ --font-outlier:ui-monospace,Consolas,monospace;
+ --space-1:4px;--space-2:8px;--space-3:12px;--space-4:16px;--space-5:20px;--space-6:24px;--space-8:32px;
+ --text-xs:12px;--text-sm:13px;--text-md:14px;--text-lg:16px;--text-xl:22px;--text-2xl:28px;
+ --radius-card:12px;--radius-input:7px;--radius-button:7px;--radius-pill:99px;
+ --dur-short:150ms;--ease-out:cubic-bezier(.2,.8,.2,1);
+ --color-paper:#181a1e;--color-paper-2:#22252b;--color-paper-3:#1d2026;
+ --color-rail:#14161b;--color-input:#202329;--color-ink:#e9edf5;--color-ink-2:#a9b2c2;
+ --color-rule:#363c48;--color-accent:#4595ff;--color-action:#176be4;--color-action-hover:#287cf1;
+ --color-accent-soft:#172e4c;--color-on-action:#ffffff;--color-positive:#52d393;--color-positive-soft:#163b2e;
+ --color-negative:#ff7a83;--color-negative-soft:#472830;--color-warning:#efc46b;--color-warning-soft:#423820;
+ --color-focus:#76b2ff;--color-overlay:#070a10b8;--color-shadow:#00000033;
+ --color-login:#0e131d;--color-bloom:#2862a64a;--color-grid:#ffffff07;
+ --color-tooltip:#edf2fa;--color-tooltip-ink:#172231;
+ --sidebar-width:220px;--toolbar-height:64px;
+}
+[data-theme=light]{
+ --color-paper:#f3f5f9;--color-paper-2:#ffffff;--color-paper-3:#f8f9fc;
+ --color-rail:#ffffff;--color-input:#ffffff;--color-ink:#202938;--color-ink-2:#5c687b;
+ --color-rule:#dbe1eb;--color-accent:#1465d6;--color-action:#176be4;--color-action-hover:#105ac5;
+ --color-accent-soft:#e8f1ff;--color-positive:#167648;--color-positive-soft:#e7f6ed;
+ --color-negative:#b93143;--color-negative-soft:#fff0f2;--color-warning:#8b620a;--color-warning-soft:#fff5d9;
+ --color-overlay:#17233766;--color-shadow:#1b304817;
+ --color-login:#edf2fb;--color-bloom:#6d9ee52e;--color-grid:#164da208;
+ --color-tooltip:#172231;--color-tooltip-ink:#edf2fa;
+}
