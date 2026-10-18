@@ -25,10 +25,10 @@ type ProfileSettings struct {
 
 func DefaultProfileSettings() ProfileSettings {
 	return ProfileSettings{
-		Transport: "auto", Discovery: true, DiscoveryWant: 1,
-		DiscoveryConcurrency: 1, DiscoveryPaceMs: 1500,
-		SafeQName: 101, MaxQName: 101, MaxAnswer: 512, HoldMs: 500,
-		MaxInflight: 32, MaxPathWindow: 8, MaxStreams: 128,
+		Transport: "auto", Discovery: true, DiscoveryWant: 2,
+		DiscoveryConcurrency: 2, DiscoveryPaceMs: 1000,
+		SafeQName: 101, MaxQName: 253, MaxAnswer: 1232, HoldMs: 500,
+		MaxInflight: 128, MaxPathWindow: 32, MaxStreams: 128,
 		StreamWindowKiB: 256, SendBufferKiB: 64,
 		SessionIdleSeconds: 90, DialTimeoutSeconds: 90,
 	}

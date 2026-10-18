@@ -2,15 +2,17 @@
 // The supported WhiteDNS settings are exported as-is; the Go API validates them
 // independently. Descriptions are text nodes so none can introduce HTML.
 const soarSettingsForm = (() => {
- const defaults = {transport:'auto',discovery:true,discoveryWant:1,discoveryConcurrency:1,discoveryPaceMs:1500,safeQName:101,maxQName:101,maxAnswer:512,holdMs:500,maxInflight:32,maxPathWindow:8,maxStreams:128,streamWindowKiB:256,sendBufferKiB:64,sessionIdleSeconds:90,dialTimeoutSeconds:90};
+ const defaults = {transport:'auto',discovery:true,discoveryWant:2,discoveryConcurrency:2,discoveryPaceMs:1000,safeQName:101,maxQName:253,maxAnswer:1232,holdMs:500,maxInflight:128,maxPathWindow:32,maxStreams:128,streamWindowKiB:256,sendBufferKiB:64,sessionIdleSeconds:90,dialTimeoutSeconds:90};
+ const limited = {...defaults,discoveryWant:1,discoveryConcurrency:1,discoveryPaceMs:1500,maxQName:101,maxAnswer:512,maxInflight:32,maxPathWindow:8};
  const presets = {
-  stability:{...defaults},
-  balanced:{...defaults,maxQName:180,maxAnswer:896,maxInflight:64,maxPathWindow:16},
-  performance:{...defaults,maxQName:253,maxAnswer:1232,maxInflight:128,maxPathWindow:32},
+  adaptive:{...defaults},
+  stability:{...limited},
+  balanced:{...limited,maxQName:180,maxAnswer:896,maxInflight:64,maxPathWindow:16},
+  performance:{...limited,maxQName:253,maxAnswer:1232,maxInflight:128,maxPathWindow:32},
  };
  const fields = [
   ['safeQName','طول امن اولیهٔ پرس‌وجو',101,253,'کاراکتر','طول نامی که هر مسیر با آن شروع می‌شود. مقدار ۱۰۱ برای مسیرهایی که نام بلند را حذف می‌کنند مناسب‌تر است. افزایش آن شروع اتصال را به بسته‌های بزرگ‌تر وابسته می‌کند؛ نباید از MaxQName بیشتر باشد.'],
-  ['maxQName','سقف طول پرس‌وجو',101,253,'کاراکتر','سقف طول نام DNS و یکی از عوامل ظرفیت آپلود است. مقدار بزرگ‌تر جا برای دادهٔ بیشتری می‌دهد، ولی بعضی مسیرها نام بلند را حذف می‌کنند. موتور از طول امن شروع می‌کند و فقط تا این سقف افزایش را آزمایش می‌کند.'],
+  ['maxQName','سقف طول پرس‌وجو',101,253,'کاراکتر','سقف طول نام DNS و یکی از عوامل ظرفیت آپلود است. مقدار ۲۵۳ در حالت خودکار سقف یادگیری است، نه اندازهٔ اجباری روی همهٔ مسیرها. قفل‌کردن سقف روی ۱۰۱ ظرفیت ارسال پیام آغاز TLS را محدود می‌کند؛ فقط وقتی مسیر به آن نیاز دارد استفاده کنید. مقدار بزرگ‌تر جا برای دادهٔ بیشتری می‌دهد، ولی بعضی مسیرها نام بلند را حذف می‌کنند. موتور از طول امن شروع می‌کند و فقط تا این سقف افزایش را آزمایش می‌کند.'],
   ['maxAnswer','سقف اندازهٔ پاسخ DNS',512,1232,'بایت','سقف اندازهٔ پاسخ و یکی از عوامل ظرفیت دانلود است. مقدار ۵۱۲ محافظه‌کارانه است؛ پاسخ بزرگ‌تر می‌تواند سریع‌تر باشد ولی احتمال حذف یا تکه‌تکه‌شدن آن در مسیر بیشتر است. موتور اندازه‌های پاسخ را در گام‌های ۴۸ بایتی به کار می‌گیرد.'],
   ['maxInflight','کل درخواست‌های در حال انتظار',8,1024,'درخواست','حداکثر درخواست‌های DNS بی‌پاسخ در تمام مسیرهاست. افزایش آن روی مسیر پرظرفیت ممکن است سرعت را بیشتر کند؛ مقدار زیاد روی Resolver محدود باعث افت بسته، تأخیر و مصرف بیشتر می‌شود. این عدد تعداد سایت‌ها یا دستگاه‌ها نیست.'],
   ['maxPathWindow','پنجرهٔ هر مسیر',2,128,'درخواست','سقف درخواست‌های در حال انتظار روی یک مسیر DNS است. مقدار پایین بار هر Resolver را محدود می‌کند. افزایش آن فقط وقتی مفید است که همان مسیر تحمل درخواست‌های بیشتر را داشته باشد.'],

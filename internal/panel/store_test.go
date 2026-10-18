@@ -155,11 +155,11 @@ func TestDurableBackupAndExistingProfileFormat(t *testing.T) {
 		t.Fatal("profile incompatible")
 	}
 	settings := v.Profile.SoarSettings
-	if settings.Transport != "auto" || settings.DialTimeoutSeconds != 90 || settings.DiscoveryWant != 1 || settings.DiscoveryConcurrency != 1 || settings.DiscoveryPaceMs != 1500 {
-		t.Fatal("export must retain paced fallback discovery without seeking eight healthy paths")
+	if settings.Transport != "auto" || settings.DialTimeoutSeconds != 90 || settings.DiscoveryWant != 2 || settings.DiscoveryConcurrency != 2 || settings.DiscoveryPaceMs != 1000 {
+		t.Fatal("export must use paced two-path adaptive discovery")
 	}
-	if settings.MaxInflight != 32 || settings.MaxPathWindow != 8 || settings.MaxAnswer != 512 || settings.MaxQName != 101 || settings.MaxStreams != 128 {
-		t.Fatal("export must pin DNS packet budgets and allow full-device concurrent streams")
+	if settings.MaxInflight != 128 || settings.MaxPathWindow != 32 || settings.MaxAnswer != 1232 || settings.MaxQName != 253 || settings.MaxStreams != 128 {
+		t.Fatal("export must permit adaptive DNS budgets and full-device concurrent streams")
 	}
 	if strings.Contains(string(raw), "seed") || strings.Contains(string(raw), "private") {
 		t.Fatal("private key leaked")

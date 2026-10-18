@@ -2,7 +2,7 @@ const path=require('node:path');
 
 module.exports=async function testSettings({page,url,out,assert}){
  const settings=page.locator('#settings-form');
- await page.waitForFunction(()=>document.getElementById('soar-maxQName').value==='101');
+ await page.waitForFunction(()=>document.getElementById('soar-maxQName').value==='253');
  assert.equal(await settings.locator('.setting-field').count(),20);
  assert.equal(await settings.locator('.help-trigger').count(),20);
  for(const input of await settings.locator('.setting-field input,.setting-field select,.setting-field textarea').all()){
@@ -32,7 +32,7 @@ module.exports=async function testSettings({page,url,out,assert}){
  const saved=()=>page.request.get(url+'/api/settings').then(r=>r.json());
  const initial=(await saved()).soarSettings;
  await page.locator('[data-soar-preset=balanced]').click();
- assert.equal(await query.inputValue(),'180');assert.equal((await saved()).soarSettings.maxQName,101,'preset must not save automatically');
+ assert.equal(await query.inputValue(),'180');assert.equal((await saved()).soarSettings.maxQName,253,'preset must not save automatically');
  await page.locator('#soar-safeQName').fill('128');
  await page.locator('#soar-transport-trigger').click();await page.locator('#panel-select-options [role=option]').filter({hasText:'UDP؛ بدون جایگزین خودکار TCP'}).click();
  await page.locator('#soar-discovery-trigger').click();await page.locator('#panel-select-options [role=option]').filter({hasText:'خاموش؛ فقط Resolverهای دستی'}).click();
@@ -56,11 +56,11 @@ module.exports=async function testSettings({page,url,out,assert}){
  const bad=await saved();bad.soarSettings.maxAnswer=9999;
  assert.equal((await page.request.put(url+'/api/settings',{headers:{'X-CSRF-Token':auth.csrf},data:bad})).status(),400);
  assert.deepEqual((await saved()).soarSettings,expected);
- await page.locator('[data-soar-preset=stability]').click();
+ await page.locator('[data-soar-preset=adaptive]').click();
  assert.match(await page.locator('#soar-transport-trigger').textContent(),/خودکار/);assert.equal((await page.locator('#soar-discovery-trigger').textContent()).trim(),'فعال');
  const reset=page.waitForResponse(r=>r.url()===url+'/api/settings'&&r.request().method()==='PUT');
  await settings.locator('[type=submit]').click();assert.equal((await reset).status(),200);
- assert.deepEqual((await saved()).soarSettings,initial,'stability preset differs from migrated defaults');
+ assert.deepEqual((await saved()).soarSettings,initial,'adaptive preset differs from fresh defaults');
  for(const width of [1440,768,414,375,320]){
   await page.setViewportSize({width,height:1100});await page.evaluate(()=>window.scrollTo(0,0));
   assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1),'settings overflow at '+width);
@@ -77,7 +77,7 @@ module.exports=async function testSettings({page,url,out,assert}){
  const mobile=await page.context().browser().newContext({viewport:{width:375,height:900},hasTouch:true,isMobile:true,storageState:await page.context().storageState()});
  try{
   const touch=await mobile.newPage();await touch.goto(url+'/#settings');
-  await touch.waitForFunction(()=>document.getElementById('soar-maxQName').value==='101');
+  await touch.waitForFunction(()=>document.getElementById('soar-maxQName').value==='253');
   const trigger=touch.locator('#soar-maxQName').locator('..').locator('.help-trigger');
   await trigger.scrollIntoViewIfNeeded();await trigger.tap();await touch.locator('#field-tooltip').waitFor({state:'visible'});
   assert.match(await touch.locator('#field-tooltip').textContent(),/آپلود/);

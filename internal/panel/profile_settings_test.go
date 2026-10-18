@@ -76,7 +76,7 @@ func TestProfileTuningPersistsExportsAndKeepsAccountIdentity(t *testing.T) {
 	}
 }
 
-func TestLegacySettingsUseBeta3Defaults(t *testing.T) {
+func TestLegacySettingsWithoutStoredTuningReceiveAdaptiveDefaults(t *testing.T) {
 	s := testStore(t) // Init writes the pre-tuning schema with no soarSettings.
 	cfg, e := s.Settings()
 	if e != nil || cfg.SoarSettings == nil || *cfg.SoarSettings != DefaultProfileSettings() {
@@ -145,5 +145,26 @@ func TestSettingsAPIValidatesTuningAndExportsIt(t *testing.T) {
 	saved, _ := s.Settings()
 	if saved.SoarSettings.MaxStreams != 128 || saved.SoarSettings.MaxQName != 180 {
 		t.Fatal("rejected HTTP save mutated settings")
+	}
+}
+
+func TestExplicitLimitedProfileRemainsUnchanged(t *testing.T) {
+	s := testStore(t)
+	c := account(t, s, 0)
+	cfg, _ := s.Settings()
+	p := DefaultProfileSettings()
+	p.DiscoveryWant, p.DiscoveryConcurrency, p.DiscoveryPaceMs = 1, 1, 1500
+	p.MaxQName, p.MaxAnswer, p.MaxInflight, p.MaxPathWindow = 101, 512, 32, 8
+	cfg.SoarSettings = &p
+	if e := s.SaveSettings(cfg); e != nil {
+		t.Fatal(e)
+	}
+	saved, e := s.Settings()
+	if e != nil || *saved.SoarSettings != p {
+		t.Fatal("saved limited profile silently upgraded", e)
+	}
+	link, e := s.Profile(c.ID)
+	if e != nil || exportedSettings(t, link) != p {
+		t.Fatal("explicit limits were not exported", e)
 	}
 }
