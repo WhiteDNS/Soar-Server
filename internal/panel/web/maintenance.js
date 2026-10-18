@@ -1,0 +1,81 @@
+'use strict';
+window.panelMaintenance=(()=>{
+ let restoreToken='',updateVersion='',accessPlan='',accessConfig={},available=false,watching=false;
+ const delay=ms=>new Promise(resolve=>setTimeout(resolve,ms));
+ const info=(id,text,error=false)=>{const el=$(id);el.textContent=message({message:text});el.dataset.kind=error?'error':'info';};
+ const withFeedback=(button,id,fn)=>withButton(button,async()=>{try{return await fn();}catch(e){info(id,message(e),true);throw e;}});
+ function pendingJob(value){try{if(value)sessionStorage.setItem('soar-maintenance-job',value);else sessionStorage.removeItem('soar-maintenance-job');}catch{}}
+ function jobText(job){if(!job?.id)return 'هنوز عملیاتی انجام نشده است.';const kind=job.kind==='restore'?'بازیابی':'به‌روزرسانی';const states={running:'در حال انجام است؛ ممکن است ارتباط موقتاً قطع شود.',succeeded:'با موفقیت انجام شد.',rolled_back:'کامل نشد؛ نسخه و اطلاعات قبلی برگردانده شد.',failed:'انجام نشد؛ جزئیات را بررسی کنید.'};return kind+' '+(states[job.state]||job.state)+(job.state==='failed'||job.state==='rolled_back'?' '+job.message:'');}
+ function showJob(job){for(const el of document.querySelectorAll('[data-maintenance-state]')){el.textContent=jobText(job);el.dataset.kind=['failed','rolled_back'].includes(job?.state)?'error':'info';}}
+ async function load(page){
+  const state=await api('/maintenance');available=state.available;$('update-current').textContent=state.version;showJob(state.job);
+  $('restore-apply').disabled=!available;$('update-install').disabled=!available||!updateVersion;
+  if(!available&&page==='backup')info('restore-feedback','برای فعال‌شدن بازیابی، نصب‌کنندهٔ همین نسخه باید سرویس نگهداری را نصب کرده باشد. '+(state.error||''),true);
+  if(!available&&page==='updates')info('update-feedback','سرویس نگهداری در دسترس نیست. نصب‌کنندهٔ همین نسخه را اجرا کنید؛ بررسی نسخه همچنان ممکن است.',true);
+  if(page==='security'){
+   const value=await api('/access');accessConfig=value.config;$('access-current-url').value=new URL('.',document.baseURI).href;
+   $('access-state').textContent=accessConfig.https?'ارتباط با HTTPS برقرار است؛ گواهی خودکار تمدید می‌شود.':'ارتباط فعلی HTTP است. برای محافظت از رمز و اطلاعات، HTTPS را فعال کنید.';
+   $('access-domain').value=accessConfig.domain||'';$('access-email').value=accessConfig.email||'';$('access-email').readOnly=!!accessConfig.https;
+   $('access-https').checked=true;$('access-https').disabled=!!accessConfig.https;syncDomain();
+  }
+ }
+ async function watchJob(job){
+  pendingJob(job.id);showJob(job);if(watching)return;watching=true;
+  try{for(let i=0;i<150;i++){
+   await delay(2000);
+   try{const state=await api('/maintenance');if(state.job?.id===job.id){showJob(state.job);if(state.job.state!=='running'){pendingJob('');return;}}}
+   catch{if(!csrf){$('login-notice').textContent='سرور دوباره در دسترس است. برای مشاهدهٔ نتیجهٔ عملیات، با رمز فعلی وارد شوید.';return;}}
+  }for(const el of document.querySelectorAll('[data-maintenance-state]'))el.textContent='وضعیت هنوز نهایی نشده است. پس از ورود دوباره، نتیجهٔ آخرین عملیات را ببینید.';
+  }finally{watching=false;}
+ }
+ $('restore-file').onchange=()=>{restoreToken='';$('restore-preview').hidden=true;info('restore-feedback','');};
+ $('restore-form').onsubmit=e=>{e.preventDefault();withFeedback(e.submitter,'restore-feedback',async()=>{
+  restoreToken='';$('restore-preview').hidden=true;const file=$('restore-file').files[0];if(!file)throw Error('فایل پشتیبان را انتخاب کنید.');if(file.size>32*1024**2)throw Error('حجم فایل بیشتر از ۳۲ MiB است.');info('restore-feedback','در حال بررسی فایل…');
+  const response=await fetch(apiPath('/restore/preview'),{method:'POST',headers:{'Content-Type':'application/octet-stream','X-CSRF-Token':csrf},body:file,credentials:'same-origin'});const result=await response.json();if(!response.ok){info('restore-feedback',result.error||'فایل قابل بازیابی نیست.',true);return;}
+  restoreToken=result.token;$('restore-summary').textContent=number(result.summary.accounts)+' حساب · '+result.summary.base_zone+' · '+bytes(result.summary.bytes);$('restore-preview').hidden=false;$('restore-confirm').checked=false;$('restore-password').value='';info('restore-feedback','فایل معتبر است. برای جایگزینی حساب‌ها، رمز فعلی را وارد و بازیابی را تأیید کنید.');
+ });};
+ $('restore-apply').onclick=e=>withFeedback(e.currentTarget,'restore-feedback',async()=>{
+  if(!restoreToken)throw Error('ابتدا فایل را بررسی کنید.');if(!$('restore-confirm').checked)throw Error('جایگزینی اطلاعات با پشتیبان را تأیید کنید.');
+  const password=$('restore-password').value;try{const job=await api('/restore/apply','POST',{token:restoreToken,password});restoreToken='';$('restore-preview').hidden=true;info('restore-feedback','بازیابی آغاز شد؛ رمز و آدرس ورود فعلی حفظ می‌شوند.');void watchJob(job);}finally{$('restore-password').value='';}
+ });
+ $('update-check').onclick=e=>withFeedback(e.currentTarget,'update-feedback',async()=>{
+  updateVersion='';$('update-preview').hidden=true;info('update-feedback','در حال بررسی مخزن رسمی…');const result=await api('/updates/check','POST',{});$('update-current').textContent=result.current;
+  if(result.available){updateVersion=result.latest;$('update-latest').textContent=result.latest;$('update-release').href=result.release_url;$('update-preview').hidden=false;$('update-install').disabled=!available;info('update-feedback','نسخهٔ جدید آمادهٔ نصب است.');}else info('update-feedback','نسخهٔ فعلی به‌روز است. آخرین انتشار: '+result.latest);
+ });
+ $('update-install').onclick=e=>withFeedback(e.currentTarget,'update-feedback',async()=>{
+  const password=$('update-password').value;try{if(!updateVersion)throw Error('ابتدا نسخهٔ جدید را بررسی کنید.');const job=await api('/updates/install','POST',{version:updateVersion,password});info('update-feedback','دریافت و بررسی بسته آغاز شد. تا پایان بررسی، سرویس فعلی کار می‌کند.');void watchJob(job);}finally{$('update-password').value='';}
+ });
+ function syncDomain(){$('access-domain').required=$('access-https').checked;$('access-domain').disabled=!$('access-https').checked;$('access-email').disabled=!$('access-https').checked;}
+ $('access-https').onchange=syncDomain;
+ $('access-form').onsubmit=e=>{e.preventDefault();withFeedback(e.submitter,'access-feedback',async()=>{
+  accessPlan='';$('access-preview').hidden=true;info('access-feedback','در حال آماده‌سازی؛ صدور گواهی ممکن است چند دقیقه طول بکشد. آدرس فعلی همچنان کار می‌کند.');
+  try{
+   const started=await api('/access/prepare','POST',{domain:$('access-https').checked?$('access-domain').value:'',https:$('access-https').checked,email:$('access-email').value,generate_path:$('access-random-path').checked,base_path:accessConfig.base_path||'',password:$('access-password').value});
+   for(let i=0;i<150;i++){const plan=(await api('/access')).plan;if(!plan||plan.id!==started.id)throw Error('بررسی آدرس منقضی شد؛ دوباره آماده‌سازی کنید.');if(plan.state==='failed'){info('access-feedback',plan.error,true);return;}if(plan.state==='ready'){accessPlan=plan.id;$('access-next-url').value=plan.url;$('access-confirm').checked=false;$('access-preview').hidden=false;info('access-feedback','آدرس جدید آماده است. ابتدا آن را ذخیره کنید؛ هنوز تنظیم قبلی فعال است.');return;}await delay(2000);}
+   info('access-feedback','صدور گواهی هنوز تمام نشده است. وضعیت DNS و پورت‌های ۸۰ و ۴۴۳ را بررسی کنید.',true);
+  }finally{$('access-password').value='';}
+ });};
+ $('access-copy').onclick=e=>withButton(e.currentTarget,async()=>{
+  const field=$('access-next-url');let copied=false;if(navigator.clipboard&&isSecureContext){try{await navigator.clipboard.writeText(field.value);copied=true;}catch{}}
+  if(!copied){field.focus();field.select();copied=document.execCommand('copy');}if(!copied)throw Error('مرورگر اجازهٔ کپی نداد؛ آدرس انتخاب‌شده را از منوی مرورگر کپی کنید.');toast('آدرس جدید کپی شد.','success');
+ });
+ $('access-apply').onclick=e=>withFeedback(e.currentTarget,'access-feedback',async()=>{
+  if(!accessPlan||!$('access-confirm').checked)throw Error('ابتدا آدرس جدید را ذخیره و گزینهٔ تأیید را انتخاب کنید.');
+  const result=await api('/access/apply','POST',{id:accessPlan});location.assign(result.url);
+ });
+ function afterLogin(){let id;try{id=sessionStorage.getItem('soar-maintenance-job');}catch{}if(id){$('login-notice').textContent='';api('/maintenance').then(state=>{showJob(state.job);if(state.job?.id===id&&state.job.state==='running')void watchJob(state.job);else pendingJob('');}).catch(()=>{});}}
+ if(csrf&&['backup','updates','security'].includes(currentPage))load(currentPage).catch(e=>toast(message(e),'error'));
+ return {load,afterLogin,messages:{
+  'current administrator password is incorrect':'رمز فعلی مدیر درست نیست.',
+  'too many password checks; retry after five minutes':'تعداد بررسی رمز زیاد است؛ پنج دقیقه دیگر امتحان کنید.',
+  'invalid or unsupported panel backup':'فایل خراب است یا پشتیبان سازگارِ این پنل نیست.',
+  'backup preview expired; upload the file again':'بررسی فایل منقضی شده است؛ فایل را دوباره انتخاب و بررسی کنید.',
+  'choose a newer official panel version':'ابتدا یک نسخهٔ رسمی جدیدتر را بررسی کنید.',
+  'invalid panel domain':'نام دامنه درست نیست؛ مانند panel.example.com وارد کنید.',
+  'panel domain must contain ASCII letters, numbers or hyphens':'دامنه را فقط با حروف انگلیسی، عدد، خط تیره و نقطه وارد کنید.',
+  'enter a full domain such as panel.example.com':'نام کامل دامنه را وارد کنید؛ مانند panel.example.com.',
+  'access preview expired or is not ready':'آدرس جدید آماده نیست یا مهلت آن گذشته است؛ دوباره آماده‌سازی کنید.',
+  'another maintenance operation is running':'یک عملیات نگهداری در حال انجام است؛ تا پایان آن صبر کنید.',
+  'maintenance service unavailable':'سرویس نگهداری در دسترس نیست. نصب‌کنندهٔ نسخهٔ فعلی را اجرا کنید.'
+ }};
+})();

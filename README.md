@@ -1,96 +1,86 @@
-# WhiteDNS Soar Server
+# WhiteDNS Soar Panel
 
-Guided Soar server installer for **Ubuntu 24.04 LTS, amd64/x86_64**.
-The SSH terminal uses English ASCII text. Each installation step explains what
-to enter and why; a full Persian guide is included.
+پنل مدیریت سرور **WhiteDNS Soar 0.2.0 — Stable** برای **Ubuntu 22.04/24.04/26.04 یا Debian 12/13، معماری amd64/x86_64**.
 
-## Upstream project and credits / پروژهٔ اصلی و اعتبار
+موتور اصلی **Soar توسط [Lantern / GetLantern](https://github.com/getlantern/soar) توسعه یافته است**. WhiteDNS پنل، نصب‌کننده و یکپارچه‌سازی کلاینت را توسعه می‌دهد.
 
-The **Soar engine is developed by Lantern / GetLantern**, under the
-[Apache-2.0 license](https://github.com/getlantern/soar/blob/v0.2.2/LICENSE).
-This repository provides the WhiteDNS installation, service management and
-client-profile integration around that engine. This installer is independently
-maintained by WhiteDNS.
+## نصب پنل با یک دستور
 
-موتور اصلی **Soar توسط تیم Lantern / GetLantern توسعه یافته است**. کار این ریپو
-نصب‌کننده، مدیریت سرویس و یکپارچه‌سازی با WhiteDNS است؛ توسعهٔ موتور اصلی
-به تیم Lantern ارجاع داده می‌شود.
+با SSH وارد سرور شوید و اجرا کنید:
 
-- [Original Soar source / سورس اصلی](https://github.com/getlantern/soar)
-- [Official Soar website / وب‌سایت اصلی](https://soar.lantern.io/)
-- [Pinned upstream release: v0.2.2](https://github.com/getlantern/soar/tree/v0.2.2)
-- [Third-party attribution / اعتبار و مجوز وابستگی‌ها](NOTICE)
+```bash
+bash <(curl -fsSL https://raw.githubusercontent.com/WhiteDNS/Soar-Server/main/panel-setup.sh)
+```
 
-## نصب با یک دستور
+نصب‌کننده نسخهٔ پایدار مشخص‌شده و checksum آن را از Releases دریافت و بررسی می‌کند؛ سپس هفت مرحلهٔ نصب را با توضیح هر مرحله پیش می‌برد. دسترسی root یا sudo و systemd لازم است؛ Go، Docker، Node یا پایگاه دادهٔ جدا روی سرور لازم نیست. متن ترمینال **انگلیسی و ASCII** است تا در SSH درست نمایش داده شود.
 
-ابتدا با SSH وارد VPS شوید. سپس همین دستور را در ترمینال سرور اجرا کنید:
+اگر `curl` نصب نیست، ابتدا اجرا کنید:
+
+```bash
+sudo apt-get update
+sudo apt-get install -y curl
+```
+
+**[راهنمای قدم‌به‌قدم فارسی: DNS، نصب، ورود، ساخت حساب و اتصال گوشی](docs/PANEL.fa.md)**
+
+به دامنه و دسترسی پنل DNS آن نیاز دارید. رکورد A برای nameserver و رکورد NS برای زیردامنهٔ جدا بسازید؛ نمونهٔ دقیق در راهنماست. پورت UDP/53 باید در دسترس باشد. رکوردهای MasterDNS یا CottenDNS فعال را تغییر ندهید. نصب‌کننده پیش از جایگزینی سرور مستقل قبلی، تأیید صریح مهاجرت می‌گیرد.
+
+## بعد از نصب
+
+آدرس کامل پنل در پایان نصب نمایش داده می‌شود؛ **مسیر تصادفی انتهای آدرس را ذخیره کنید**. بازکردن IP یا دامنه بدون آن مسیر، صفحهٔ ورود را نشان نمی‌دهد.
+
+1. با حساب مدیر وارد شوید و در «دامنه و امنیت»، دامنه و HTTPS را تنظیم کنید. این کار با `sudo soar-panel-security` در ترمینال هم قابل انجام است.
+2. در «حساب‌های کاربری»، حساب بسازید و حجم، تاریخ انقضا، سرعت و سقف جریان هم‌زمان را تعیین کنید.
+3. از «لینک / QR»، لینک حساب را کپی و در بخش Import اپ [WhiteDNS](https://github.com/WhiteDNS/WhiteDNS-Android/releases) وارد کنید.
+
+برای اصلاحات مرورگر و تنظیم خودکار Soar، از **[WhiteDNS 1.6.7-beta2 یا جدیدتر](https://github.com/WhiteDNS/WhiteDNS-Android/releases/tag/1.6.7-beta2)** استفاده کنید. پایداربودن پنل، وضعیت آزمایشی این نسخهٔ اندروید را تغییر نمی‌دهد. بعد از تغییر تنظیمات تونل، لینک همان حساب را دوباره وارد اپ کنید؛ تنظیمات واردشده خودکار تغییر نمی‌کنند.
+
+## امکانات و ارتقا
+
+- داشبورد واقعی منابع سرور، مصرف و جریان‌ها؛ رابط فارسی، روشن/تیره و سازگار با موبایل.
+- حساب مستقل با لینک و QR، حجم مشترک آپلود/دانلود، انقضا، سرعت و سقف جریان TCP؛ قطع اتصال، تعویض کلید و خروجی CSV.
+- تنظیمات پیشرفته با توضیح روی علامت سؤال؛ حالت خودکار، مسیر محدود، متعادل و کارایی بیشتر.
+- پشتیبان، بازیابی و به‌روزرسانی از خود پنل با تأیید رمز مدیر و بازگشت در صورت شکست فعال‌سازی.
+- دامنه، HTTPS با تمدید خودکار گواهی و مسیر ورود تصادفی؛ تنظیم از پنل یا ترمینال.
+
+نسخهٔ پایدار فقط به‌روزرسانی‌های پایدار را پیشنهاد می‌دهد. کاربران beta8 و جدیدتر می‌توانند از خود پنل به 0.2.0 ارتقا دهند؛ نسخه‌های قدیمی‌تر باید یک‌بار نصب‌کنندهٔ بالا را اجرا کنند تا سرویس نگهداری نصب شود. حساب‌ها، کلیدها، مصرف، تنظیمات ذخیره‌شده و مسیر ورود موجود حفظ می‌شوند. پیش از ارتقا پشتیبان بگیرید.
+
+## محدوده و بررسی
+
+این انتشار پایدارِ **پنل مدیریت** است. پورت‌های مقصد پیش‌فرض 80/443 هستند؛ UDP/QUIC و همهٔ بازی‌ها یا تماس‌ها پوشش داده نمی‌شوند. شمارش جریان TCP معادل شمارش دستگاه نیست و لینک مشترک، هویت مشترک حساب دارد.
+
+آزمون‌های Go، race، نصب‌کننده، بازیابی/ارتقا و رابط مرورگر در [GitHub Actions](https://github.com/WhiteDNS/Soar-Server/actions/workflows/panel.yml) اجرا می‌شوند. آزمون گوشی فیزیکی، شبکه‌های ایران و بار تولیدی گسترده هنوز کامل نیست. [گزارش اختلال مرورگر](docs/SOAR-WEB-RELIABILITY-2026-10-18.fa.md) نتایج و توقف مقطعی مشاهده‌شده را ثبت کرده است؛ پاسخ بررسی ربات آمازون معادل بازشدن کامل فروشگاه نیست.
+
+[دانلود نسخهٔ پایدار](https://github.com/WhiteDNS/Soar-Server/releases/tag/panel-v0.2.0) · [معماری](docs/PANEL-DESIGN.md) · [راهنمای کامل](docs/PANEL.fa.md)
+
+## پروژهٔ اصلی و مجوزها
+
+- [سورس اصلی Lantern Soar](https://github.com/getlantern/soar) · [وب‌سایت رسمی](https://soar.lantern.io/).
+- موتور سمت سرور: [Soar v0.2.2](https://github.com/getlantern/soar/tree/v0.2.2)، تحت [Apache-2.0](https://github.com/getlantern/soar/blob/v0.2.2/LICENSE).
+- [مجوز این مخزن](LICENSE) · [اعتبار وابستگی‌ها](NOTICE).
+
+ظاهر و گردش کار از [پنل سنایی / 3x-ui](https://github.com/MHSanaei/3x-ui) الهام گرفته‌اند؛ کد و دارایی‌های آن وارد این پروژه نشده‌اند. پنل توسط WhiteDNS مستقل از Lantern و 3x-ui نگهداری می‌شود.
+
+## نصب قدیمی بدون پنل
+
+راهنمای [SERVER-GUIDE.fa.md](SERVER-GUIDE.fa.md) و دستور زیر برای سرور مستقل قدیمی باقی می‌مانند:
 
 ```bash
 bash <(curl -fsSL https://raw.githubusercontent.com/WhiteDNS/Soar-Server/main/setup.sh)
 ```
 
-اسکریپت بستهٔ نسخه‌دار و checksum را از Releases می‌گیرد، تطبیق فایل‌ها را
-بررسی می‌کند و نصب هفت‌مرحله‌ای را در همان ترمینال ادامه می‌دهد. کاربر عادی
-با دسترسی sudo هم می‌تواند اجرا کند؛ ابزارهای لازم پس از توضیح و تأیید نصب می‌شوند.
-اگر `curl: command not found` دیدید، ابتدا `sudo apt-get update` و سپس
-`sudo apt-get install -y curl` را اجرا کنید و دستور بالا را دوباره بزنید.
+این دستور **پنل نصب نمی‌کند**؛ مدیریت آن با `sudo soar-manager` است. مهاجرت از پروفایل مشترک سرور مستقل به حساب‌های پنل، به تأیید مهاجرت و لینک‌های تازهٔ حساب‌ها نیاز دارد.
 
-**[راهنمای کامل فارسی، از ورود SSH تا DNS و اتصال گوشی](SERVER-GUIDE.fa.md)**
+## ساخت از سورس
 
-به یک دامنه و دسترسی پنل DNS آن نیاز دارید. نام دامنه و رکوردهای دقیق را
-نصب‌کننده توضیح می‌دهد. برای Soar زیردامنهٔ جدا بسازید؛ رکوردهای MasterDNS
-و CottenDNS موجود را تغییر ندهید. DNSهای فعال سرور به‌صورت خودکار خاموش نمی‌شوند.
-
-## After installation
+Go 1.26.1، Python 3 و Bash در محیط توسعه لازم‌اند:
 
 ```bash
-sudo soar-manager             # explained management menu
-sudo soar-manager test        # authenticated tunnel + certificate-verified HTTPS
-sudo soar-manager profile     # complete IR or GLOBAL import link for WhiteDNS
-sudo soar-manager status
-```
-
-Paste the generated `soar://` link into the official
-[WhiteDNS Android app](https://github.com/WhiteDNS/WhiteDNS-Android/releases).
-The server generates its own private key; the import link includes only its
-public configuration. See the [Iran/network guide](SOAR-IRAN-GUIDE.fa.md).
-
-Upgrade to the version pinned by the current bootstrap:
-
-```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/WhiteDNS/Soar-Server/main/setup.sh) update
-```
-
-The updater preserves the domain and key and restores the previous service if
-activation fails. Rollback and uninstall are available in the manager. The key
-is kept by default on uninstall. An existing managed installation can be
-opened by rerunning the normal installation command.
-
-## Scope and verification
-
-The pinned engine is Lantern Soar v0.2.2. The server listens on public UDP/53
-and permits TCP to public destinations on ports 80/443. It does not provide
-per-user accounts or quotas. IR discovery is intended for users in Iran;
-GLOBAL is available elsewhere. Resolver reachability depends on the network.
-Operation inside Iran has not yet been field-verified.
-
-See [validation](AUDIT-REPORT.md), [tests](TESTING.md), and
-[release downloads](https://github.com/WhiteDNS/Soar-Server/releases).
-The download checksum detects corruption; obtain the script and release from
-this official repository. You can inspect `setup.sh` before running it.
-
-## Build from source
-
-Requires Go 1.26.1, Python 3 and Bash:
-
-```bash
-bash tests/installer_test.sh
-bash tests/bootstrap_test.sh
-go test ./... -count=1 -timeout 60s
+bash tests/panel_installer_test.sh
+bash tests/panel_bootstrap_test.sh
+go test ./... -count=1 -timeout 90s
+go test -race ./internal/panel ./internal/panelops -count=1 -timeout 300s
 go vet ./...
-python3 scripts/build_bundle.py
+python3 scripts/build_panel_bundle.py
+bash dist/soar-panel-0.2.0-linux-amd64/panel-install.sh --check-bundle
 ```
-
-Only release assets contain precompiled binaries; users do not need Go on the VPS.
-Installer source is Apache-2.0. Bundled dependencies retain their own notices
-and licenses. See [LICENSE](LICENSE) and [NOTICE](NOTICE).

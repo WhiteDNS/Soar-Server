@@ -1,0 +1,4 @@
+Vazirmatn v33.003, Copyright 2015 The Vazirmatn Project Authors.
+Source: https://github.com/rastikerdar/vazirmatn/tree/v33.003
+Licensed under SIL Open Font License 1.1; see OFL.txt.
+The unmodified variable font is served locally.
