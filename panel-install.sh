@@ -4,10 +4,12 @@ set -Eeuo pipefail
 export LC_ALL=C
 umask 077
 ROOT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
-PANEL_VERSION=0.2.0-beta7
+PANEL_VERSION=0.2.0-beta8
 DB=/var/lib/soar-panel/panel.db
 SERVICE=/etc/systemd/system/soar-panel.service
 BIN="$ROOT_DIR/bin/linux-amd64/soar-panel"
+OPS_BIN="$ROOT_DIR/bin/linux-amd64/soar-panel-ops"
+OPS_SERVICE=/etc/systemd/system/soar-panel-ops.service
 die(){ printf '\n[ERROR] %s\n' "$*" >&2; exit 1; }
 check_bundle(){
  [[ -f "$ROOT_DIR/SHA256SUMS" && -f "$BIN" ]] || die 'Incomplete panel bundle. Download and extract the full archive.'
@@ -126,15 +128,22 @@ backup="/root/soar-panel-backup-$(date -u +%Y%m%dT%H%M%SZ)-$$"
 install -d -m 0700 "$backup"
 [[ ! -f $SERVICE ]] || cp -p -- "$SERVICE" "$backup/soar-panel.service"
 [[ ! -f /usr/local/bin/soar-panel ]] || cp -p -- /usr/local/bin/soar-panel "$backup/soar-panel"
+ops_active=0;systemctl is-active --quiet soar-panel-ops.service && ops_active=1
+[[ ! -f $OPS_SERVICE ]] || cp -p -- "$OPS_SERVICE" "$backup/soar-panel-ops.service"
+[[ ! -f /usr/local/bin/soar-panel-ops ]] || cp -p -- /usr/local/bin/soar-panel-ops "$backup/soar-panel-ops"
 activated=0
 rollback(){
  result=$?
  if (( result && ! activated ));then
   printf '\n[ERROR] Activation failed. Restoring previously running services.\n' >&2
   systemctl stop soar-panel.service 2>/dev/null || true
+  systemctl stop soar-panel-ops.service 2>/dev/null || true
   [[ ! -f "$backup/soar-panel" ]] || install -m 0755 "$backup/soar-panel" /usr/local/bin/soar-panel
   [[ ! -f "$backup/soar-panel.service" ]] || install -m 0644 "$backup/soar-panel.service" "$SERVICE"
+  [[ ! -f "$backup/soar-panel-ops" ]] || install -m 0755 "$backup/soar-panel-ops" /usr/local/bin/soar-panel-ops
+  [[ ! -f "$backup/soar-panel-ops.service" ]] || install -m 0644 "$backup/soar-panel-ops.service" "$OPS_SERVICE"
   systemctl daemon-reload
+  (( ! ops_active )) || systemctl start soar-panel-ops.service || true
   (( ! panel_active )) || systemctl start soar-panel.service || true
   (( ! old_active )) || systemctl start soar-server.service || true
   printf 'Private backup: %s\n' "$backup" >&2
@@ -151,17 +160,26 @@ fi
 id soar-panel >/dev/null 2>&1 || useradd --system --home-dir /var/lib/soar-panel --shell /usr/sbin/nologin soar-panel
 install -d -o soar-panel -g soar-panel -m 0700 /var/lib/soar-panel
 install -m 0755 "$BIN" /usr/local/bin/soar-panel
+install -m 0755 "$OPS_BIN" /usr/local/bin/soar-panel-ops
+install -m 0755 "$ROOT_DIR/panel-security.sh" /usr/local/bin/soar-panel-security
+fresh_install=0
 if [[ ! -f $DB ]];then
+ fresh_install=1
  pwfile=$(mktemp /root/soar-panel-password.XXXXXX);printf '%s' "$password" >"$pwfile";unset password
  /usr/local/bin/soar-panel init --db "$DB" --zone "$zone" --admin "$admin" --password-file "$pwfile"
  rm -f -- "$pwfile";pwfile=''
 fi
 chown soar-panel:soar-panel "$DB";chmod 0600 "$DB"
+if (( fresh_install )) && [[ ! -e /var/lib/soar-panel/access.json ]];then
+ /usr/local/bin/soar-panel configure-access --db "$DB" --listen "$panel_bind" --random-path
+ chown soar-panel:soar-panel /var/lib/soar-panel/access.json
+fi
 cat >"$SERVICE" <<UNIT
 [Unit]
 Description=WhiteDNS Soar Management Panel (beta)
 After=network-online.target
 Wants=network-online.target
+Wants=soar-panel-ops.service
 
 [Service]
 Type=simple
@@ -187,21 +205,51 @@ LimitNOFILE=8192
 [Install]
 WantedBy=multi-user.target
 UNIT
+cat >"$OPS_SERVICE" <<UNIT
+[Unit]
+Description=WhiteDNS private panel maintenance service
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+Group=soar-panel
+ExecStart=/usr/local/bin/soar-panel-ops --health-address $panel_bind
+Restart=on-failure
+RestartSec=3
+RuntimeDirectory=soar-panel-ops
+RuntimeDirectoryMode=0750
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/usr/local/bin /var/lib/soar-panel /var/lib/soar-panel-ops /run/soar-panel-ops
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX AF_NETLINK
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target
+UNIT
+install -d -m 0700 /var/lib/soar-panel-ops
 (( ! old_active )) || systemctl stop soar-server.service
 systemctl daemon-reload
+systemctl restart soar-panel-ops.service
+systemctl is-active --quiet soar-panel-ops.service || die 'Maintenance service failed to start.'
 systemctl start soar-panel.service
 sleep 2
 systemctl is-active --quiet soar-panel.service || die 'Panel failed to start. See journalctl -u soar-panel -n 40.'
 ss -H -lun | awk -v target="$listen_ip:53" '$4==target{found=1}END{exit !found}' || die 'The expected UDP/53 listener was not found.'
 command -v curl >/dev/null || die 'curl is required for the management health check; install it and rerun.'
-code=$(curl --noproxy '*' --max-time 5 -s -o /dev/null -w '%{http_code}' "http://$panel_bind/api/session")
-[[ $code == 401 ]] || die 'Management authentication health check failed.'
+/usr/local/bin/soar-panel health --db "$DB" --listen "$panel_bind" || die 'Management readiness check failed.'
 if [[ $panel_access == 1 ]] && command -v ufw >/dev/null && ufw status | grep -q '^Status: active';then
  ufw allow "$panel_port/tcp" comment 'soar-panel-management'
 fi
 systemctl enable soar-panel.service
+systemctl enable soar-panel-ops.service
 (( ! old_active )) || systemctl disable soar-server.service
 activated=1
+panel_url=$(/usr/local/bin/soar-panel access-url --db "$DB" --listen "$panel_bind")
 printf '\n[7/7] Open the panel and create the first account\n'
 if [[ $panel_access == 1 ]];then
  printf 'Open this address directly in your browser: %s\n' "$panel_url"
@@ -216,4 +264,7 @@ printf 'Verify the phone opens websites and its public IP matches this server.\n
 printf 'If it does not connect, check NS/A records, UDP/53 and client resolver reachability.\n'
 printf 'Service: systemctl status soar-panel\nLogs: journalctl -u soar-panel -n 40 --no-pager\n'
 printf 'Private rollback backup: %s\n' "$backup"
-printf 'Guide: https://github.com/WhiteDNS/Soar-Server/blob/panel-v0.2.0-beta7/docs/PANEL.fa.md\n'
+printf 'Guide: https://github.com/WhiteDNS/Soar-Server/blob/panel-v0.2.0-beta8/docs/PANEL.fa.md\n'
+printf '\nConfigure a domain, automatic HTTPS and a random login path now or later.\n'
+read -r -p 'Open the guided secure-access setup now? [Y/n]: ' secure_now
+if [[ $secure_now == n || $secure_now == N ]];then printf 'Later, run: sudo soar-panel-security\n';else /usr/local/bin/soar-panel-security;fi

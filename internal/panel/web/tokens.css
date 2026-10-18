@@ -1,5 +1,5 @@
 /* WhiteDNS · studied reference: user-provided 3x-ui screenshots · local fonts */
-@font-face{font-family:Vazirmatn;src:url('/fonts/vazirmatn.woff2') format('woff2'),url('/fonts/vazirmatn.ttf') format('truetype');font-style:normal;font-weight:100 900;font-display:swap}
+@font-face{font-family:Vazirmatn;src:url('fonts/vazirmatn.woff2') format('woff2'),url('fonts/vazirmatn.ttf') format('truetype');font-style:normal;font-weight:100 900;font-display:swap}
 :root{
  --font-body:Vazirmatn,Tahoma,sans-serif;
  --font-display:var(--font-body);

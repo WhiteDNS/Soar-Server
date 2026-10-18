@@ -20,14 +20,14 @@ jobs:
         run: |
           go mod verify
           go test ./... -count=1 -timeout 90s
-          go test -race ./internal/panel -count=1 -timeout 120s
+          go test -race ./internal/panel ./internal/panelops -count=1 -timeout 120s
           go vet ./...
           bash tests/panel_installer_test.sh
           bash tests/panel_bootstrap_test.sh
       - name: Build offline Linux bundle
         run: |
           python3 scripts/build_panel_bundle.py
-          bash dist/soar-panel-0.2.0-beta7-linux-amd64/panel-install.sh --check-bundle
+          bash dist/soar-panel-0.2.0-beta8-linux-amd64/panel-install.sh --check-bundle
       - uses: actions/setup-node@v4
         with:
           node-version: '24'
@@ -37,7 +37,7 @@ jobs:
           node "$RUNNER_TEMP/panel-tools/node_modules/playwright/cli.js" install --with-deps chromium
       - name: Test browser workflows and responsive layout
         env:
-          PANEL_BINARY: ${{ github.workspace }}/dist/soar-panel-0.2.0-beta7-linux-amd64/bin/linux-amd64/soar-panel
+          PANEL_BINARY: ${{ github.workspace }}/dist/soar-panel-0.2.0-beta8-linux-amd64/bin/linux-amd64/soar-panel
           PANEL_PLAYWRIGHT: ${{ runner.temp }}/panel-tools/node_modules/playwright
           PANEL_SCREENSHOTS: ${{ runner.temp }}/panel-screenshots
         run: node tests/panel-ui.cjs

@@ -3,6 +3,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -11,11 +12,13 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"time"
 
 	"soar-server-setup/internal/panel"
+	"soar-server-setup/internal/panelops"
 )
 
 func main() {
@@ -24,6 +27,10 @@ func main() {
 	}
 }
 func execute(args []string) error {
+	if len(args) == 1 && args[0] == "version" {
+		fmt.Println(panel.Version)
+		return nil
+	}
 	if len(args) == 0 {
 		return errors.New("usage: soar-panel init|run|admin-reset|backup [options]")
 	}
@@ -41,11 +48,101 @@ func execute(args []string) error {
 	key := f.String("tls-key", "", "HTTPS private key PEM file")
 	proxy := f.Bool("trust-loopback-proxy", false, "Trust HTTPS forwarding header only from loopback proxy")
 	output := f.String("output", "", "New private backup file (backup only)")
+	input := f.String("input", "", "Backup to inspect (isolated validation only)")
+	accessFile := f.String("access-file", "", "Machine-local access configuration (defaults beside DB)")
+	opsSocket := f.String("ops-socket", "/run/soar-panel-ops/control.sock", "Private maintenance service socket")
+	domain := f.String("domain", "", "Panel HTTPS domain (configure-access only)")
+	email := f.String("email", "", "Optional certificate account email")
+	randomPath := f.Bool("random-path", false, "Generate a new private access path")
 	if err := f.Parse(args[1:]); err != nil {
 		return err
 	}
 	if f.NArg() != 0 {
 		return errors.New("unexpected arguments")
+	}
+	if *accessFile == "" {
+		*accessFile = filepath.Join(filepath.Dir(*db), "access.json")
+	}
+	if args[0] == "inspect-backup" {
+		v, e := panel.InspectBackupFile(*input)
+		if e != nil {
+			return e
+		}
+		return json.NewEncoder(os.Stdout).Encode(v)
+	}
+	if args[0] == "access-url" || args[0] == "health" {
+		cfg, e := panel.ReadAccessConfig(*accessFile)
+		if e != nil {
+			return e
+		}
+		path := cfg.BasePath
+		if path == "" {
+			path = "/"
+		}
+		origin := "http://" + *bind
+		if args[0] == "health" {
+			client := &http.Client{Timeout: 5 * time.Second, Transport: &http.Transport{Proxy: nil}}
+			r, e := client.Get(origin + path + "api/health")
+			if e != nil {
+				return e
+			}
+			r.Body.Close()
+			if r.StatusCode != 204 {
+				return fmt.Errorf("panel readiness HTTP %d", r.StatusCode)
+			}
+			return nil
+		}
+		if cfg.HTTPS {
+			origin = "https://" + cfg.Domain
+		}
+		fmt.Println(origin + path)
+		return nil
+	}
+	if args[0] == "access-reset" {
+		return panel.WritePrivateJSON(*accessFile, panel.AccessConfig{})
+	}
+	if args[0] == "configure-access" {
+		a, e := panel.NewAccessController(*accessFile)
+		if e != nil {
+			return e
+		}
+		defer a.Close()
+		if e = a.Start(http.NotFoundHandler()); e != nil {
+			return e
+		}
+		cfg := a.Config()
+		host := *domain
+		if host == "" {
+			host = cfg.Domain
+		}
+		mail := *email
+		if mail == "" {
+			mail = cfg.Email
+		}
+		plan, e := a.Prepare("http://"+*bind, "terminal", panel.AccessInput{Domain: host, HTTPS: host != "", Email: mail, GeneratePath: *randomPath, BasePath: cfg.BasePath}, panel.NewOpsClient(*opsSocket).AllowHTTPS)
+		if e != nil {
+			return e
+		}
+		deadline := time.NewTimer(5 * time.Minute)
+		defer deadline.Stop()
+		for {
+			plan = a.Plan()
+			if plan.State == "failed" {
+				return errors.New(plan.Error)
+			}
+			if plan.State == "ready" {
+				url, e := a.Apply(plan.ID, "terminal")
+				if e == nil {
+					fmt.Println(url)
+				}
+				return e
+			}
+			select {
+			case <-deadline.C:
+				return errors.New("certificate setup timed out; previous address retained")
+			case <-time.After(500 * time.Millisecond):
+			}
+		}
 	}
 	switch args[0] {
 	case "init", "run", "admin-reset", "backup", "zone":
@@ -147,7 +244,24 @@ func execute(args []string) error {
 		return fmt.Errorf("panel listener: %w", err)
 	}
 	defer listener.Close()
-	server := &http.Server{Handler: panel.NewHTTP(s, m, *proxy), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second, WriteTimeout: 30 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 16 * 1024}
+	handler := panel.NewHTTP(s, m, *proxy)
+	handler.SetMaintenance(panel.NewOpsClient(*opsSocket), func(ctx context.Context, path string) (panel.BackupSummary, error) {
+		binary, e := os.Executable()
+		if e != nil {
+			return panel.BackupSummary{}, e
+		}
+		return panelops.InspectChild(ctx, binary, path)
+	})
+	access, e := panel.NewAccessController(*accessFile)
+	if e != nil {
+		return e
+	}
+	handler.SetAccess(access)
+	if e = access.Start(handler); e != nil {
+		return e
+	}
+	defer access.Close()
+	server := &http.Server{Handler: handler, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 90 * time.Second, WriteTimeout: 90 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 16 * 1024}
 	done := make(chan error, 2)
 	go func() { done <- m.Run() }()
 	go func() {

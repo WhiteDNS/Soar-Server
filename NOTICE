@@ -26,3 +26,7 @@ The panel embeds unmodified Vazirmatn v33.003 variable fonts (SIL OFL 1.1).
 Copyright 2015 The Vazirmatn Project Authors.
 Source: https://github.com/rastikerdar/vazirmatn/tree/v33.003
 The panel bundle includes licenses/Vazirmatn-OFL.txt.
+
+The panel's optional automatic HTTPS support uses golang.org/x/crypto/acme/autocert,
+golang.org/x/net and golang.org/x/text (BSD-style licenses). Their original license
+texts are included in the panel bundle's licenses/ directory.

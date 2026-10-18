@@ -11,7 +11,7 @@ import subprocess
 import tarfile
 
 ROOT=Path(__file__).resolve().parents[1]
-VERSION="0.2.0-beta7"
+VERSION="0.2.0-beta8"
 NAME=f"soar-panel-{VERSION}-linux-amd64"
 
 def run(*args):
@@ -25,16 +25,16 @@ def main():
     binary=bundle/"bin/linux-amd64"
     binary.mkdir(parents=True,exist_ok=True)
     env=dict(os.environ,GOOS="linux",GOARCH="amd64",CGO_ENABLED="0")
-    for name,package in [("soar-panel","./cmd/soar-panel"),("soar-check","./cmd/soar-check")]:
+    for name,package in [("soar-panel","./cmd/soar-panel"),("soar-panel-ops","./cmd/soar-panel-ops"),("soar-check","./cmd/soar-check")]:
         subprocess.run(["go","build","-mod=readonly","-trimpath","-buildvcs=false","-ldflags=-s -w","-o",str(binary/name),package],cwd=ROOT,env=env,check=True)
-    for name in ["panel-install.sh","LICENSE","NOTICE","docs/PANEL.fa.md","docs/PANEL-DESIGN.md","docs/PANEL-TUNING-2026-10-17.fa.md"]:
+    for name in ["panel-install.sh","panel-security.sh","LICENSE","NOTICE","docs/PANEL.fa.md","docs/PANEL-DESIGN.md","docs/PANEL-TUNING-2026-10-17.fa.md"]:
         target=bundle/name;target.parent.mkdir(parents=True,exist_ok=True)
         target.write_bytes((ROOT/name).read_text(encoding="utf8").replace("\r\n","\n").encode("utf8"))
     (bundle/"lib").mkdir(exist_ok=True)
     (bundle/"lib/standalone-install.sh").write_bytes((ROOT/"install.sh").read_text(encoding="utf8").replace("\r\n","\n").encode("utf8"))
     licenses=bundle/"licenses";licenses.mkdir(exist_ok=True)
     shutil.copyfile(ROOT/"internal/panel/web/fonts/OFL.txt",licenses/"Vazirmatn-OFL.txt")
-    for mod,label in [("github.com/getlantern/soar","Soar"),("go.etcd.io/bbolt","bbolt"),("github.com/skip2/go-qrcode","go-qrcode"),("golang.org/x/crypto","x-crypto"),("golang.org/x/sys","x-sys")]:
+    for mod,label in [("github.com/getlantern/soar","Soar"),("go.etcd.io/bbolt","bbolt"),("github.com/skip2/go-qrcode","go-qrcode"),("golang.org/x/crypto","x-crypto"),("golang.org/x/sys","x-sys"),("golang.org/x/net","x-net"),("golang.org/x/text","x-text")]:
         module=Path(run("go","list","-m","-f","{{.Dir}}",mod))
         shutil.copyfile(module/"LICENSE",licenses/(label+"-LICENSE.txt"))
     soar=Path(run("go","list","-m","-f","{{.Dir}}","github.com/getlantern/soar"))

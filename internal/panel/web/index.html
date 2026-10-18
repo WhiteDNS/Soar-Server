@@ -1,6 +1,6 @@
 <!doctype html>
 <html lang="fa" dir="rtl" data-theme="dark">
-<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="light dark"><title>WhiteDNS · Soar Panel</title><link rel="preload" href="/fonts/vazirmatn.woff2" as="font" type="font/woff2" crossorigin><link rel="stylesheet" href="/tokens.css"><link rel="stylesheet" href="/style.css"><link rel="stylesheet" href="/redesign.css"><script src="/settings.js" defer></script><script src="/ui.js" defer></script><script src="/app.js" defer></script></head>
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="light dark"><title>WhiteDNS · Soar Panel</title><link rel="preload" href="fonts/vazirmatn.woff2" as="font" type="font/woff2" crossorigin><link rel="stylesheet" href="tokens.css"><link rel="stylesheet" href="style.css"><link rel="stylesheet" href="redesign.css"><script src="settings.js" defer></script><script src="ui.js" defer></script><script src="app.js" defer></script><script src="maintenance.js" defer></script></head>
 <body>
 <section id="login-view" class="login-view">
  <div class="login-tools"><button id="login-theme" class="icon-button" type="button" aria-label="تغییر تم"></button></div>
@@ -8,8 +8,8 @@
   <div class="login-brand"><strong>WhiteDNS</strong></div><h1>خوش آمدید</h1><p class="muted">برای مدیریت سرور Soar وارد شوید.</p>
   <label for="login-name">نام کاربری</label><div class="input-icon"><span data-icon="user"></span><input id="login-name" name="username" autocomplete="username" dir="ltr" placeholder="Username" required maxlength="64"></div>
   <label for="login-password">رمز عبور</label><div class="input-icon"><span data-icon="lock"></span><input id="login-password" name="password" type="password" autocomplete="current-password" dir="ltr" placeholder="Password" required maxlength="72"><button id="password-toggle" class="icon-button password-toggle" type="button" aria-label="نمایش رمز عبور" aria-pressed="false"><span data-icon="eye"></span></button></div>
-  <p id="login-error" class="error" role="alert"></p><button class="primary" type="submit">ورود به پنل</button>
-  <p class="login-foot">WhiteDNS Soar Panel · <bdi>0.2.0-beta7</bdi><br>موتور تونل از Lantern</p>
+  <p id="login-notice" class="hint" role="status"></p><p id="login-error" class="error" role="alert"></p><button class="primary" type="submit">ورود به پنل</button>
+  <p class="login-foot">WhiteDNS Soar Panel · <bdi>0.2.0-beta8</bdi><br>موتور تونل از Lantern</p>
  </form>
 </section>
 <div id="app" hidden>
@@ -20,9 +20,9 @@
    <a href="#clients" data-page="clients"><span data-icon="users"></span>حساب‌های کاربری <span id="nav-count" class="count">0</span></a>
    <a href="#events" data-page="events"><span data-icon="activity"></span>رویدادها</a>
    <a href="#settings" data-page="settings"><span data-icon="settings"></span>تنظیمات سرور</a>
-   <a href="#backup" data-page="backup"><span data-icon="backup"></span>پشتیبان‌گیری</a>
+   <a href="#backup" data-page="backup"><span data-icon="backup"></span>پشتیبان و بازیابی</a><a href="#updates" data-page="updates"><span data-icon="refresh"></span>به‌روزرسانی پنل</a><a href="#security" data-page="security"><span data-icon="lock"></span>دامنه و امنیت</a>
   </nav>
-  <div class="sidebar-foot"><span class="beta">WhiteDNS Panel · beta7</span><p>موتور تونل: Lantern Soar<br>پنل مدیریت: WhiteDNS</p><a href="https://github.com/WhiteDNS/Soar-Server" target="_blank" rel="noopener noreferrer">مستندات و کد منبع ↗</a></div>
+  <div class="sidebar-foot"><span class="beta">WhiteDNS Panel · beta8</span><p>موتور تونل: Lantern Soar<br>پنل مدیریت: WhiteDNS</p><a href="https://github.com/WhiteDNS/Soar-Server" target="_blank" rel="noopener noreferrer">مستندات و کد منبع ↗</a></div>
  </aside>
  <button id="nav-backdrop" class="nav-backdrop" aria-label="بستن منوی کناری" tabindex="-1" type="button"></button>
  <div class="workspace"><header class="topbar">
@@ -66,8 +66,35 @@
    <div class="settings-actions"><button type="submit" class="primary">ذخیرهٔ تنظیمات</button><p id="settings-feedback" class="hint" role="status">برای استفاده از تغییرات، لینک حساب را دوباره Import کنید.</p></div>
   </form>
  </section>
- <section id="page-backup" class="page" hidden><div class="page-heading"><div><p class="eyebrow">نگهداری و بازیابی</p><h1>پشتیبان‌گیری</h1><p class="muted">یک نسخهٔ سازگار از حساب‌ها، کلیدها، تنظیمات و مصرف ثبت‌شده دریافت کنید.</p></div></div><article class="card form-card"><h2>پشتیبان کامل سرور</h2><p>فایل پشتیبان شامل کلیدهای خصوصی حساب‌ها و هش رمز مدیر است. آن را مانند رمز سرور در جای امن نگه دارید.</p><button id="download-backup" class="primary">↓ دانلود پشتیبان</button><hr><h2>بازیابی امن</h2><p>برای بازیابی، سرویس را متوقف کنید و پایگاه داده را مطابق راهنمای مخزن جایگزین کنید. بازیابی روی سرویس در حال اجرا انجام نمی‌شود تا مصرف یا کلیدها از بین نروند.</p><a href="https://github.com/WhiteDNS/Soar-Server/blob/panel-v0.2.0-beta7/docs/PANEL.fa.md" target="_blank" rel="noopener noreferrer">راهنمای نصب و بازیابی ↗</a></article></section>
- <footer class="main-footer"><span dir="ltr">WhiteDNS Soar Panel · <bdi id="footer-version">0.2.0-beta7</bdi></span><a href="https://soar.lantern.io/" target="_blank" rel="noopener noreferrer">موتور تونل از Lantern ↗</a></footer>
+ <section id="page-backup" class="page" hidden>
+  <div class="page-heading"><div><p class="eyebrow">نگهداری و بازیابی</p><h1>پشتیبان‌گیری و بازیابی</h1><p class="muted">فایل پشتیبان بگیرید یا حساب‌ها و مصرف را از فایل قبلی برگردانید.</p></div></div>
+  <div class="maintenance-grid">
+   <article class="card"><h2>دانلود پشتیبان کامل</h2><p class="hint">فایل شامل حساب‌ها، کلیدهای خصوصی، مصرف و تنظیمات تونل است. آن را مانند رمز سرور در جای امن نگه دارید.</p><button id="download-backup" class="primary">دانلود پشتیبان</button></article>
+   <article class="card"><h2>بازیابی از فایل</h2><p class="hint">فایل ابتدا بررسی می‌شود. پیش از جایگزینی، یک پشتیبان خودکار از وضعیت فعلی گرفته می‌شود. رمز مدیر، دامنه، گواهی و آدرس امن فعلی حفظ می‌شوند.</p>
+    <form id="restore-form"><label for="restore-file">فایل پشتیبان پنل</label><input id="restore-file" type="file" accept=".db,application/octet-stream" required aria-describedby="restore-file-help"><small id="restore-file-help" class="muted">فایل .db، حداکثر ۳۲ MiB؛ دامنهٔ تونل فایل باید با این سرور یکسان باشد.</small><button id="restore-inspect" type="submit" class="secondary">بررسی فایل</button></form>
+    <div id="restore-preview" class="maintenance-preview" hidden><h3>خلاصهٔ فایل بررسی‌شده</h3><p id="restore-summary"></p><label for="restore-password">رمز فعلی مدیر</label><input id="restore-password" type="password" autocomplete="current-password" dir="ltr" maxlength="72"><label class="checkbox"><input id="restore-confirm" type="checkbox">حساب‌ها و مصرف فعلی با این فایل جایگزین شوند.</label><button id="restore-apply" class="danger">بازیابی این پشتیبان</button></div>
+    <p id="restore-feedback" class="maintenance-feedback" role="status" aria-live="polite"></p>
+   </article>
+  </div><p class="maintenance-feedback" data-maintenance-state role="status"></p>
+ </section>
+ <section id="page-updates" class="page" hidden>
+  <div class="page-heading"><div><p class="eyebrow">نگهداری پنل</p><h1>به‌روزرسانی پنل</h1><p class="muted">نسخهٔ جدید را از مخزن رسمی WhiteDNS بررسی و از همین‌جا نصب کنید.</p></div></div>
+  <article class="card maintenance-card"><div class="maintenance-heading"><h2>نسخهٔ فعلی <bdi id="update-current">—</bdi></h2><button id="update-check" class="secondary">بررسی نسخهٔ جدید</button></div><p id="update-feedback" class="maintenance-feedback" role="status" aria-live="polite">بررسی فقط هنگام درخواست شما انجام می‌شود.</p><div id="update-preview" class="maintenance-preview" hidden><h3>نسخهٔ آمادهٔ نصب <bdi id="update-latest"></bdi></h3><a id="update-release" target="_blank" rel="noopener noreferrer">مشاهدهٔ تغییرات انتشار ↗</a><p class="hint">بسته و SHA-256 آن بررسی می‌شوند. پیش از نصب، از برنامه و اطلاعات پشتیبان گرفته می‌شود؛ اگر نسخهٔ جدید بالا نیاید، نسخهٔ قبلی برمی‌گردد. اتصال‌ها هنگام راه‌اندازی مجدد کوتاه قطع می‌شوند.</p><label for="update-password">رمز فعلی مدیر</label><input id="update-password" type="password" autocomplete="current-password" dir="ltr" maxlength="72"><button id="update-install" class="primary">نصب نسخهٔ جدید</button></div></article><p class="maintenance-feedback" data-maintenance-state role="status"></p>
+ </section>
+ <section id="page-security" class="page" hidden>
+  <div class="page-heading"><div><p class="eyebrow">ورود و ارتباط امن</p><h1>دامنه و امنیت پنل</h1><p class="muted">HTTPS با تمدید خودکار گواهی و مسیر ورود تصادفی را تنظیم کنید.</p></div></div>
+  <article class="card maintenance-card"><h2>آدرس فعلی پنل</h2><p id="access-state" class="hint"></p><input id="access-current-url" readonly dir="ltr" aria-label="آدرس فعلی پنل"><form id="access-form" class="access-form">
+   <label class="checkbox"><input id="access-https" type="checkbox" checked>استفاده از دامنه و HTTPS — پیشنهاد می‌شود</label>
+   <div class="form-grid"><label>دامنهٔ پنل<input id="access-domain" dir="ltr" placeholder="panel.example.com" maxlength="253" aria-describedby="access-domain-help" title="یک رکورد A برای این دامنه به IP سرور بسازید؛ Proxy خاموش باشد."></label><label>ایمیل گواهی — اختیاری<input id="access-email" type="email" dir="ltr" placeholder="you@example.com" maxlength="254" aria-describedby="access-domain-help"></label></div>
+   <p id="access-domain-help" class="hint">رکورد A دامنه باید به IP همین سرور اشاره کند؛ Proxy خاموش و TCP/80 و TCP/443 باز باشند. گواهی از Let's Encrypt صادر و خودکار تمدید می‌شود. فعال‌سازی به‌معنای پذیرش شرایط سرویس گواهی است.</p>
+   <label class="checkbox"><input id="access-random-path" type="checkbox" checked>ساخت مسیر ورود تصادفی جدید</label><p class="hint">مسیر تصادفی حدس‌زدن آدرس ورود را دشوارتر می‌کند؛ جایگزین HTTPS و رمز قوی نیست. آدرس جدید پیش از اعمال به شما نشان داده می‌شود. رکوردهای DNS تونل و لینک حساب‌ها تغییر نمی‌کنند.</p>
+   <label for="access-password">رمز فعلی مدیر</label><input id="access-password" type="password" autocomplete="current-password" dir="ltr" maxlength="72" required><button class="primary" type="submit">بررسی و آماده‌سازی آدرس امن</button>
+  </form><p id="access-feedback" class="maintenance-feedback" role="status" aria-live="polite"></p>
+  <div id="access-preview" class="maintenance-preview" hidden><h3>آدرس جدید آماده است</h3><textarea id="access-next-url" readonly dir="ltr" rows="2" aria-label="آدرس جدید ورود"></textarea><button id="access-copy" class="secondary">کپی آدرس جدید</button><p class="hint">این آدرس را در جای امن ذخیره کنید. پس از اعمال، با رمز فعلی دوباره وارد می‌شوید و آدرس قبلی بسته می‌شود.</p><label class="checkbox"><input id="access-confirm" type="checkbox">آدرس جدید را ذخیره کردم.</label><button id="access-apply" class="primary">اعمال و بازکردن آدرس جدید</button></div>
+  <p class="hint">در ترمینال هم می‌توانید با دستور <bdi class="terminal-command">soar-panel-security</bdi> این تنظیمات را انجام دهید. بازیابی آدرس از SSH در راهنمای نصب توضیح داده شده است.</p>
+  </article>
+ </section>
+ <footer class="main-footer"><span dir="ltr">WhiteDNS Soar Panel · <bdi id="footer-version">0.2.0-beta8</bdi></span><a href="https://soar.lantern.io/" target="_blank" rel="noopener noreferrer">موتور تونل از Lantern ↗</a></footer>
  </main></div></div>
 <dialog id="client-dialog"><form id="client-form"><div class="dialog-heading"><div><p class="eyebrow">مدیریت دسترسی</p><h2 id="client-dialog-title">حساب جدید</h2></div><button type="button" class="icon-button close-dialog" aria-label="بستن">×</button></div><div class="form-grid"><label class="wide">نام حساب<input name="name" required maxlength="160" placeholder="مثلاً: کاربر اول"></label><label>حجم کل (GiB)<input name="quota" type="number" min="0" max="1000000" step="any" value="0" required dir="ltr"><small>آپلود + دانلود؛ صفر = نامحدود</small></label><label>تاریخ انقضا<input name="expires" type="datetime-local" dir="ltr"><small>خالی = بدون انقضا، به وقت دستگاه مدیر</small></label><label>سرعت مشترک (KiB/s)<input name="rate" type="number" min="0" max="1048576" step="any" value="0" dir="ltr" required><small>آپلود و دانلود مشترک؛ صفر = نامحدود</small></label><label>حداکثر جریان TCP<input name="streams" type="number" min="1" max="128" value="128" dir="ltr" required><small>جریان هم‌زمان؛ محدودیت دستگاه نیست</small></label><label class="wide">یادداشت<textarea name="note" rows="2" maxlength="2048"></textarea></label><label class="checkbox wide"><input name="enabled" type="checkbox" checked>حساب فعال باشد</label></div><p id="client-form-error" class="error" role="alert"></p><div class="dialog-actions"><button type="button" class="quiet close-dialog">انصراف</button><button type="submit" class="primary">ذخیرهٔ حساب</button></div></form></dialog>
 <dialog id="share-dialog"><div class="dialog-heading"><div><p class="eyebrow">اتصال با WhiteDNS</p><h2 id="share-title">لینک حساب</h2></div><button class="icon-button close-dialog" aria-label="بستن">×</button></div><img id="share-qr" class="qr" width="256" height="256" alt="QR پروفایل Soar"><label for="share-link">لینک ورود پروفایل</label><textarea id="share-link" dir="ltr" rows="4" readonly></textarea><p class="hint">این لینک را در بخش Import اپ WhiteDNS وارد کنید. لینک را فقط در اختیار صاحب حساب قرار دهید.</p><div class="dialog-actions"><button id="save-profile" class="quiet">دانلود لینک</button><button id="copy-link" class="primary">کپی لینک</button></div></dialog>

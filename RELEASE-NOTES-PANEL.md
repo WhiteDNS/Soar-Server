@@ -1,82 +1,57 @@
-# WhiteDNS Soar Panel 0.2.0-beta7
+# WhiteDNS Soar Panel 0.2.0-beta8
 
-An opt-in **server-side** management panel for Lantern Soar. The familiar sidebar,
-dashboard and account editor are inspired by Sanaei/3x-ui; the implementation is
-original. Lantern remains the author of the Soar tunneling engine.
+This server-side release adds restore, updates and secure panel access. Lantern
+remains the author of the Soar engine; existing WhiteDNS profiles and apps keep
+their current transport behavior.
 
-This release replaces the account table's native More select with a compact action
-menu inspired by the supplied 3x-ui reference. It uses the panel's bundled Persian
-font, matching surfaces, consistent line icons and a separate red delete action.
-The popover escapes the table's scroll container and flips within the viewport.
-Keyboard arrows, Home/End, Escape, outside-click dismissal and focus restoration
-are supported. Background polling keeps an open menu stable. Existing operations
-and their confirmation dialogs are preserved; no account or transport changes.
-Browser checks cover menu placement, typography, keyboard navigation, cancellation,
-responsive layouts and the existing account and clipboard workflows.
+- Restore a panel `.db` directly in Backup & Restore. Uploaded files are size-limited,
+  checked for database integrity, account/key consistency and matching tunnel zone,
+  then previewed before confirmation. Current administrator credentials, access
+  settings and certificates are preserved. Old backups restore usage to their
+  saved point in time. The service stops briefly during the actual replacement.
+- Check official WhiteDNS panel releases and install a newer compatible amd64
+  release from the panel. Downloads finish before stopping the current service.
+  SHA-256 and the GitHub asset digest, when present, are checked. Failed activation
+  restores the previous database and executables. Checksums provide integrity
+  relative to the official release; they are not an independent code signature.
+- A separate root maintenance service exposes only a group-restricted local Unix
+  socket. The web panel still runs as the `soar-panel` user. Requests cannot select
+  shell commands, service names, download hosts or installation destinations.
+  Private before-operation copies are retained for the five most recent jobs.
+- Configure a domain and automatic Let's Encrypt HTTPS from the panel or the
+  English terminal wizard (`sudo soar-panel-security`). A direct A/AAAA record and
+  reachable TCP/80 and TCP/443 are required. An existing web server on these ports
+  requires a separately configured reverse proxy. Certificate failure preserves
+  the existing address. Certificates renew automatically while the service runs.
+- Generate a 256-bit random login path. New installations receive one by default;
+  existing installations keep their address until they explicitly apply a new one.
+  Preview and save the new address before applying it. Old URLs and unprefixed
+  assets/API paths return 404. With native HTTPS enabled, public plaintext panel
+  access is rejected. Cookies remain HttpOnly/SameSite Strict and are scoped to
+  the private path; native HTTPS makes them Secure. A hidden URL supplements
+  password authentication and HTTPS rather than replacing them.
 
-The profile-copy fix from beta6 is retained. The Copy button
-writes the entire link to the clipboard using the browser's supported method,
-including a fallback when the secure clipboard API is unavailable or denied.
-Browsers that block both methods show an honest error with manual-copy/download
-instructions instead of claiming success.
+Restore, updates and access changes require the current admin password. Service
+restarts invalidate browser sessions; sign in again with the same password to
+see the last maintenance result. Backup files contain private account keys.
 
-Copy feedback appears inside the active dialog, above the native modal backdrop,
-with readable success/error colors in both themes. Closing the dialog clears it.
-Browser checks read the actual clipboard and compare the full link on HTTPS-capable
-local and genuinely insecure HTTP origins, including denied-API fallback, blocked
-commands, mobile sizing and contrast. Accounts, links and settings are unchanged.
+Validation includes restore/rollback and update failure tests, corrupt backup and
+key mismatch rejection, authentication/CSRF/password checks, session-bound restore
+and access previews, version ordering, safe archive extraction, private-path asset
+routing and certificate-failure preservation. Real browser checks retain existing
+account/clipboard/settings coverage and add the maintenance views at mobile widths.
 
-The panel retains the redesign introduced in beta5:
-compact charcoal surfaces, a consistent blue action color, locally bundled
-Vazirmatn typography, aligned controls and a responsive right navigation rail.
-Login, dashboard, accounts, settings, events, backup and dialogs share the same
-visual system. A light theme and the existing appearance preference are retained.
+The visual system remains the original WhiteDNS implementation inspired by the
+supplied Sanaei/3x-ui screenshots. No 3x-ui code or assets are included. This release
+does not qualify Iranian access-network behavior or production load capacity.
 
-The dashboard shows resource readings and real sample history, DNS send/receive
-rates and open tunnel streams. Charts start when the page opens, retain up to ten
-minutes in memory and clear on server counter reset. Missing metrics remain
-unavailable; no historical values are fabricated. DNS rates include DNS overhead
-and are distinct from the per-account TCP payload quota counters.
-
-Login has an accessible password visibility control and a theme toggle. Mobile
-navigation supports dismissal and keyboard focus. All 20 settings explanations
-remain available through hover, focus and touch. The font and icons need no CDN.
-
-Existing accounts, keys, usage, quotas and advanced transport tuning are preserved.
-The redesign does not require reimporting a profile or updating the Android app.
-The Soar transport implementation is unchanged.
-
-Validation covers real browser account workflows, persistent tuning, bundled-font
-loading, login controls, light/dark themes, tooltips and responsive layouts at
-320/375/414/768/1440 pixels, plus the existing backend, race and installer checks.
-The font's SIL Open Font License ships with the bundle.
-
-- Create independent accounts and export existing WhiteDNS-compatible links/QRs.
-- Set combined upload/download quota, expiry, shared speed and concurrent TCP streams.
-- Disable access, disconnect streams, reset usage or revoke/replace an account link.
-- View real Linux resource statistics, separate traffic counters and management events.
-- Download durable backups, export accounts and configure discovery/resolver defaults.
-- Persian RTL, mobile layout, light/dark themes; English-only SSH installation steps.
-
-**No WhiteDNS update is required.** Migrating a standalone server requires new
-per-account profile links. The old shared-root profile stops working after migration;
-the installer explains this and preserves the previous service/config for rollback.
-
-The installer now offers direct browser access using the server IP and chosen
-TCP port, plus a private SSH/HTTPS-proxy option. It displays the actual access URL.
-Direct HTTP is an explicit test-server mode and is unencrypted; the CLI otherwise
-retains its TLS/private-access checks. Upgrades preserve accounts, links and usage.
-Backups contain private account keys. A TCP stream limit is not a device limit;
-anyone sharing one profile shares its budget. Payload accounting excludes DNS overhead.
-
-This is a beta, initially Linux amd64. It has automated tunnel, quota, authentication,
-race and browser tests, plus a live Ubuntu/systemd deployment check. Real Iranian
-access-network validation and production load qualification remain outstanding.
-
-Install the explicit panel beta (in an interactive SSH terminal):
+Install or upgrade the explicit panel beta in an interactive SSH terminal:
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/WhiteDNS/Soar-Server/panel-v0.2.0-beta7/panel-setup.sh)
+bash <(curl -fsSL https://raw.githubusercontent.com/WhiteDNS/Soar-Server/panel-v0.2.0-beta8/panel-setup.sh)
 ```
 
-[Persian installation, migration and recovery guide](https://github.com/WhiteDNS/Soar-Server/blob/panel-v0.2.0-beta7/docs/PANEL.fa.md)
+[Persian installation, secure access and recovery guide](https://github.com/WhiteDNS/Soar-Server/blob/panel-v0.2.0-beta8/docs/PANEL.fa.md)
+
+Certificate automation: [Go autocert](https://pkg.go.dev/golang.org/x/crypto/acme/autocert)
+and [Let's Encrypt challenges](https://letsencrypt.org/docs/challenge-types/).

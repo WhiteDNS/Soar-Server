@@ -1,6 +1,7 @@
 package panel
 
 import (
+	"context"
 	"crypto/hmac"
 	"crypto/rand"
 	"embed"
@@ -32,14 +33,18 @@ type loginAttempt struct {
 	until time.Time
 }
 type HTTP struct {
-	store      *Store
-	manager    *Manager
-	trustProxy bool
-	mu         sync.Mutex
-	sessions   map[string]loginSession
-	attempts   map[string]loginAttempt
-	assets     http.Handler
-	metrics    hostSampler
+	store         *Store
+	manager       *Manager
+	trustProxy    bool
+	mu            sync.Mutex
+	sessions      map[string]loginSession
+	attempts      map[string]loginAttempt
+	assets        http.Handler
+	metrics       hostSampler
+	ops           MaintenanceOps
+	preview       *restorePreview
+	inspectBackup func(context.Context, string) (BackupSummary, error)
+	access        *AccessController
 }
 
 func NewHTTP(s *Store, m *Manager, trustLoopbackProxy bool) *HTTP {
@@ -107,10 +112,41 @@ func (h *HTTP) authenticated(r *http.Request) (loginSession, bool) {
 	return s, true
 }
 func (h *HTTP) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if h.access != nil {
+		cfg := h.access.Config()
+		prefix := cfg.BasePath
+		w.Header().Set("Cache-Control", "no-store")
+		w.Header().Set("Referrer-Policy", "no-referrer")
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+		if prefix != "" && !strings.HasPrefix(r.URL.Path, prefix) {
+			http.NotFound(w, r)
+			return
+		}
+		r = r.Clone(r.Context())
+		u := *r.URL
+		r.URL = &u
+		if prefix != "" {
+			r.URL.Path = "/" + strings.TrimPrefix(r.URL.Path, prefix)
+		}
+		if r.URL.Path == "/api/health" && r.Method == "GET" && h.access.localPeer(r.RemoteAddr) {
+			w.WriteHeader(204)
+			return
+		}
+		if cfg.HTTPS {
+			host := strings.ToLower(strings.Split(r.Host, ":")[0])
+			if !h.isSecure(r) || host != cfg.Domain {
+				http.NotFound(w, r)
+				return
+			}
+		}
+	}
+	h.serveHTTP(w, r)
+}
+func (h *HTTP) serveHTTP(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.Header().Set("Referrer-Policy", "no-referrer")
 	w.Header().Set("X-Frame-Options", "DENY")
-	w.Header().Set("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data: blob:; font-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'")
+	w.Header().Set("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data: blob:; font-src 'self'; base-uri 'self'; frame-ancestors 'none'; form-action 'self'")
 	w.Header().Set("Cache-Control", "no-store")
 	if h.isSecure(r) {
 		w.Header().Set("Strict-Transport-Security", "max-age=31536000")
@@ -125,7 +161,24 @@ func (h *HTTP) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		switch r.URL.Path {
-		case "/", "/index.html", "/app.js", "/settings.js", "/ui.js", "/tokens.css", "/redesign.css", "/style.css", "/fonts/vazirmatn.ttf", "/fonts/vazirmatn.woff2":
+		case "/", "/index.html", "/app.js", "/maintenance.js", "/settings.js", "/ui.js", "/tokens.css", "/redesign.css", "/style.css", "/fonts/vazirmatn.ttf", "/fonts/vazirmatn.woff2":
+			if r.URL.Path == "/" || r.URL.Path == "/index.html" {
+				raw, e := webFiles.ReadFile("web/index.html")
+				if e != nil {
+					http.Error(w, "unavailable", 500)
+					return
+				}
+				prefix := "/"
+				if h.access != nil && h.access.Config().BasePath != "" {
+					prefix = h.access.Config().BasePath
+				}
+				body := strings.Replace(string(raw), "<head>", "<head><base href=\""+prefix+"\">", 1)
+				w.Header().Set("Content-Type", "text/html; charset=utf-8")
+				if r.Method != "HEAD" {
+					_, _ = io.WriteString(w, body)
+				}
+				return
+			}
 			h.assets.ServeHTTP(w, r)
 		default:
 			http.NotFound(w, r)
@@ -152,12 +205,18 @@ func (h *HTTP) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.mu.Lock()
 		delete(h.sessions, c.Value)
 		h.mu.Unlock()
-		http.SetCookie(w, &http.Cookie{Name: "soar_panel_session", Value: "", Path: "/", HttpOnly: true, Secure: h.isSecure(r), SameSite: http.SameSiteStrictMode, MaxAge: -1})
+		http.SetCookie(w, &http.Cookie{Name: "soar_panel_session", Value: "", Path: h.cookiePath(), HttpOnly: true, Secure: h.isSecure(r), SameSite: http.SameSiteStrictMode, MaxAge: -1})
 		jsonReply(w, 200, map[string]bool{"ok": true})
 		return
 	}
 	if r.URL.Path == "/api/dashboard" && r.Method == "GET" {
 		h.dashboard(w)
+		return
+	}
+	if h.maintenance(w, r, session) {
+		return
+	}
+	if h.accessAPI(w, r) {
 		return
 	}
 	if r.URL.Path == "/api/events" && r.Method == "GET" {
@@ -243,7 +302,7 @@ func (h *HTTP) login(w http.ResponseWriter, r *http.Request) {
 	}
 	h.sessions[value] = s
 	h.mu.Unlock()
-	http.SetCookie(w, &http.Cookie{Name: "soar_panel_session", Value: value, Path: "/", HttpOnly: true, Secure: h.isSecure(r), SameSite: http.SameSiteStrictMode, MaxAge: 43200})
+	http.SetCookie(w, &http.Cookie{Name: "soar_panel_session", Value: value, Path: h.cookiePath(), HttpOnly: true, Secure: h.isSecure(r), SameSite: http.SameSiteStrictMode, MaxAge: 43200})
 	_ = h.store.Audit("admin.login", "")
 	jsonReply(w, 200, map[string]string{"csrf": s.csrf})
 }
@@ -269,7 +328,7 @@ func (h *HTTP) dashboard(w http.ResponseWriter) {
 			online++
 		}
 	}
-	jsonReply(w, 200, map[string]any{"accounts": len(list), "states": states, "upload_bytes": up, "download_bytes": down, "active_streams": connected, "accounts_with_streams": online, "dns_received_bytes": h.manager.dnsIn.Load(), "dns_sent_bytes": h.manager.dnsOut.Load(), "uptime_seconds": int64(time.Since(h.manager.started).Seconds()), "host": h.metrics.sample(), "version": "0.2.0-beta7"})
+	jsonReply(w, 200, map[string]any{"accounts": len(list), "states": states, "upload_bytes": up, "download_bytes": down, "active_streams": connected, "accounts_with_streams": online, "dns_received_bytes": h.manager.dnsIn.Load(), "dns_sent_bytes": h.manager.dnsOut.Load(), "uptime_seconds": int64(time.Since(h.manager.started).Seconds()), "host": h.metrics.sample(), "version": Version})
 }
 func (h *HTTP) settings(w http.ResponseWriter, r *http.Request) {
 	if r.Method == "GET" {
