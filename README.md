@@ -35,7 +35,7 @@ sudo apt-get install -y curl
 2. در «حساب‌های کاربری»، حساب بسازید و حجم، تاریخ انقضا، سرعت و سقف جریان هم‌زمان را تعیین کنید.
 3. از «لینک / QR»، «لینک ساب» را انتخاب و آدرس یا QR آن را در بخش Import اپ [WhiteDNS](https://github.com/WhiteDNS/WhiteDNS-Android/releases) وارد کنید. لینک مستقیم هم همچنان در دسترس است.
 
-برای ساب کامل از **[WhiteDNS 1.6.8 یا جدیدتر](https://github.com/WhiteDNS/WhiteDNS-Android/releases/latest)** استفاده کنید. پس از تغییر تنظیمات تونل، ساب را در اپ تازه‌سازی کنید؛ برای لینک مستقیم، پروفایل را دوباره Import کنید. [راهنمای ساب، حجم، انقضا و تعویض لینک](docs/SUBSCRIPTIONS.md).
+برای ساب کامل از **[WhiteDNS 1.6.8 یا جدیدتر](https://github.com/WhiteDNS/WhiteDNS-Android/releases/latest)** استفاده کنید. پس از تغییر تنظیمات تونل، ساب را در اپ تازه‌سازی کنید؛ برای لینک مستقیم، پروفایل را دوباره Import کنید. [راهنمای ساب، حجم، انقضا و تعویض لینک](docs/SUBSCRIPTIONS.md) · [گزارش آزمون پنل و اپ](docs/SUBSCRIPTIONS-VERIFICATION-2026-10-18.md).
 
 ## امکانات و ارتقا
 
