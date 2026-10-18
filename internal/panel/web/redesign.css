@@ -119,8 +119,32 @@ nav a[aria-current=page]:hover{background:var(--color-accent-soft);color:var(--c
 th{font-size:var(--text-xs);font-weight:500;padding:13px 16px;background:var(--color-paper-3)}
 td{padding:15px 16px;font-size:var(--text-sm);vertical-align:middle}td strong{font-size:var(--text-sm);font-weight:600;margin-bottom:4px}
 td .domain{font-size:11px;line-height:1.6}td .usage{font-size:var(--text-xs);margin-bottom:6px}tbody tr:hover{background:var(--color-paper-3)}
-.row-actions{align-items:center;gap:6px}.row-actions button{font-size:var(--text-xs);padding:6px 9px;min-height:32px;white-space:nowrap;border:1px solid var(--color-rule);background:transparent}
-.row-actions select{font-size:11px;width:auto;max-width:105px;min-height:32px;padding:5px 8px}
+.row-actions{align-items:center;gap:6px}.row-actions button{font-size:var(--text-xs);padding:6px 10px;min-height:34px;white-space:nowrap;border:1px solid var(--color-rule);background:transparent}
+/* Hallmark · component: account action menu · genre: modern-minimal · theme: existing tokens
+ * states: default · hover · focus · active · disabled · loading · error · success
+ * pre-emit critique: P4 H5 E4 S4 R5 V4 · component scope: no macrostructure change */
+.account-actions-trigger{display:inline-flex;align-items:center;justify-content:center;gap:7px;font-family:var(--font-body);font-weight:500;line-height:1.7;color:var(--color-ink-2);border-radius:var(--radius-button)}
+.account-actions-trigger>.icon{width:16px;height:16px}.account-actions-trigger>.icon:last-child{width:12px;height:12px}
+.row-actions .account-actions-trigger[aria-expanded=true],.account-actions-trigger.is-hover{background:var(--color-accent-soft);border-color:var(--color-accent);color:var(--color-accent)}
+.account-actions-trigger:focus-visible,.account-actions-trigger.is-focus,.action-menu-item:focus-visible{outline:2px solid var(--color-focus);outline-offset:2px}
+.row-actions .account-actions-trigger:active,.account-actions-trigger.is-active{background:var(--color-paper-3);border-color:var(--color-ink-2)}
+.account-actions-trigger:disabled{opacity:.5;cursor:not-allowed}
+.account-actions-trigger[aria-busy=true]>.icon:first-child{border:1.7px solid var(--color-rule);border-top-color:var(--color-accent);border-radius:50%;stroke:none;animation:action-spin .8s linear infinite}
+.row-actions .account-actions-trigger[data-state=error]{color:var(--color-negative);border-color:var(--color-negative);background:var(--color-negative-soft)}
+.row-actions .account-actions-trigger[data-state=success]{color:var(--color-positive);border-color:var(--color-positive);background:var(--color-positive-soft)}
+.account-actions-menu{position:fixed;inset:auto;margin:0;padding:6px;width:248px;max-width:calc(100vw - 24px);max-height:calc(100dvh - 24px);overflow-y:auto;overscroll-behavior:contain;z-index:45;background:var(--color-paper-2);color:var(--color-ink);border:1px solid var(--color-rule);border-radius:10px;box-shadow:var(--shadow);font-family:var(--font-body);font-size:var(--text-sm);direction:rtl}
+.account-actions-menu::backdrop{background:transparent}
+.action-menu-heading{font-size:var(--text-xs);font-weight:500;color:var(--color-ink-2);padding:7px 10px 10px;margin-bottom:4px;border-bottom:1px solid var(--color-rule);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.action-menu-item{display:flex;align-items:center;gap:10px;width:100%;min-height:44px;padding:9px 10px;border:0;border-radius:6px;background:transparent;color:var(--color-ink);font-family:var(--font-body);font-size:var(--text-sm);font-weight:400;line-height:1.75;text-align:start;white-space:nowrap}
+.action-menu-item .icon{color:var(--color-ink-2);width:18px;height:18px}
+.action-menu-item:focus-visible{background:var(--color-accent-soft);color:var(--color-accent);outline-offset:-2px}
+.action-menu-item:active{background:var(--color-accent-soft)}
+.action-menu-item.destructive{color:var(--color-negative);margin-top:5px;border-top:1px solid var(--color-rule);border-start-start-radius:0;border-start-end-radius:0;padding-top:12px;min-height:48px}
+.action-menu-item.destructive .icon{color:var(--color-negative)}
+.action-menu-item.destructive:focus-visible,.action-menu-item.destructive:active{background:var(--color-negative-soft);color:var(--color-negative)}
+@media(hover:hover){.row-actions .account-actions-trigger:hover{background:var(--color-accent-soft);border-color:var(--color-accent);color:var(--color-accent)}.action-menu-item:hover{background:var(--color-accent-soft);color:var(--color-accent)}.action-menu-item:hover .icon{color:currentColor}.action-menu-item.destructive:hover{background:var(--color-negative-soft);color:var(--color-negative)}}
+@media(pointer:coarse){.row-actions button{min-height:44px}}
+@keyframes action-spin{to{transform:rotate(360deg)}}
 .table-footer{font-size:11px;padding:12px 16px}.hint{line-height:1.9}.empty h2{font-size:var(--text-lg)}
 .settings-card{max-width:none;box-shadow:none}.settings-section{margin:22px 0;padding-bottom:24px}.settings-section legend{font-size:var(--text-lg);font-weight:600;margin-bottom:14px}
 .settings-grid{gap:20px 28px}.field-label{margin-bottom:4px;min-height:28px}.field-label label{font-size:var(--text-sm)}

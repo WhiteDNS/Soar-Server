@@ -27,9 +27,61 @@ const panelUI = (() => {
   menu:'M4 6h16 M4 12h16 M4 18h16',
   close:'M6 6l12 12 M18 6 6 18',
   arrow:'M19 12H5 m6-6-6 6 6 6',
+  more:'M5 12h.01 M12 12h.01 M19 12h.01',
+  chevron:'M7 10l5 5 5-5',
+  power:'M12 2v10 M5.6 5.6a9 9 0 1 0 12.8 0',
+  unlink:'M9 15l6-6 M8 5l1-1a5 5 0 0 1 7 7l-1 1 M9 12l-1 1a5 5 0 0 0 7 7l1-1 M3 3l18 18',
+  key:'M8 15a5 5 0 1 1 4-4l-8 8H1v-3l7-7 M15 6h.01',
+  trash:'M3 6h18 M9 6V3h6v3 M5 6l1 15h12l1-15 M10 10v7 M14 10v7',
+  check:'M5 12l4 4L19 6',
  };
  function icon(name){const svg=document.createElementNS(ns,'svg');svg.setAttribute('viewBox','0 0 24 24');svg.setAttribute('class','icon');svg.setAttribute('aria-hidden','true');const path=document.createElementNS(ns,'path');path.setAttribute('d',icons[name]||icons.activity);svg.append(path);return svg;}
  for(const el of document.querySelectorAll('[data-icon]'))el.replaceChildren(icon(el.dataset.icon));
+ const actionMenu=document.createElement('div');actionMenu.id='account-actions-menu';actionMenu.className='account-actions-menu';
+ actionMenu.setAttribute('role','menu');actionMenu.setAttribute('aria-label','عملیات حساب');actionMenu.hidden=true;
+ const nativePopover=typeof actionMenu.showPopover==='function';if(nativePopover)actionMenu.popover='auto';document.body.append(actionMenu);
+ let actionTrigger=null;
+ function resetActionMenu(){if(actionTrigger)actionTrigger.setAttribute('aria-expanded','false');actionTrigger=null;actionMenu.hidden=true;}
+ function closeActionMenu(restoreFocus=true){const trigger=actionTrigger;if(nativePopover&&actionMenu.matches(':popover-open'))actionMenu.hidePopover();resetActionMenu();if(restoreFocus&&trigger?.isConnected)trigger.focus({preventScroll:true});}
+ function positionActionMenu(){
+  if(!actionTrigger)return;
+  const r=actionTrigger.getBoundingClientRect(),m=actionMenu.getBoundingClientRect(),gap=8,pad=12;
+  const left=Math.max(pad,Math.min(r.right-m.width,innerWidth-m.width-pad));
+  const below=r.bottom+gap,top=below+m.height<=innerHeight-pad?below:Math.max(pad,r.top-m.height-gap);
+  actionMenu.style.left=left+'px';actionMenu.style.top=top+'px';
+ }
+ function openActionMenu(trigger,client,onAction,last=false){
+  if(actionTrigger===trigger){closeActionMenu();return;}
+  closeActionMenu(false);actionTrigger=trigger;trigger.setAttribute('aria-expanded','true');
+  const heading=document.createElement('div');heading.className='action-menu-heading';heading.textContent=client.name;actionMenu.replaceChildren(heading);
+  for(const [key,label,glyph] of [['toggle',client.enabled?'غیرفعال کردن حساب':'فعال کردن حساب','power'],['disconnect','قطع اتصال‌های باز','unlink'],['reset','صفر کردن مصرف','refresh'],['rotate','تعویض لینک و کلید','key'],['delete','حذف حساب','trash']]){
+   const item=document.createElement('button');item.type='button';item.className='action-menu-item'+(key==='delete'?' destructive':'');item.dataset.action=key;item.setAttribute('role','menuitem');item.tabIndex=-1;
+   const labelNode=document.createElement('span');labelNode.textContent=label;item.append(icon(glyph),labelNode);
+   item.onclick=()=>{closeActionMenu();onAction(key,trigger);};actionMenu.append(item);
+  }
+  actionMenu.hidden=false;if(nativePopover)actionMenu.showPopover();positionActionMenu();
+  const items=actionMenu.querySelectorAll('[role=menuitem]');items[last?items.length-1:0].focus({preventScroll:true});
+ }
+ function accountActions(client,onAction){
+  const button=document.createElement('button');button.type='button';button.className='account-actions-trigger';button.dataset.clientId=client.id;
+  button.setAttribute('aria-haspopup','menu');button.setAttribute('aria-expanded','false');button.setAttribute('aria-controls',actionMenu.id);button.setAttribute('aria-label','عملیات بیشتر برای '+client.name);
+  const text=document.createElement('span');text.textContent='بیشتر';button.append(icon('more'),text,icon('chevron'));
+  button.onclick=()=>openActionMenu(button,client,onAction);
+  button.onkeydown=e=>{if(e.key==='ArrowDown'||e.key==='ArrowUp'){e.preventDefault();openActionMenu(button,client,onAction,e.key==='ArrowUp');}};
+  return button;
+ }
+ actionMenu.addEventListener('keydown',e=>{
+  const items=[...actionMenu.querySelectorAll('[role=menuitem]')],i=items.indexOf(document.activeElement);
+  let next;if(e.key==='ArrowDown')next=(i+1)%items.length;else if(e.key==='ArrowUp')next=(i+items.length-1)%items.length;else if(e.key==='Home')next=0;else if(e.key==='End')next=items.length-1;
+  if(next!==undefined){e.preventDefault();items[next].focus();}
+  if(e.key==='Escape'){e.preventDefault();closeActionMenu();}
+  if(e.key==='Tab'){e.preventDefault();const trigger=actionTrigger;closeActionMenu();if(!e.shiftKey){const focusable=[...document.querySelectorAll('a[href],button,input,select,textarea')].filter(el=>!el.disabled&&!el.closest('[hidden],[inert],dialog:not([open])')&&el.getClientRects().length);focusable[focusable.indexOf(trigger)+1]?.focus();}}
+ });
+ actionMenu.addEventListener('toggle',()=>{if(nativePopover&&!actionMenu.matches(':popover-open'))resetActionMenu();});
+ document.addEventListener('pointerdown',e=>{if(actionTrigger&&!actionMenu.contains(e.target)&&!actionTrigger.contains(e.target))closeActionMenu(false);});
+ function trackActionMenu(){if(!actionTrigger)return;const r=actionTrigger.getBoundingClientRect();if(r.bottom<0||r.top>innerHeight||r.right<0||r.left>innerWidth)closeActionMenu(false);else positionActionMenu();}
+ window.addEventListener('resize',trackActionMenu);
+ document.addEventListener('scroll',e=>{if(!actionMenu.contains(e.target))trackActionMenu();},{capture:true});
  function setTheme(theme){document.documentElement.dataset.theme=theme;try{localStorage.setItem('soar-theme',theme);}catch{}for(const button of [get('theme-toggle'),get('login-theme')]){button.replaceChildren(icon(theme==='dark'?'sun':'moon'));button.setAttribute('aria-label',theme==='dark'?'فعال کردن تم روشن':'فعال کردن تم تیره');}}
  let theme='dark';try{theme=localStorage.getItem('soar-theme')==='light'?'light':'dark';}catch{}setTheme(theme);
  get('login-theme').onclick=()=>setTheme(document.documentElement.dataset.theme==='dark'?'light':'dark');
@@ -86,5 +138,5 @@ const panelUI = (() => {
   text('chart-start',new Date(Date.now()-(now-samples[0].at)).toLocaleTimeString('fa-IR',{hour:'2-digit',minute:'2-digit'}));
   text('chart-now','اکنون');
  }
- return {icon,renderDashboard,setConnection,closeMenu,toggleMenu,toggleTheme(){setTheme(document.documentElement.dataset.theme==='dark'?'light':'dark');}};
+ return {icon,renderDashboard,setConnection,closeMenu,toggleMenu,accountActions,closeActionMenu,accountMenuOpen:()=>!!actionTrigger,toggleTheme(){setTheme(document.documentElement.dataset.theme==='dark'?'light':'dark');}};
 })();

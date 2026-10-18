@@ -34,20 +34,20 @@
 
 ## ۳. نصب بستهٔ آزمایشی
 
-بستهٔ پنل از انتشار آزمایشی `panel-v0.2.0-beta6` همین مخزن دریافت می‌شود؛ نصب‌کنندهٔ پایدار `setup.sh` همچنان مخصوص سرور بدون پنل است. برای دریافت و اجرای نصب‌کنندهٔ پنل، در SSH سرور:
+بستهٔ پنل از انتشار آزمایشی `panel-v0.2.0-beta7` همین مخزن دریافت می‌شود؛ نصب‌کنندهٔ پایدار `setup.sh` همچنان مخصوص سرور بدون پنل است. برای دریافت و اجرای نصب‌کنندهٔ پنل، در SSH سرور:
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/WhiteDNS/Soar-Server/panel-v0.2.0-beta6/panel-setup.sh)
+bash <(curl -fsSL https://raw.githubusercontent.com/WhiteDNS/Soar-Server/panel-v0.2.0-beta7/panel-setup.sh)
 ```
 
 این دستور فایل نسخه‌دار و checksum را بررسی می‌کند و ترمینال را برای مراحل پرسش‌وپاسخ باز نگه می‌دارد. اگر `curl` یا `dig` نصب نیست، با `sudo apt-get update` و `sudo apt-get install -y curl dnsutils iproute2` آن‌ها را نصب کنید. برای دریافت دستی و نصب آفلاین، مراحل زیر نیز قابل استفاده است.
 
-فایل `soar-panel-0.2.0-beta6-linux-amd64.tar.gz` و فایل کنار آن با پسوند `.sha256` را در یک پوشهٔ سرور قرار دهید، سپس:
+فایل `soar-panel-0.2.0-beta7-linux-amd64.tar.gz` و فایل کنار آن با پسوند `.sha256` را در یک پوشهٔ سرور قرار دهید، سپس:
 
 ```bash
-sha256sum -c soar-panel-0.2.0-beta6-linux-amd64.tar.gz.sha256
-tar -xzf soar-panel-0.2.0-beta6-linux-amd64.tar.gz
-cd soar-panel-0.2.0-beta6-linux-amd64
+sha256sum -c soar-panel-0.2.0-beta7-linux-amd64.tar.gz.sha256
+tar -xzf soar-panel-0.2.0-beta7-linux-amd64.tar.gz
+cd soar-panel-0.2.0-beta7-linux-amd64
 sudo bash panel-install.sh
 ```
 
@@ -127,6 +127,10 @@ Resolver ثابت در همهٔ کشورها تضمین‌شده نیست. تن�
 مقایسهٔ واقعی این نسخه و محدودیت نتیجه در [PANEL-TUNING-2026-10-17.fa.md](PANEL-TUNING-2026-10-17.fa.md) ثبت شده است.
 
 ### ظاهر و نمودارهای پنل در beta5
+
+در beta7، کنترل «بیشتر» در جدول حساب‌ها با منوی اختصاصی هماهنگ با پنل جایگزین شد؛
+فونت وزیرمتن، آیکون‌های یکسان و گزینهٔ حذف جداگانه دارد. با کلیک، کیبورد و لمس
+قابل استفاده است و نزدیک لبهٔ صفحه در فضای قابل مشاهده باز می‌شود.
 
 در beta6، دکمهٔ «کپی لینک» روی آدرس HTTP سرور هم لینک را مستقیماً کپی می‌کند.
 پیام نتیجه داخل پنجرهٔ لینک و با رنگ خوانا نمایش داده می‌شود. اگر مرورگر کپی را

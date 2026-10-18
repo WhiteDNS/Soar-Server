@@ -1,10 +1,20 @@
-# WhiteDNS Soar Panel 0.2.0-beta6
+# WhiteDNS Soar Panel 0.2.0-beta7
 
 An opt-in **server-side** management panel for Lantern Soar. The familiar sidebar,
 dashboard and account editor are inspired by Sanaei/3x-ui; the implementation is
 original. Lantern remains the author of the Soar tunneling engine.
 
-This release fixes profile link copying on public HTTP addresses. The Copy button
+This release replaces the account table's native More select with a compact action
+menu inspired by the supplied 3x-ui reference. It uses the panel's bundled Persian
+font, matching surfaces, consistent line icons and a separate red delete action.
+The popover escapes the table's scroll container and flips within the viewport.
+Keyboard arrows, Home/End, Escape, outside-click dismissal and focus restoration
+are supported. Background polling keeps an open menu stable. Existing operations
+and their confirmation dialogs are preserved; no account or transport changes.
+Browser checks cover menu placement, typography, keyboard navigation, cancellation,
+responsive layouts and the existing account and clipboard workflows.
+
+The profile-copy fix from beta6 is retained. The Copy button
 writes the entire link to the clipboard using the browser's supported method,
 including a fallback when the secure clipboard API is unavailable or denied.
 Browsers that block both methods show an honest error with manual-copy/download
@@ -66,7 +76,7 @@ access-network validation and production load qualification remain outstanding.
 Install the explicit panel beta (in an interactive SSH terminal):
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/WhiteDNS/Soar-Server/panel-v0.2.0-beta6/panel-setup.sh)
+bash <(curl -fsSL https://raw.githubusercontent.com/WhiteDNS/Soar-Server/panel-v0.2.0-beta7/panel-setup.sh)
 ```
 
-[Persian installation, migration and recovery guide](https://github.com/WhiteDNS/Soar-Server/blob/panel-v0.2.0-beta6/docs/PANEL.fa.md)
+[Persian installation, migration and recovery guide](https://github.com/WhiteDNS/Soar-Server/blob/panel-v0.2.0-beta7/docs/PANEL.fa.md)
