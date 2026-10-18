@@ -1,4 +1,4 @@
-"""Build the opt-in panel beta without changing the stable standalone bundle."""
+"""Build the stable management panel separately from the standalone bundle."""
 from __future__ import annotations
 import argparse
 import gzip
@@ -11,7 +11,7 @@ import subprocess
 import tarfile
 
 ROOT=Path(__file__).resolve().parents[1]
-VERSION="0.2.0-beta10"
+VERSION="0.2.0"
 NAME=f"soar-panel-{VERSION}-linux-amd64"
 
 def run(*args):

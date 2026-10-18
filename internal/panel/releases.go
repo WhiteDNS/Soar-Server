@@ -13,7 +13,7 @@ import (
 	"time"
 )
 
-var Version = "0.2.0-beta10"
+var Version = "0.2.0"
 var panelVersionPattern = regexp.MustCompile(`^(\d+)\.(\d+)\.(\d+)(?:-beta(\d+))?$`)
 
 func ValidVersion(v string) bool { return panelVersionPattern.MatchString(v) && len(v) < 48 }
@@ -53,12 +53,13 @@ type ReleaseAsset struct {
 	Digest string `json:"digest"`
 }
 type PanelRelease struct {
-	Tag    string         `json:"tag_name"`
-	Name   string         `json:"name"`
-	URL    string         `json:"html_url"`
-	Draft  bool           `json:"draft"`
-	Assets []ReleaseAsset `json:"assets"`
-	Notes  string         `json:"body"`
+	Tag        string         `json:"tag_name"`
+	Name       string         `json:"name"`
+	URL        string         `json:"html_url"`
+	Draft      bool           `json:"draft"`
+	Prerelease bool           `json:"prerelease"`
+	Assets     []ReleaseAsset `json:"assets"`
+	Notes      string         `json:"body"`
 }
 
 func ReleaseClient() *http.Client {
@@ -123,10 +124,19 @@ func LatestPanelRelease(ctx context.Context) (PanelRelease, error) {
 	if e := getReleaseJSON(ctx, "releases?per_page=50", &releases); e != nil {
 		return PanelRelease{}, e
 	}
+	return selectPanelRelease(releases, Version)
+}
+
+func selectPanelRelease(releases []PanelRelease, current string) (PanelRelease, error) {
 	var best PanelRelease
 	version := ""
 	for _, r := range releases {
 		v := strings.TrimPrefix(r.Tag, "panel-v")
+		// Stable installations stay on stable updates. Beta installations may
+		// still discover their next beta or graduate to the final stable release.
+		if !strings.Contains(current, "-") && (r.Prerelease || strings.Contains(v, "-")) {
+			continue
+		}
 		if !ValidVersion(v) || validatePanelRelease(r, v) != nil {
 			continue
 		}

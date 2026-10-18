@@ -66,7 +66,7 @@ All account names and notes are inserted as text, never HTML. CSV formula cells
 are escaped. Client files use the existing `whitedns.profile` v1 schema and `soar://`.
 
 Global `soarSettings` persist the 16 supported profile transport controls. A
-missing object in a legacy database reads as the beta3 stability defaults;
+missing object in a legacy database reads as the adaptive defaults;
 legacy settings writes preserve saved tuning. Invalid ranges or crossed name
 lengths fail before committing. The API does not accept cipher/MTU switches the
 engine cannot apply. Exported links embed a snapshot: changes require reimport,
@@ -88,11 +88,12 @@ API returns the latest 200. Browsing destinations/content are not recorded.
 
 ## Rollout
 
-Stable standalone setup remains separate. Panel bundle/wizard is explicitly beta,
-opt-in and IPv4/amd64 initially. A running standalone instance is stopped only after
+Stable standalone setup remains separate. Panel 0.2.0 is the stable default in the README,
+with IPv4/amd64 support. A running standalone instance is stopped only after
 typing MIGRATE, preserving its keys/config and offering rollback. Migrating root
 shared profiles to individual accounts requires distributing new profile links,
-which does not require updating the client application. Never deploy over an
+with the existing profile format. The browser transport fixes require WhiteDNS
+1.6.7-beta2 or newer; a server upgrade cannot replace an installed native core. Never deploy over an
 existing delegated MasterDNS zone. Test on isolated ports before a production switch.
 
 Automated checks cover authenticated HTTPS through unmodified upstream clients,

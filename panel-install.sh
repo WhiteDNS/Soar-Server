@@ -4,7 +4,7 @@ set -Eeuo pipefail
 export LC_ALL=C
 umask 077
 ROOT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
-PANEL_VERSION=0.2.0-beta10
+PANEL_VERSION=0.2.0
 DB=/var/lib/soar-panel/panel.db
 SERVICE=/etc/systemd/system/soar-panel.service
 BIN="$ROOT_DIR/bin/linux-amd64/soar-panel"
@@ -22,11 +22,11 @@ if [[ ${1:-} == --check-bundle ]]; then check_bundle; exit 0; fi
 [[ -r /etc/os-release ]] || die 'This installer requires Ubuntu 22.04+ or Debian 12+.'
 . /etc/os-release
 case "$ID:${VERSION_ID%%.*}" in ubuntu:22|ubuntu:24|ubuntu:26|debian:12|debian:13) ;; *) die 'Supported systems: Ubuntu 22.04/24.04/26.04, Debian 12/13.' ;; esac
-[[ $(uname -m) == x86_64 ]] || die 'This beta bundle is for amd64 servers only.'
+[[ $(uname -m) == x86_64 ]] || die 'This panel bundle is for amd64 servers only.'
 for command in systemctl ss ip sha256sum install useradd awk curl dig; do command -v "$command" >/dev/null || die "Required command is missing: $command. On Ubuntu/Debian, run apt-get update && apt-get install -y curl dnsutils iproute2, then retry."; done
 [[ -t 0 ]] || die 'Run in an interactive SSH terminal; do not pipe the installer into bash.'
 check_bundle
-printf '\nWhiteDNS Soar Panel %s - EXPERIMENTAL\n' "$PANEL_VERSION"
+printf '\nWhiteDNS Soar Panel %s - STABLE\n' "$PANEL_VERSION"
 printf 'This is a server-side panel. Existing WhiteDNS apps do not need an update.\n'
 printf 'The Soar tunneling engine is developed by Lantern: https://soar.lantern.io/\n'
 printf 'Use a test server first. This wizard will explain every change before activation.\n'
@@ -120,7 +120,7 @@ if (( old_active ));then
  read -r -p 'Type MIGRATE to accept this migration, or anything else to cancel: ' answer
  [[ $answer == MIGRATE ]] || die 'Cancelled. The existing service was not changed.'
 else
- read -r -p 'Type INSTALL to install/start this experimental panel, or anything else to cancel: ' answer
+ read -r -p 'Type INSTALL to install/start this panel, or anything else to cancel: ' answer
  [[ $answer == INSTALL ]] || die 'Cancelled. No service was changed.'
 fi
 printf '\n[6/7] Install and verify\n'
@@ -176,7 +176,7 @@ if (( fresh_install )) && [[ ! -e /var/lib/soar-panel/access.json ]];then
 fi
 cat >"$SERVICE" <<UNIT
 [Unit]
-Description=WhiteDNS Soar Management Panel (beta)
+Description=WhiteDNS Soar Management Panel
 After=network-online.target
 Wants=network-online.target
 Wants=soar-panel-ops.service
@@ -264,7 +264,7 @@ printf 'Verify the phone opens websites and its public IP matches this server.\n
 printf 'If it does not connect, check NS/A records, UDP/53 and client resolver reachability.\n'
 printf 'Service: systemctl status soar-panel\nLogs: journalctl -u soar-panel -n 40 --no-pager\n'
 printf 'Private rollback backup: %s\n' "$backup"
-printf 'Guide: https://github.com/WhiteDNS/Soar-Server/blob/panel-v0.2.0-beta10/docs/PANEL.fa.md\n'
+printf 'Guide: https://github.com/WhiteDNS/Soar-Server/blob/panel-v0.2.0/docs/PANEL.fa.md\n'
 printf '\nConfigure a domain, automatic HTTPS and a random login path now or later.\n'
 read -r -p 'Open the guided secure-access setup now? [Y/n]: ' secure_now
 if [[ $secure_now == n || $secure_now == N ]];then printf 'Later, run: sudo soar-panel-security\n';else /usr/local/bin/soar-panel-security;fi
