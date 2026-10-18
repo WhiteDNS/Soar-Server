@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	bolt "go.etcd.io/bbolt"
 	"io"
 	"net/http"
@@ -98,6 +99,11 @@ func TestRestoreValidationReauthenticationAndSingleUse(t *testing.T) {
 	b.request("/api/restore/apply", "POST", map[string]string{"token": preview.Token, "password": "test-only-password-2026"}, 400)
 }
 func TestOfficialUpdateSelectionAndPassword(t *testing.T) {
+	var major, minor, patch int
+	if _, err := fmt.Sscanf(Version, "%d.%d.%d", &major, &minor, &patch); err != nil {
+		t.Fatal(err)
+	}
+	nextVersion := fmt.Sprintf("%d.%d.%d", major, minor, patch+1)
 	b, _, h := testBrowser(t)
 	fake := &fakeMaintenance{}
 	h.SetMaintenance(fake, nil)
@@ -105,9 +111,9 @@ func TestOfficialUpdateSelectionAndPassword(t *testing.T) {
 	for _, v := range []string{"0.1.3", "0.2.0-beta7", "https://attacker.test/a", "0.2.0-beta11;id"} {
 		b.request("/api/updates/install", "POST", map[string]string{"version": v, "password": "test-only-password-2026"}, 400)
 	}
-	b.request("/api/updates/install", "POST", map[string]string{"version": "0.3.1", "password": "wrong"}, 403)
-	b.request("/api/updates/install", "POST", map[string]string{"version": "0.3.1", "password": "test-only-password-2026"}, 202)
-	if len(fake.requests) != 1 || fake.requests[0].Version != "0.3.1" {
+	b.request("/api/updates/install", "POST", map[string]string{"version": nextVersion, "password": "wrong"}, 403)
+	b.request("/api/updates/install", "POST", map[string]string{"version": nextVersion, "password": "test-only-password-2026"}, 202)
+	if len(fake.requests) != 1 || fake.requests[0].Version != nextVersion {
 		t.Fatal("unexpected update request")
 	}
 }

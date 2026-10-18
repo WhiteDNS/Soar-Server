@@ -70,23 +70,24 @@ func (s Settings) Validate() error {
 }
 
 type Client struct {
-	ID            string `json:"id"`
-	Name          string `json:"name"`
-	Note          string `json:"note"`
-	Zone          string `json:"zone"`
-	PublicKey     string `json:"public_key"`
-	Enabled       bool   `json:"enabled"`
-	QuotaBytes    int64  `json:"quota_bytes"`
-	UploadBytes   int64  `json:"upload_bytes"`
-	DownloadBytes int64  `json:"download_bytes"`
-	ExpiresAt     int64  `json:"expires_at"`
-	RateBytes     int64  `json:"rate_bytes"`
-	StreamLimit   int    `json:"stream_limit"`
-	Revision      uint64 `json:"revision"`
-	UsageEpoch    uint64 `json:"usage_epoch"`
-	CreatedAt     int64  `json:"created_at"`
-	UpdatedAt     int64  `json:"updated_at"`
-	LastSeen      int64  `json:"last_seen"`
+	InstallerProbe bool   `json:"installer_probe,omitempty"`
+	ID             string `json:"id"`
+	Name           string `json:"name"`
+	Note           string `json:"note"`
+	Zone           string `json:"zone"`
+	PublicKey      string `json:"public_key"`
+	Enabled        bool   `json:"enabled"`
+	QuotaBytes     int64  `json:"quota_bytes"`
+	UploadBytes    int64  `json:"upload_bytes"`
+	DownloadBytes  int64  `json:"download_bytes"`
+	ExpiresAt      int64  `json:"expires_at"`
+	RateBytes      int64  `json:"rate_bytes"`
+	StreamLimit    int    `json:"stream_limit"`
+	Revision       uint64 `json:"revision"`
+	UsageEpoch     uint64 `json:"usage_epoch"`
+	CreatedAt      int64  `json:"created_at"`
+	UpdatedAt      int64  `json:"updated_at"`
+	LastSeen       int64  `json:"last_seen"`
 }
 
 type ClientInput struct {
@@ -270,6 +271,13 @@ func randomIdentity(base string) (id, zone, public string, seed []byte, e error)
 	return
 }
 func (s *Store) Create(in ClientInput) (c Client, e error) {
+	return s.create(in, false)
+}
+func (s *Store) create(in ClientInput, installerProbe bool) (c Client, e error) {
+	capacity := MaxClients
+	if installerProbe {
+		capacity++
+	}
 	if e = in.validate(); e != nil {
 		return
 	}
@@ -282,11 +290,11 @@ func (s *Store) Create(in ClientInput) (c Client, e error) {
 		return
 	}
 	now := time.Now().UnixMilli()
-	c = Client{ID: id, Zone: zone, PublicKey: pub, CreatedAt: now, UpdatedAt: now, Revision: 1, UsageEpoch: 1}
+	c = Client{ID: id, Zone: zone, PublicKey: pub, CreatedAt: now, UpdatedAt: now, Revision: 1, UsageEpoch: 1, InstallerProbe: installerProbe}
 	applyInput(&c, in)
 	e = s.db.Update(func(tx *bolt.Tx) error {
 		b := tx.Bucket(clients)
-		if b.Stats().KeyN >= MaxClients {
+		if b.Stats().KeyN >= capacity {
 			return errors.New("account capacity reached")
 		}
 		if e := putJSON(b, []byte(id), c); e != nil {

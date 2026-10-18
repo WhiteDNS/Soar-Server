@@ -62,6 +62,10 @@ func TestUnmodifiedClientHTTPSAndIsolation(t *testing.T) {
 	s := testStore(t)
 	a := account(t, s, 0)
 	b := account(t, s, 0)
+	probe, err := s.CreateInstallProbe()
+	if err != nil {
+		t.Fatal(err)
+	}
 	origin := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { io.WriteString(w, "authenticated tunnel payload") }))
 	defer origin.Close()
 	m := testManager(t, s, func(ctx context.Context, network, _ string) (net.Conn, error) {
@@ -69,7 +73,7 @@ func TestUnmodifiedClientHTTPSAndIsolation(t *testing.T) {
 	})
 	roots := x509.NewCertPool()
 	roots.AddCert(origin.Certificate())
-	for _, c := range []Client{a, b} {
+	for _, c := range []Client{a, b, probe} {
 		client := nativeClient(t, m, c)
 		tr := &http.Transport{DialContext: client.DialContext, TLSClientConfig: &tls.Config{RootCAs: roots, MinVersion: tls.VersionTLS12}, DisableKeepAlives: true}
 		hc := &http.Client{Transport: tr, Timeout: 10 * time.Second}
@@ -84,7 +88,7 @@ func TestUnmodifiedClientHTTPSAndIsolation(t *testing.T) {
 			t.Fatal("bad tunnel payload", e)
 		}
 	}
-	for _, c := range []Client{a, b} {
+	for _, c := range []Client{a, b, probe} {
 		actual, _ := s.Get(c.ID)
 		if actual.UploadBytes == 0 || actual.DownloadBytes == 0 {
 			t.Fatal("traffic not billed", c.ID)

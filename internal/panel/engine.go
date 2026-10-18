@@ -120,6 +120,12 @@ func (m *Manager) Reconcile() error {
 	}
 	desired := map[string]Client{}
 	for _, c := range list {
+		if isInstallProbe(c) && c.Status(time.Now()) == "expired" {
+			if err := m.store.RemoveInstallProbe(c.ID); err != nil {
+				return err
+			}
+			continue
+		}
 		if c.Status(time.Now()) == "active" {
 			desired[c.ID] = c
 		}

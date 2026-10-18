@@ -76,6 +76,11 @@ dig() {
         printf 't.example.com. 300 IN NS ns.example.com.\n'
     fi
 }
+parent_query() {
+    printf ';; ->>HEADER<<- opcode: QUERY, status: NOERROR, id: 1\n'
+    printf 't.example.com. 300 IN NS ns.example.com.\nns.example.com. 300 IN A 8.8.8.8\n'
+    if [[ $3 == DS && ${MOCK_DS:-0} == 1 ]]; then printf 't.example.com. 60 IN DS 1234 13 2 DEAD\n';fi
+}
 expect_yes 'parent referral and recursive SOA accepted' dns_check
 MOCK_DS=1
 expect_no 'stale child DNSSEC DS prevents success report' dns_check

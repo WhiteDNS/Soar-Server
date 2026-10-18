@@ -289,28 +289,78 @@ show_dns_records() {
 
 # Query the parent, not the prospective tunnel server: a recursive NS query can
 # already have followed an old delegation to another application.
+# Discover authority addresses through the selected resolvers, rather than
+# depending on the VPS's possibly broken /etc/resolv.conf. Cache per check.
+dns_find_parents() {
+    local resolver ns address addresses type
+    local -a resolvers
+    IFS=, read -r -a resolvers <<< "$RESOLVERS"
+    DNS_PARENTS=$(
+        for resolver in "${resolvers[@]}"; do dns_query "$resolver" "$PARENT_ZONE" NS || true; done |
+            tr '[:upper:]' '[:lower:]' | sort -u
+    )
+    declare -gA DNS_AUTHORITY_IPS=()
+    while IFS= read -r ns; do
+        valid_domain "${ns%.}" || continue
+        say "Resolving authoritative DNS address: $ns" >&2
+        for type in A AAAA; do
+            for resolver in "${resolvers[@]}"; do
+                addresses=$(dns_query "$resolver" "${ns%.}" "$type") || addresses=
+                while IFS= read -r address; do
+                    if valid_ipv4 "$address" || [[ $address == *:* && $address =~ ^[0-9a-fA-F:]+$ ]]; then
+                        DNS_AUTHORITY_IPS[$ns]+="$address"$'\n'
+                    fi
+                done <<< "$addresses"
+            done
+            [[ -z ${DNS_AUTHORITY_IPS[$ns]:-} ]] || break
+        done
+        DNS_AUTHORITY_IPS[$ns]=$(printf '%s' "${DNS_AUTHORITY_IPS[$ns]:-}" | sort -u)
+    done <<< "$DNS_PARENTS"
+}
 parent_query() {
-    dig +time=3 +tries=1 @"$1" "$2" "$3" +norecurse +noall +comments +answer +authority 2>/dev/null
+    local ns=$1 name=$2 type=$3 address transport response status=unreachable
+    if [[ -z ${DNS_AUTHORITY_IPS[$ns]:-} ]]; then
+        warn "Cannot resolve authoritative server $ns using $RESOLVERS (zone $PARENT_ZONE)."
+        return 2
+    fi
+    while IFS= read -r address; do
+        [[ -n $address ]] || continue
+        # UDP retries handle transient loss; TCP provides a second path to the
+        # parent authority. This does NOT require TCP/53 on the Soar VPS.
+        for transport in +notcp +tcp; do
+            response=$(dig +time=2 +tries=2 "$transport" @"$address" "$name" "$type" +norecurse +noall +comments +answer +authority 2>/dev/null) || response=
+            if [[ $response =~ status:\ (NOERROR|NXDOMAIN), ]]; then
+                printf '%s\n' "$response"
+                return 0
+            fi
+            status=timeout
+            if [[ $response =~ status:\ ([A-Z]+), ]]; then status=${BASH_REMATCH[1]}; fi
+            warn "DNS $ns ($address): $name $type over $transport: $status."
+        done
+    done <<< "${DNS_AUTHORITY_IPS[$ns]}"
+    return 2
 }
 dns_preflight() {
-    local resolver ns name type response records parents checked=0 failed=0 conflict=0
-    local -a resolvers
+    local ns name type response records checked=0 failed=0 conflict=0 ns_found a_found
     DNS_PREFLIGHT_RECORDS=
-    IFS=, read -r -a resolvers <<< "$RESOLVERS"
-    parents=$(
-        for resolver in "${resolvers[@]}"; do dns_query "$resolver" "$PARENT_ZONE" NS || true; done | sort -u
-    )
+    DNS_RECORDS_READY=1
+    dns_find_parents
     while read -r ns; do
         valid_domain "${ns%.}" || continue
+        say "Checking authoritative DNS: $ns"
+        ns_found=0; a_found=0
         for name in "$ZONE" "$NS_HOST"; do
             for type in NS A AAAA CNAME DS; do
                 # A DS on the nameserver hostname is unrelated to the tunnel.
                 [[ $name != "$NS_HOST" || $type != DS && $type != NS ]] || continue
                 response=$(parent_query "$ns" "$name" "$type") || response=
                 if [[ ! $response =~ status:\ (NOERROR|NXDOMAIN), ]]; then
+                    warn "Incomplete authoritative response: $ns / $name / $type."
                     failed=1; continue
                 fi
                 checked=$((checked + 1))
+                if [[ $name == "$ZONE" ]] && awk -v zone="$ZONE." -v host="$NS_HOST." 'tolower($1)==zone && $4=="NS" && tolower($5)==host {found=1} END{exit !found}' <<< "$response"; then ns_found=1; fi
+                if [[ $name == "$NS_HOST" ]] && awk -v host="$NS_HOST." -v ip="$PUBLIC_IP" 'tolower($1)==host && $4=="A" && $5==ip {found=1} END{exit !found}' <<< "$response"; then a_found=1; fi
                 records=$(awk -v name="$name." -v zone="$ZONE." -v parent="$PARENT_ZONE." -v host="$NS_HOST." -v ip="$PUBLIC_IP" '
                     /^;/ {next}
                     tolower($1)==tolower(name) {
@@ -329,7 +379,11 @@ dns_preflight() {
                 fi
             done
         done
-    done <<< "$parents"
+        if (( ! ns_found || ! a_found )); then
+            DNS_RECORDS_READY=0
+            warn "$ns has not confirmed both NS $ZONE -> $NS_HOST and A $NS_HOST -> $PUBLIC_IP."
+        fi
+    done <<< "$DNS_PARENTS"
     if [[ $conflict == 1 ]]; then
         warn 'These DNS names are already used by different records or another tunnel:'
         printf '%s' "$DNS_PREFLIGHT_RECORDS" | sort -u
@@ -339,8 +393,9 @@ dns_preflight() {
         return 1
     fi
     if [[ $checked == 0 || $failed == 1 ]]; then
-        warn 'Could not check every parent DNS response. No service settings have been changed.'
-        say 'Check resolver access and the main DNS zone, then retry or choose different details.'
+        DNS_RECORDS_READY=0
+        warn "Parent DNS verification is incomplete for $PARENT_ZONE using $RESOLVERS."
+        say 'Review the named server/query above. Check the main DNS zone and outbound DNS, then retry or change resolvers.'
         return 2
     fi
     ok 'Parent DNS records do not conflict with these Soar names.'
@@ -582,42 +637,37 @@ firewall_guide() {
     pause
 }
 dns_query() {
-    local resolver=$1 name=$2 type=$3
-    dig +time=3 +tries=1 @"$resolver" "$name" "$type" +short 2>/dev/null
+    local resolver=$1 name=$2 type=$3 response
+    response=$(dig +time=2 +tries=2 @"$resolver" "$name" "$type" +short 2>/dev/null) || response=
+    response=$(awk 'NF && !/^;/' <<< "$response")
+    if [[ -z $response ]]; then
+        response=$(dig +time=2 +tries=1 +tcp @"$resolver" "$name" "$type" +short 2>/dev/null) || response=
+        response=$(awk 'NF && !/^;/' <<< "$response")
+    fi
+    printf '%s\n' "$response"
 }
 dns_check() {
-    local resolver ns a_ok=0 parent_ok=0 soa_ok=0 parent_count=0 matched=0 ds=0 response addresses
-    local -a resolvers parents
+    local resolver a_ok=0 soa_ok=0 response addresses
+    local -a resolvers
+    # Reuse the same direct-IP, retrying checks after activation. A reachable
+    # child SOA must never conceal a conflicting/stale parent delegation or DS.
+    dns_preflight || return 1
+    if [[ $DNS_RECORDS_READY != 1 ]]; then
+        warn 'A/NS records are missing or still propagating at the parent authorities.'
+        return 1
+    fi
     IFS=, read -r -a resolvers <<< "$RESOLVERS"
     for resolver in "${resolvers[@]}"; do
         addresses=$(dns_query "$resolver" "$NS_HOST" A) || addresses=
         if [[ $addresses == "$PUBLIC_IP" ]]; then a_ok=1; fi
-        mapfile -t parents < <(dns_query "$resolver" "$PARENT_ZONE" NS || true)
-        for ns in "${parents[@]}"; do
-            valid_domain "${ns%.}" || continue
-            parent_count=$((parent_count + 1))
-            response=$(dig +time=3 +tries=1 @"$ns" "$ZONE" NS +norecurse +noall +answer +authority 2>/dev/null) || response=
-            if awk -v zone="$ZONE." -v host="$NS_HOST." 'tolower($1)==zone && $4=="NS" {if (tolower($5)==host) found=1; else other=1} END {exit !(found && !other)}' <<< "$response"; then
-                matched=$((matched + 1)); parent_ok=1
-            fi
-            response=$(dig +time=3 +tries=1 @"$ns" "$ZONE" DS +norecurse +noall +answer 2>/dev/null) || response=
-            if awk -v zone="$ZONE." 'tolower($1)==zone && $4=="DS" {found=1} END {exit !found}' <<< "$response"; then ds=1; fi
-        done
         response=$(dns_query "$resolver" "$ZONE" SOA) || response=
         [[ -z $response ]] || soa_ok=1
     done
     if [[ $a_ok == 1 ]]; then ok 'Nameserver A record matches the expected public IPv4.'
     else warn 'Nameserver A record does not match yet. Check the A record, DNS-only mode and caches.'; fi
-    if [[ $parent_ok == 1 ]]; then ok 'A parent nameserver returned the expected NS delegation.'
-    else warn 'NS delegation was not confirmed. Add the NS record in the main DNS zone, not at your registrar nameserver screen. Check for outdated NS records on this tunnel name.'; fi
-    if (( matched < parent_count )); then warn 'Some parent nameservers did not confirm the record. The update may still be propagating or a DNS path may be blocked.'; fi
     if [[ $soa_ok == 1 ]]; then ok 'A recursive resolver returned an SOA response.'
     else warn 'Recursive SOA lookup failed. Check delegation, UDP/53, firewall and DNS caches.'; fi
-    if [[ $ds == 1 ]]; then
-        warn 'A DS record exists for the tunnel subdomain. This Soar server does not sign DNSSEC.'
-        say 'Review the DS record for this subdomain with your DNS provider. Do not disable DNSSEC for the main domain.'
-    fi
-    [[ $a_ok == 1 && $parent_ok == 1 && $soa_ok == 1 && $ds == 0 ]]
+    [[ $a_ok == 1 && $soa_ok == 1 ]]
 }
 public_key() { "$LIB_DIR/current/soar-server" pubkey "$KEY"; }
 profile_link() {

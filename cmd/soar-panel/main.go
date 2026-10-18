@@ -54,6 +54,8 @@ func execute(args []string) error {
 	domain := f.String("domain", "", "Panel HTTPS domain (configure-access only)")
 	email := f.String("email", "", "Optional certificate account email")
 	randomPath := f.Bool("random-path", false, "Generate a new private access path")
+	probeID := f.String("probe-id", "", "Temporary installation account to remove (offline installer only)")
+	updateResolvers := f.Bool("update-resolvers", false, "Save selected bootstrap resolvers when finishing a fresh installation")
 	if err := f.Parse(args[1:]); err != nil {
 		return err
 	}
@@ -145,7 +147,7 @@ func execute(args []string) error {
 		}
 	}
 	switch args[0] {
-	case "init", "run", "admin-reset", "backup", "zone":
+	case "init", "run", "admin-reset", "backup", "zone", "create-install-probe", "remove-install-probe":
 	default:
 		return errors.New("unknown command")
 	}
@@ -199,6 +201,27 @@ func execute(args []string) error {
 	}
 	if !s.Initialized() {
 		return errors.New("database not initialized; run init first")
+	}
+	if args[0] == "create-install-probe" {
+		c, err := s.CreateInstallProbe()
+		if err == nil {
+			fmt.Printf("%s %s %s %d\n", c.ID, c.Zone, c.PublicKey, c.ExpiresAt/1000)
+		}
+		return err
+	}
+	if args[0] == "remove-install-probe" {
+		if err := s.RemoveInstallProbe(*probeID); err != nil {
+			return err
+		}
+		if *updateResolvers {
+			cfg, err := s.Settings()
+			if err != nil {
+				return err
+			}
+			cfg.Resolvers = strings.Split(*resolvers, ",")
+			return s.SaveSettings(cfg)
+		}
+		return nil
 	}
 	if args[0] == "zone" {
 		cfg, e := s.Settings()
