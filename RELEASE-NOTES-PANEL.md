@@ -1,8 +1,15 @@
-# WhiteDNS Soar Panel 0.2.0-beta8
+# WhiteDNS Soar Panel 0.2.0-beta9
 
-This server-side release adds restore, updates and secure panel access. Lantern
+This server-side release polishes every dropdown and makes field help unobtrusive. Lantern
 remains the author of the Soar engine; existing WhiteDNS profiles and apps keep
 their current transport behavior.
+
+- All selection fields now use a shared Persian listbox with consistent fonts,
+  spacing, selected checkmarks, dark/light themes and mobile sizing. Keyboard
+  navigation, Escape cancellation and outside-click dismissal are supported.
+- Field explanations open only from the question-mark button: hover, keyboard
+  focus or touch. Hovering or editing an input no longer opens a popup.
+- Existing restore, update and secure-access features are retained:
 
 - Restore a panel `.db` directly in Backup & Restore. Uploaded files are size-limited,
   checked for database integrity, account/key consistency and matching tunnel zone,
@@ -48,10 +55,10 @@ does not qualify Iranian access-network behavior or production load capacity.
 Install or upgrade the explicit panel beta in an interactive SSH terminal:
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/WhiteDNS/Soar-Server/panel-v0.2.0-beta8/panel-setup.sh)
+bash <(curl -fsSL https://raw.githubusercontent.com/WhiteDNS/Soar-Server/panel-v0.2.0-beta9/panel-setup.sh)
 ```
 
-[Persian installation, secure access and recovery guide](https://github.com/WhiteDNS/Soar-Server/blob/panel-v0.2.0-beta8/docs/PANEL.fa.md)
+[Persian installation, secure access and recovery guide](https://github.com/WhiteDNS/Soar-Server/blob/panel-v0.2.0-beta9/docs/PANEL.fa.md)
 
 Certificate automation: [Go autocert](https://pkg.go.dev/golang.org/x/crypto/acme/autocert)
 and [Let's Encrypt challenges](https://letsencrypt.org/docs/challenge-types/).

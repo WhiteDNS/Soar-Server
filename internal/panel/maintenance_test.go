@@ -102,12 +102,12 @@ func TestOfficialUpdateSelectionAndPassword(t *testing.T) {
 	fake := &fakeMaintenance{}
 	h.SetMaintenance(fake, nil)
 	b.login()
-	for _, v := range []string{"0.1.3", "0.2.0-beta7", "https://attacker.test/a", "0.2.0-beta9;id"} {
+	for _, v := range []string{"0.1.3", "0.2.0-beta7", "https://attacker.test/a", "0.2.0-beta10;id"} {
 		b.request("/api/updates/install", "POST", map[string]string{"version": v, "password": "test-only-password-2026"}, 400)
 	}
-	b.request("/api/updates/install", "POST", map[string]string{"version": "0.2.0-beta9", "password": "wrong"}, 403)
-	b.request("/api/updates/install", "POST", map[string]string{"version": "0.2.0-beta9", "password": "test-only-password-2026"}, 202)
-	if len(fake.requests) != 1 || fake.requests[0].Version != "0.2.0-beta9" {
+	b.request("/api/updates/install", "POST", map[string]string{"version": "0.2.0-beta10", "password": "wrong"}, 403)
+	b.request("/api/updates/install", "POST", map[string]string{"version": "0.2.0-beta10", "password": "test-only-password-2026"}, 202)
+	if len(fake.requests) != 1 || fake.requests[0].Version != "0.2.0-beta10" {
 		t.Fatal("unexpected update request")
 	}
 }

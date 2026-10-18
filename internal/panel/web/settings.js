@@ -71,20 +71,20 @@ const soarSettingsForm = (() => {
   clearTimeout(closeTimer);if(active!==wrapper){closeHelp();active=wrapper;}
   tooltip.textContent=get(wrapper.dataset.help).textContent;tooltip.hidden=false;wrapper.querySelector('.help-trigger').setAttribute('aria-expanded','true');placeHelp();
  }
- function laterClose(){if(!pinned)closeTimer=setTimeout(()=>{if(active?.contains(document.activeElement)||tooltip.matches(':hover'))return;closeHelp();},160);}
+ function laterClose(){if(!pinned)closeTimer=setTimeout(()=>{if(active?.querySelector('.help-trigger')===document.activeElement||tooltip.matches(':hover'))return;closeHelp();},160);}
  for(const wrapper of document.querySelectorAll('.setting-field[data-help]')){
-  wrapper.addEventListener('pointerenter',event=>{if(event.pointerType==='mouse'&&!pinned)showHelp(wrapper);});
-  wrapper.addEventListener('pointerleave',laterClose);
-  wrapper.addEventListener('focusin',()=>{if(active!==wrapper||tooltip.hidden)showHelp(wrapper);});
-  wrapper.addEventListener('focusout',laterClose);
   const button=wrapper.querySelector('.help-trigger');
+  button.addEventListener('pointerenter',event=>{if(event.pointerType==='mouse'&&!pinned)showHelp(wrapper);});
+  button.addEventListener('pointerleave',laterClose);
+  button.addEventListener('focus',()=>{if(active!==wrapper||tooltip.hidden)showHelp(wrapper);});
+  button.addEventListener('blur',()=>{pinned=false;laterClose();});
   button.addEventListener('click',()=>{if(active===wrapper&&pinned){closeHelp();return;}showHelp(wrapper);pinned=true;});
  }
  tooltip.addEventListener('pointerenter',()=>clearTimeout(closeTimer));tooltip.addEventListener('pointerleave',laterClose);
  document.addEventListener('keydown',event=>{if(event.key==='Escape')closeHelp();});
- document.addEventListener('pointerdown',event=>{if(active&&!active.contains(event.target)&&!tooltip.contains(event.target))closeHelp();});
+ document.addEventListener('pointerdown',event=>{if(active&&!active.querySelector('.help-trigger').contains(event.target)&&!tooltip.contains(event.target))closeHelp();});
  window.addEventListener('resize',placeHelp);window.addEventListener('scroll',placeHelp,true);window.addEventListener('hashchange',closeHelp);
- function fill(settings){for(const [key] of fields)get('soar-'+key).value=String(settings[key]);}
+ function fill(settings){for(const [key] of fields)get('soar-'+key).value=String(settings[key]);panelUI.syncSelects();}
  function read(){const settings={};for(const [key] of fields){const value=get('soar-'+key).value;settings[key]=key==='transport'?value:key==='discovery'?value==='true':Number(value);}return settings;}
  function validate(){
   const safe=get('soar-safeQName');safe.setCustomValidity(Number(safe.value)>Number(get('soar-maxQName').value)?'طول امن اولیه نباید از سقف طول پرس‌وجو بیشتر باشد.':'');

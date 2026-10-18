@@ -34,20 +34,20 @@
 
 ## ۳. نصب بستهٔ آزمایشی
 
-بستهٔ پنل از انتشار آزمایشی `panel-v0.2.0-beta8` همین مخزن دریافت می‌شود؛ نصب‌کنندهٔ پایدار `setup.sh` همچنان مخصوص سرور بدون پنل است. برای دریافت و اجرای نصب‌کنندهٔ پنل، در SSH سرور:
+بستهٔ پنل از انتشار آزمایشی `panel-v0.2.0-beta9` همین مخزن دریافت می‌شود؛ نصب‌کنندهٔ پایدار `setup.sh` همچنان مخصوص سرور بدون پنل است. برای دریافت و اجرای نصب‌کنندهٔ پنل، در SSH سرور:
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/WhiteDNS/Soar-Server/panel-v0.2.0-beta8/panel-setup.sh)
+bash <(curl -fsSL https://raw.githubusercontent.com/WhiteDNS/Soar-Server/panel-v0.2.0-beta9/panel-setup.sh)
 ```
 
 این دستور فایل نسخه‌دار و checksum را بررسی می‌کند و ترمینال را برای مراحل پرسش‌وپاسخ باز نگه می‌دارد. اگر `curl` یا `dig` نصب نیست، با `sudo apt-get update` و `sudo apt-get install -y curl dnsutils iproute2` آن‌ها را نصب کنید. برای دریافت دستی و نصب آفلاین، مراحل زیر نیز قابل استفاده است.
 
-فایل `soar-panel-0.2.0-beta8-linux-amd64.tar.gz` و فایل کنار آن با پسوند `.sha256` را در یک پوشهٔ سرور قرار دهید، سپس:
+فایل `soar-panel-0.2.0-beta9-linux-amd64.tar.gz` و فایل کنار آن با پسوند `.sha256` را در یک پوشهٔ سرور قرار دهید، سپس:
 
 ```bash
-sha256sum -c soar-panel-0.2.0-beta8-linux-amd64.tar.gz.sha256
-tar -xzf soar-panel-0.2.0-beta8-linux-amd64.tar.gz
-cd soar-panel-0.2.0-beta8-linux-amd64
+sha256sum -c soar-panel-0.2.0-beta9-linux-amd64.tar.gz.sha256
+tar -xzf soar-panel-0.2.0-beta9-linux-amd64.tar.gz
+cd soar-panel-0.2.0-beta9-linux-amd64
 sudo bash panel-install.sh
 ```
 
