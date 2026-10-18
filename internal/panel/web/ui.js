@@ -34,7 +34,10 @@ const panelUI = (() => {
  let theme='dark';try{theme=localStorage.getItem('soar-theme')==='light'?'light':'dark';}catch{}setTheme(theme);
  get('login-theme').onclick=()=>setTheme(document.documentElement.dataset.theme==='dark'?'light':'dark');
  get('password-toggle').onclick=()=>{const input=get('login-password'),shown=input.type==='password';input.type=shown?'text':'password';get('password-toggle').setAttribute('aria-pressed',String(shown));get('password-toggle').setAttribute('aria-label',shown?'پنهان کردن رمز عبور':'نمایش رمز عبور');};
- function closeMenu(){const opened=document.body.classList.contains('menu-open');document.body.classList.remove('menu-open');get('menu-toggle').setAttribute('aria-expanded','false');if(opened)get('menu-toggle').focus();}
+ function syncDrawer(){if(innerWidth>800){document.body.classList.remove('menu-open');get('menu-toggle').setAttribute('aria-expanded','false');}const closed=innerWidth<=800&&!document.body.classList.contains('menu-open'),rail=document.querySelector('.sidebar');rail.inert=closed;if(closed)rail.setAttribute('aria-hidden','true');else rail.removeAttribute('aria-hidden');}
+ function closeMenu(){const opened=document.body.classList.contains('menu-open');document.body.classList.remove('menu-open');get('menu-toggle').setAttribute('aria-expanded','false');if(opened)get('menu-toggle').focus();syncDrawer();}
+ function toggleMenu(){const open=document.body.classList.toggle('menu-open');get('menu-toggle').setAttribute('aria-expanded',String(open));syncDrawer();if(open)document.querySelector('nav a[aria-current=page]').focus();}
+ window.addEventListener('resize',syncDrawer);syncDrawer();
  get('nav-backdrop').onclick=closeMenu;get('rail-close').onclick=closeMenu;
  document.addEventListener('keydown',event=>{if(!document.body.classList.contains('menu-open'))return;if(event.key==='Escape'){closeMenu();get('menu-toggle').focus();}if(event.key==='Tab'){const links=[...document.querySelectorAll('.sidebar a,.sidebar button')].filter(el=>el.getClientRects().length);const first=links[0],last=links.at(-1);if(event.shiftKey&&document.activeElement===first){event.preventDefault();last.focus();}else if(!event.shiftKey&&document.activeElement===last){event.preventDefault();first.focus();}}});
  function size(n){if(n==null)return '—';if(n===0)return '0 B';const units=['B','KiB','MiB','GiB','TiB'];const i=Math.max(0,Math.min(4,Math.floor(Math.log(n)/Math.log(1024))));return `${(n/1024**i).toLocaleString('en-US',{maximumFractionDigits:i?2:0})} ${units[i]}`;}
@@ -83,5 +86,5 @@ const panelUI = (() => {
   text('chart-start',new Date(Date.now()-(now-samples[0].at)).toLocaleTimeString('fa-IR',{hour:'2-digit',minute:'2-digit'}));
   text('chart-now','اکنون');
  }
- return {icon,renderDashboard,setConnection,closeMenu,toggleTheme(){setTheme(document.documentElement.dataset.theme==='dark'?'light':'dark');}};
+ return {icon,renderDashboard,setConnection,closeMenu,toggleMenu,toggleTheme(){setTheme(document.documentElement.dataset.theme==='dark'?'light':'dark');}};
 })();
