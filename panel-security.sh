@@ -9,12 +9,18 @@ db=/var/lib/soar-panel/panel.db
 access=/var/lib/soar-panel/access.json
 binary=/usr/local/bin/soar-panel
 [[ -f $db && -x $binary ]] || { printf 'Install the panel first.\n' >&2; exit 1; }
-bind=$(systemctl show soar-panel.service -p ExecStart --value | sed -n 's/.*--listen \([^ ;]*\).*/\1/p')
+service_start=$(systemctl show soar-panel.service -p ExecStart --value)
+bind=$(sed -n 's/.*--listen \([^ ;]*\).*/\1/p' <<< "$service_start")
 [[ $bind =~ ^[a-zA-Z0-9.:-]+$ ]] || { printf 'Cannot determine the management listener.\n' >&2; exit 1; }
+display_bind=$bind
+if [[ $service_start == *--allow-insecure-http* && -r /var/lib/soar-panel/public-ip ]];then
+ read -r public_ip </var/lib/soar-panel/public-ip
+ if [[ $public_ip =~ ^[0-9]{1,3}(\.[0-9]{1,3}){3}$ ]];then display_bind="$public_ip:${bind##*:}";fi
+fi
 printf '\nWhiteDNS - domain, automatic HTTPS and private login address\n'
 printf '1) Configure domain / HTTPS / random login path\n2) Show the current login address\n3) Recover direct IP access (disable HTTPS and private path)\n'
 read -r -p 'Choose [1]: ' choice;choice=${choice:-1}
-if [[ $choice == 2 ]];then exec "$binary" access-url --db "$db" --listen "$bind";fi
+if [[ $choice == 2 ]];then exec "$binary" access-url --db "$db" --listen "$display_bind";fi
 [[ $choice == 1 || $choice == 3 ]] || { printf 'Cancelled.\n'; exit 0; }
 domain='';email='';random=()
 if [[ $choice == 1 ]];then
@@ -52,7 +58,7 @@ systemctl stop soar-panel.service
 if [[ $choice == 3 ]];then
  "$binary" access-reset --db "$db"
 else
- "$binary" configure-access --db "$db" --listen "$bind" --domain "$domain" --email "$email" "${random[@]}"
+ "$binary" configure-access --db "$db" --listen "$bind" --domain "$domain" --email "$email" "${random[@]}" >/dev/null
 fi
 chown soar-panel:soar-panel "$access"
 if [[ -d /var/lib/soar-panel/certificates ]];then chown -R soar-panel:soar-panel /var/lib/soar-panel/certificates;fi
@@ -61,5 +67,5 @@ sleep 2
 "$binary" health --db "$db" --listen "$bind"
 done=1
 printf '\nSecure access settings saved. Bookmark this private login address:\n'
-"$binary" access-url --db "$db" --listen "$bind"
+"$binary" access-url --db "$db" --listen "$display_bind"
 printf 'Administrator password is unchanged. Private rollback copy: %s\n' "$backup"

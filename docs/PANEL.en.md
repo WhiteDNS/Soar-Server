@@ -48,6 +48,37 @@ installer downloads the pinned stable release, verifies its checksum, installs
 the services and prints the complete login URL. Save that URL: its random path
 is required. The bare IP/domain intentionally does not show a login page.
 
+The 0.3.1 wizard offers to install missing DNS/network tools. The local listener
+address is detected from the default route; behind NAT, enter the provider's
+public IPv4 separately. DNS names accept uppercase or a trailing dot and are
+normalized. Incorrect input can be corrected without restarting installation.
+
+Before service changes, all discovered parent authorities must confirm the A/NS
+records and no conflicting delegation or child DS. Authoritative checks use the
+selected resolvers to find server addresses, retry UDP and fall back to TCP.
+An unreachable authority reports its name and failed query and offers retry or
+resolver changes. Child SOA is deliberately checked only after startup.
+
+After startup, a temporary account with a 1 MiB quota and ten-minute expiry checks
+authenticated HTTPS through the local listener and recursive DNS. It uses no
+customer account or usage, is renewed during long retries, and is removed before
+completion. Expired installer accounts are cleaned after an interrupted install.
+Both local and recursive checks must pass for a verified installation. These
+server-side tests do not establish reachability from the phone's network.
+
+If checks fail, fix the displayed problem and retry, change test resolvers, roll
+back, or explicitly type KEEP to retain an **unverified** installation. KEEP
+finishes with a nonzero exit status; it does not certify working connectivity.
+Active UFW receives UDP/53 and, for direct access, the management TCP rule.
+Existing broad allow rules and their comments are preserved. Automatic rollback
+restores previous program/data/access files and service enable states and removes
+only firewall rules added by this installation. Provider firewall/NAT changes
+still need provider-side setup.
+
+Rerun the installer to apply these changes on an existing server; the in-panel
+binary updater does not run the installation wizard. Existing account keys,
+usage, credentials and saved tuning are retained.
+
 ## 3. Enable HTTPS
 
 Sign in, then open **Domain & security**, or run this in SSH:

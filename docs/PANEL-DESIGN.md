@@ -88,7 +88,7 @@ API returns the latest 200. Browsing destinations/content are not recorded.
 
 ## Rollout
 
-Stable standalone setup remains separate. Panel 0.3.0 is the stable default in the README,
+Stable standalone setup remains separate. Panel 0.3.1 is the stable default in the README,
 with IPv4/amd64 support. A running standalone instance is stopped only after
 typing MIGRATE, preserving its keys/config and offering rollback. Migrating root
 shared profiles to individual accounts requires distributing new profile links,
