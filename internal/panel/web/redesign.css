@@ -137,7 +137,10 @@ td .domain{font-size:11px;line-height:1.6}td .usage{font-size:var(--text-xs);mar
 dialog{padding:24px;width:min(620px,calc(100% - 28px));border-radius:14px;background:var(--color-paper-2)}
 .dialog-heading{margin-bottom:20px}.dialog-heading h2{font-size:20px}.form-grid{gap:18px}.dialog-actions{gap:10px;margin-top:20px}
 .qr{background:var(--color-on-action);border-radius:10px}#share-link{font-family:var(--font-outlier);font-size:11px}#confirm-text{font-size:var(--text-sm)}
-#toast{font-family:var(--font-body);font-size:var(--text-sm);line-height:1.9;box-shadow:var(--shadow);background:var(--color-tooltip);color:var(--color-tooltip-ink)}
+#toast{font-family:var(--font-body);font-size:var(--text-sm);line-height:1.9;box-shadow:var(--shadow);background:var(--color-paper-2);color:var(--color-ink);border:1px solid var(--color-rule);border-inline-start:3px solid var(--color-accent);padding:12px 16px;overflow-wrap:anywhere}
+#toast[data-kind=success]{background:var(--color-positive-soft);color:var(--color-positive);border-color:var(--color-positive)}
+#toast[data-kind=error]{background:var(--color-negative-soft);color:var(--color-negative);border-color:var(--color-negative)}
+dialog #toast{position:static;max-width:none;margin-top:16px;box-shadow:none}
 .login-view{position:relative;background-color:var(--color-login);background-image:radial-gradient(ellipse at 12% 10%,var(--color-bloom),transparent 52%),radial-gradient(ellipse at 90% 94%,var(--color-bloom),transparent 50%);padding:40px 20px;isolation:isolate}
 .login-view::before{content:'';position:absolute;inset:0;background-image:linear-gradient(var(--color-grid) 1px,transparent 1px),linear-gradient(90deg,var(--color-grid) 1px,transparent 1px);background-size:48px 48px;mask-image:radial-gradient(ellipse,black,transparent 78%);z-index:-1}
 .login-tools{position:absolute;top:20px;inset-inline-end:20px;display:flex;gap:8px}.login-tools .icon-button{border-radius:50%;width:38px;height:38px;background:var(--color-paper-2)}

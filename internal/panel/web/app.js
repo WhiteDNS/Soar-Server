@@ -9,10 +9,19 @@ function bytes(n){if(n == null)return '—';if(!n)return '0 B';const units=['B',
 function date(n){return n?new Date(n).toLocaleString('fa-IR',{year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'}):'بدون انقضا';}
 function status(c){if(!c.enabled)return 'disabled';if(c.expires_at&&Date.now()>=c.expires_at)return 'expired';if(c.quota_bytes&&c.upload_bytes+c.download_bytes>=c.quota_bytes)return 'exhausted';return 'active';}
 function node(tag,text,cls){const el=document.createElement(tag);if(text!=null)el.textContent=text;if(cls)el.className=cls;return el;}
-function toast(text){$('toast').textContent=text;$('toast').hidden=false;clearTimeout(toastTimer);toastTimer=setTimeout(()=>$('toast').hidden=true,4500);}
+function toast(text,kind='info'){
+ const el=$('toast'),dialogs=[...document.querySelectorAll('dialog[open]')];
+ // Native modal dialogs live above the document, including its z-index layers.
+ (dialogs.at(-1)||document.body).append(el);
+ el.textContent=text;el.dataset.kind=kind;el.hidden=false;
+ clearTimeout(toastTimer);toastTimer=setTimeout(()=>el.hidden=true,4500);
+}
+document.querySelectorAll('dialog').forEach(d=>d.addEventListener('close',()=>{
+ if(d.contains($('toast'))){$('toast').hidden=true;document.body.append($('toast'));}
+}));
 function message(err){const text=err.message||String(err);const map={'Failed to fetch':'ارتباط با پنل قطع شد. اتصال و آدرس پنل را بررسی کنید.','invalid username or password':'نام مدیر یا رمز عبور درست نیست.','account changed; refresh and retry':'این حساب هم‌زمان تغییر کرده است. فرم را ببندید و دوباره باز کنید.','too many login attempts; retry after five minutes':'تعداد تلاش‌ها زیاد است؛ پنج دقیقه دیگر امتحان کنید.'};return map[text]||text;}
 async function api(path,method='GET',body){const response=await fetch('/api'+path,{method,headers:{...(body!==undefined?{'Content-Type':'application/json'}:{}),...(method!=='GET'?{'X-CSRF-Token':csrf}:{})},body:body===undefined?undefined:JSON.stringify(body),credentials:'same-origin',cache:'no-store'});let value;try{value=await response.json();}catch{throw Error('پاسخ نامعتبر از پنل');}if(!response.ok){if(response.status===401&&path!=='/login')signOut();throw Error(value.error||`HTTP ${response.status}`);}return value;}
-async function withButton(button,fn){button.disabled=true;try{await fn();}catch(e){toast(message(e));}finally{button.disabled=false;}}
+async function withButton(button,fn){button.disabled=true;try{await fn();}catch(e){toast(message(e),'error');}finally{button.disabled=false;}}
 function signOut(){csrf='';$('app').hidden=true;$('login-view').hidden=false;for(const d of document.querySelectorAll('dialog[open]'))d.close();$('login-password').value='';}
 async function enter(token){csrf=token;$('login-view').hidden=true;$('app').hidden=false;$('login-password').value='';navigate();await refresh();}
 $('login-form').addEventListener('submit',async e=>{e.preventDefault();const button=e.submitter;button.disabled=true;$('login-error').textContent='';try{const v=await api('/login','POST',{name:$('login-name').value,password:$('login-password').value});await enter(v.csrf);}catch(err){$('login-error').textContent=message(err);}finally{button.disabled=false;}});
@@ -36,7 +45,19 @@ $('client-form').onsubmit=async e=>{e.preventDefault();const button=e.submitter;
 function confirmAction(title,text){return new Promise(resolve=>{const d=$('confirm-dialog');$('confirm-title').textContent=title;$('confirm-text').textContent=text;let answer=false;$('confirm-ok').onclick=()=>{answer=true;d.close();};$('confirm-cancel').onclick=()=>d.close();d.addEventListener('close',()=>resolve(answer),{once:true});d.showModal();$('confirm-cancel').focus();});}
 async function clientAction(c,action){const titles={toggle:c.enabled?'غیرفعال کردن حساب':'فعال کردن حساب',disconnect:'قطع اتصال‌های باز',reset:'صفر کردن مصرف',rotate:'تعویض لینک و کلید',delete:'حذف حساب'};const details={toggle:c.enabled?'تمام اتصال‌های این حساب بسته می‌شوند. لینک تا فعال‌سازی دوباره قابل استفاده نیست.':'این حساب در صورت داشتن حجم و اعتبار زمانی اجازهٔ اتصال خواهد داشت.',disconnect:'جریان‌های باز بسته می‌شوند. حساب فعال می‌تواند دوباره وصل شود.',reset:'مصرف آپلود و دانلود صفر و اتصال‌های فعلی بسته می‌شوند. این عمل برگشت‌پذیر نیست.',rotate:'لینک قبلی و اتصال‌های آن باطل می‌شوند. باید لینک جدید را به صاحب حساب بدهید. مصرف صفر نمی‌شود.',delete:'حساب، کلید و سابقهٔ مصرف آن حذف می‌شوند. این عمل برگشت‌پذیر نیست.'};if(!await confirmAction(titles[action]+' «'+c.name+'»',details[action]))return;if(action==='toggle'){await api('/clients/'+c.id,'PUT',{name:c.name,note:c.note,enabled:!c.enabled,quota_bytes:c.quota_bytes,rate_bytes:c.rate_bytes,stream_limit:c.stream_limit,expires_at:c.expires_at,revision:c.revision});}else await api('/clients/'+c.id+(action==='delete'?'':'/'+action),action==='delete'?'DELETE':'POST');await refresh();toast('انجام شد.');}
 async function share(c){const v=await api('/clients/'+c.id+'/link');sharedLink=v.link;$('share-title').textContent=c.name;$('share-link').value=v.link;$('share-qr').src='/api/clients/'+c.id+'/qr.png';$('share-dialog').showModal();}
-$('copy-link').onclick=e=>withButton(e.currentTarget,async()=>{if(navigator.clipboard&&window.isSecureContext){await navigator.clipboard.writeText(sharedLink);toast('لینک کپی شد.');}else{$('share-link').focus();$('share-link').select();toast('لینک انتخاب شد؛ از گزینهٔ Copy مرورگر استفاده کنید.');}});
+async function copyProfileLink(){
+ if(navigator.clipboard&&window.isSecureContext){
+  try{await navigator.clipboard.writeText(sharedLink);return;}catch{/* Try the HTTP-compatible path if clipboard permission is denied. */}
+ }
+ // Keep the source inside the active modal: body-level fields are inert here.
+ const field=$('share-link'),start=field.selectionStart,end=field.selectionEnd;
+ field.focus({preventScroll:true});field.select();field.setSelectionRange(0,field.value.length);
+ let copied=false;
+ try{copied=document.execCommand('copy');}catch{/* Report failure below, never a false success. */}
+ if(!copied)throw Error('مرورگر اجازهٔ کپی نداد. لینک را انتخاب کرده‌ایم؛ از منوی مرورگر کپی کنید یا «دانلود لینک» را بزنید.');
+ field.setSelectionRange(start,end);
+}
+$('copy-link').onclick=e=>withButton(e.currentTarget,async()=>{await copyProfileLink();toast('لینک کپی شد.','success');});
 function download(blob,name){const url=URL.createObjectURL(blob),a=node('a');a.href=url;a.download=name;document.body.append(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),1000);}
 $('save-profile').onclick=()=>download(new Blob([sharedLink+'\n'],{type:'text/plain'}),'soar-profile.txt');
 $('download-backup').onclick=e=>withButton(e.currentTarget,async()=>{if(!await confirmAction('دانلود پشتیبان کامل','این فایل شامل کلیدهای خصوصی حساب‌هاست. آیا آن را در جای امن نگهداری می‌کنید؟'))return;const response=await fetch('/api/backup',{credentials:'same-origin',cache:'no-store'});if(!response.ok)throw Error('پشتیبان دریافت نشد. دوباره وارد پنل شوید.');download(await response.blob(),'soar-panel-'+new Date().toISOString().slice(0,10)+'.db');toast('پشتیبان دریافت شد.');});
