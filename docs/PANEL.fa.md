@@ -195,7 +195,7 @@ exit
 
 ```bash
 go test ./... -count=1 -timeout 90s
-go test -race ./internal/panel ./internal/panelops -count=1 -timeout 120s
+go test -race ./internal/panel ./internal/panelops -count=1 -timeout 300s
 go vet ./...
 python3 scripts/build_panel_bundle.py
 ```

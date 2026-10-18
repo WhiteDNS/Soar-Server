@@ -3,7 +3,7 @@ const $ = id => document.getElementById(id);
 const apiPath = path => new URL('api'+path,document.baseURI).href;
 const states = {active:'فعال', disabled:'غیرفعال', expired:'منقضی', exhausted:'حجم تمام‌شده'};
 const pages = {dashboard:'نمای کلی', clients:'حساب‌های کاربری', events:'رویدادهای مدیریت', settings:'تنظیمات سرور', backup:'پشتیبان و بازیابی', updates:'به‌روزرسانی پنل', security:'دامنه و امنیت'};
-const events = {'admin.login':'ورود مدیر','backup.exported':'دریافت پشتیبان','settings.updated':'تغییر تنظیمات','client.created':'ساخت حساب','client.updated':'ویرایش حساب','client.deleted':'حذف حساب','client.rotated':'تعویض لینک حساب','client.usage_reset':'صفر کردن مصرف','client.disconnected':'قطع اتصال‌های باز'};
+const events = {'backup.restored':'بازیابی پشتیبان','maintenance.update_requested':'درخواست به‌روزرسانی پنل','maintenance.restore_requested':'درخواست بازیابی پشتیبان','access.updated':'تغییر دامنه و آدرس امن','admin.login':'ورود مدیر','backup.exported':'دریافت پشتیبان','settings.updated':'تغییر تنظیمات','client.created':'ساخت حساب','client.updated':'ویرایش حساب','client.deleted':'حذف حساب','client.rotated':'تعویض لینک حساب','client.usage_reset':'صفر کردن مصرف','client.disconnected':'قطع اتصال‌های باز'};
 let csrf = '', clients = [], connections = {}, currentPage = 'dashboard', editing = null, sharedLink = '', busy = false, toastTimer;
 const number = n => new Intl.NumberFormat('fa-IR').format(n);
 function bytes(n){if(n == null)return '—';if(!n)return '0 B';const units=['B','KiB','MiB','GiB','TiB'];const i=Math.min(4,Math.floor(Math.log(n)/Math.log(1024)));return `${(n/1024**i).toLocaleString('en-US',{maximumFractionDigits:i?2:0})} ${units[i]}`;}
