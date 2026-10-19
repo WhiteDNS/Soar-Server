@@ -17,6 +17,21 @@ import (
 )
 
 func main() {
+	if len(os.Args) == 2 && (os.Args[1] == "firewall-dns" || os.Args[1] == "firewall-https") {
+		if runtime.GOOS != "linux" || os.Geteuid() != 0 {
+			log.Fatal("firewall preparation requires Linux root")
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 12*time.Second)
+		defer cancel()
+		kind := "dns"
+		if os.Args[1] == "firewall-https" {
+			kind = "https"
+		}
+		if err := panelops.RunFirewallAction(ctx, kind); err != nil {
+			log.Fatal(err)
+		}
+		return
+	}
 	if len(os.Args) == 2 && os.Args[1] == "version" {
 		fmt.Println(panel.Version)
 		return
@@ -51,7 +66,7 @@ func run() error {
 	}
 	service := &panelops.Service{DB: *db, Binary: *binary, OpsBinary: *opsBinary, SecurityScript: *securityScript, StateDir: *state, HealthAddress: *health, UID: uid, GID: gid}
 	firewallCtx, cancelFirewall := context.WithTimeout(context.Background(), 15*time.Second)
-	e = panelops.EnsureDNSFirewall(firewallCtx)
+	e = panelops.PrepareFirewall(firewallCtx, *opsBinary, "dns")
 	cancelFirewall()
 	if e != nil {
 		return e

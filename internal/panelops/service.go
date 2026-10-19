@@ -165,16 +165,9 @@ func (s *Service) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if r.URL.Path == "/firewall" && r.Method == "POST" {
 		ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
 		defer cancel()
-		if path, e := exec.LookPath("ufw"); e == nil {
-			out, e := exec.CommandContext(ctx, path, "status").Output()
-			if e == nil && strings.Contains(string(out), "Status: active") {
-				for _, port := range []string{"80/tcp", "443/tcp"} {
-					if e = exec.CommandContext(ctx, path, "allow", port, "comment", "soar-panel-https").Run(); e != nil {
-						fail(500, errors.New("cannot open HTTPS firewall ports"))
-						return
-					}
-				}
-			}
+		if e := PrepareFirewall(ctx, s.OpsBinary, "https"); e != nil {
+			fail(500, errors.New("cannot prepare HTTPS firewall ports"))
+			return
 		}
 		_ = json.NewEncoder(w).Encode(map[string]bool{"ok": true})
 		return

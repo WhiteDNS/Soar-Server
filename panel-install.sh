@@ -249,7 +249,10 @@ panel_url=$(panel_access_url)
 printf '\n[7/7] Open the panel and create the first account\n'
 if (( connection_verified )); then printf '[OK] Installation and server-side tunnel checks completed.\n'
 else printf '[WARN] Installed with CHECKS PENDING. Working client connectivity has NOT been confirmed.\n';fi
-if [[ $panel_access == 1 ]];then
+if [[ $panel_url == https://* ]];then
+ printf 'Open this secure address directly in your browser: %s\n' "$panel_url"
+ printf 'Your existing HTTPS settings and login path have been preserved.\n'
+elif [[ $panel_access == 1 ]];then
  printf 'Open this address directly in your browser: %s\n' "$panel_url"
  printf 'No SSH tunnel is required. This test HTTP connection is not encrypted.\n'
 else

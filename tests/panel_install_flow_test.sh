@@ -223,4 +223,18 @@ refresh_expiring_probe() (
  grep -q '^start soar-panel.service$' "$work/renew.log"
 )
 expect_rc 0 'long interactive retries refresh the expiring probe before testing again' refresh_expiring_probe
+maintenance_readiness() (
+ source "$repo/lib/panel-installer.sh"
+ INSTALLED_BIN=mock_ready DB=unused panel_bind=127.0.0.1:2053
+ mock_ready(){ return 0; }
+ sleep(){ :; }
+ systemctl(){ return 0; }
+ printf '0\n' >"$work/readiness-count"
+ curl(){ local n;n=$(cat "$work/readiness-count");n=$((n+1));printf '%s\n' "$n" >"$work/readiness-count";(( n>=3 )); }
+ panel_wait_health || return 1
+ [[ $(cat "$work/readiness-count") == 3 ]] || return 1
+ curl(){ return 1; }
+ if panel_wait_health; then return 1;fi
+)
+expect_rc 0 'healthy panel cannot hide a maintenance service that is not ready' maintenance_readiness
 printf '%s installer flow assertions passed, plus firewall, URL and rollback content checks.\n' "$passed"

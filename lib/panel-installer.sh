@@ -117,8 +117,10 @@ panel_port_available() {
 }
 panel_wait_health() {
  local attempt
- for attempt in {1..15}; do
-  if systemctl is-active --quiet soar-panel.service && "$INSTALLED_BIN" health --db "$DB" --listen "$panel_bind"; then return 0; fi
+ for attempt in {1..30}; do
+  if systemctl is-active --quiet soar-panel.service && systemctl is-active --quiet soar-panel-ops.service &&
+    curl --silent --fail --max-time 2 --unix-socket /run/soar-panel-ops/control.sock http://localhost/status >/dev/null 2>&1 &&
+    "$INSTALLED_BIN" health --db "$DB" --listen "$panel_bind" >/dev/null 2>&1; then return 0; fi
   sleep 1
  done
  return 1
