@@ -37,6 +37,7 @@ type HTTP struct {
 	manager       *Manager
 	trustProxy    bool
 	mu            sync.Mutex
+	authMu        sync.RWMutex // Serialize credential changes against login/session creation.
 	sessions      map[string]loginSession
 	attempts      map[string]loginAttempt
 	assets        http.Handler
@@ -60,7 +61,10 @@ func errorReply(w http.ResponseWriter, status int, e error) {
 	jsonReply(w, status, map[string]string{"error": e.Error()})
 }
 func decodeJSON(w http.ResponseWriter, r *http.Request, v any) error {
-	r.Body = http.MaxBytesReader(w, r.Body, 16*1024)
+	return decodeJSONLimit(w, r, v, 16*1024)
+}
+func decodeJSONLimit(w http.ResponseWriter, r *http.Request, v any, limit int64) error {
+	r.Body = http.MaxBytesReader(w, r.Body, limit)
 	dec := json.NewDecoder(r.Body)
 	dec.DisallowUnknownFields()
 	if e := dec.Decode(v); e != nil {
@@ -252,6 +256,14 @@ func (h *HTTP) serveHTTP(w http.ResponseWriter, r *http.Request) {
 		h.settings(w, r)
 		return
 	}
+	if r.URL.Path == "/api/admin" {
+		h.adminCredentials(w, r)
+		return
+	}
+	if r.URL.Path == "/api/clients/delete" {
+		h.deleteClients(w, r)
+		return
+	}
 	if r.URL.Path == "/api/clients" {
 		h.clientList(w, r)
 		return
@@ -275,30 +287,17 @@ func (h *HTTP) login(w http.ResponseWriter, r *http.Request) {
 		errorReply(w, 400, e)
 		return
 	}
-	ip, _, _ := net.SplitHostPort(r.RemoteAddr)
-	now := time.Now()
-	h.mu.Lock()
-	a := h.attempts[ip]
-	if now.After(a.until) {
-		a = loginAttempt{until: now.Add(5 * time.Minute)}
-	}
-	if a.count >= 8 || len(h.attempts) >= 1024 && h.attempts[ip].until.IsZero() {
-		h.mu.Unlock()
-		errorReply(w, 429, errors.New("too many login attempts; retry after five minutes"))
+	ip, allowed := h.authAttempt(w, r)
+	if !allowed {
 		return
 	}
-	a.count++
-	h.attempts[ip] = a
-	for key, v := range h.attempts {
-		if now.After(v.until) {
-			delete(h.attempts, key)
-		}
-	}
-	h.mu.Unlock()
+	h.authMu.RLock()
+	defer h.authMu.RUnlock()
 	if len(in.Password) > 72 || !h.store.CheckAdmin(in.Name, in.Password) {
 		errorReply(w, 401, errors.New("invalid username or password"))
 		return
 	}
+	now := time.Now()
 	value := token()
 	s := loginSession{csrf: token(), expires: now.Add(12 * time.Hour)}
 	h.mu.Lock()
@@ -318,6 +317,29 @@ func (h *HTTP) login(w http.ResponseWriter, r *http.Request) {
 	http.SetCookie(w, &http.Cookie{Name: "soar_panel_session", Value: value, Path: h.cookiePath(), HttpOnly: true, Secure: h.isSecure(r), SameSite: http.SameSiteStrictMode, MaxAge: 43200})
 	_ = h.store.Audit("admin.login", "")
 	jsonReply(w, 200, map[string]string{"csrf": s.csrf})
+}
+func (h *HTTP) authAttempt(w http.ResponseWriter, r *http.Request) (string, bool) {
+	ip, _, _ := net.SplitHostPort(r.RemoteAddr)
+	now := time.Now()
+	h.mu.Lock()
+	a := h.attempts[ip]
+	if now.After(a.until) {
+		a = loginAttempt{until: now.Add(5 * time.Minute)}
+	}
+	if a.count >= 8 || len(h.attempts) >= 1024 && h.attempts[ip].until.IsZero() {
+		h.mu.Unlock()
+		errorReply(w, 429, errors.New("too many login attempts; retry after five minutes"))
+		return ip, false
+	}
+	a.count++
+	h.attempts[ip] = a
+	for key, v := range h.attempts {
+		if now.After(v.until) {
+			delete(h.attempts, key)
+		}
+	}
+	h.mu.Unlock()
+	return ip, true
 }
 func (h *HTTP) dashboard(w http.ResponseWriter) {
 	list, e := h.store.List()

@@ -11,7 +11,7 @@ import subprocess
 import tarfile
 
 ROOT=Path(__file__).resolve().parents[1]
-VERSION="0.3.1"
+VERSION="0.4.0"
 NAME=f"soar-panel-{VERSION}-linux-amd64"
 
 def run(*args):

@@ -48,7 +48,7 @@ installer downloads the pinned stable release, verifies its checksum, installs
 the services and prints the complete login URL. Save that URL: its random path
 is required. The bare IP/domain intentionally does not show a login page.
 
-The 0.3.1 wizard offers to install missing DNS/network tools. The local listener
+The 0.4.0 wizard offers to install missing DNS/network tools. The local listener
 address is detected from the default route; behind NAT, enter the provider's
 public IPv4 separately. DNS names accept uppercase or a trailing dot and are
 normalized. Incorrect input can be corrected without restarting installation.

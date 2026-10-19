@@ -425,17 +425,20 @@ func (s *Store) Delete(id string) error {
 		if _, e := getClient(tx, id); e != nil {
 			return e
 		}
-		if e := removeSubscription(tx, id); e != nil {
-			return e
-		}
-		if e := tx.Bucket(clients).Delete([]byte(id)); e != nil {
-			return e
-		}
-		if e := tx.Bucket(seeds).Delete([]byte(id)); e != nil {
-			return e
-		}
-		return addEvent(tx, "client.deleted", id)
+		return deleteClient(tx, id)
 	})
+}
+func deleteClient(tx *bolt.Tx, id string) error {
+	if e := removeSubscription(tx, id); e != nil {
+		return e
+	}
+	if e := tx.Bucket(clients).Delete([]byte(id)); e != nil {
+		return e
+	}
+	if e := tx.Bucket(seeds).Delete([]byte(id)); e != nil {
+		return e
+	}
+	return addEvent(tx, "client.deleted", id)
 }
 
 // reserve commits quota BEFORE forwarding payload. Parallel streams cannot overspend.
