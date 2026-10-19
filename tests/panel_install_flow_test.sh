@@ -117,12 +117,13 @@ ufw(){ printf '%s\n' "$*" >>"$work/ufw.log";if [[ $1 == status ]];then printf 'S
 firewall_added=()
 panel_access=1 panel_port=2053 listen_ip=10.0.0.2
 expect_rc 0 'active UFW opens tunnel UDP and direct management TCP' panel_open_firewall
+grep -q '^allow 53/tcp ' "$work/ufw.log"
 grep -q '^allow 53/udp ' "$work/ufw.log"
 grep -q '^allow 2053/tcp ' "$work/ufw.log"
 : >"$work/ufw.log"
 panel_access=2
 expect_rc 0 'SSH management opens UDP/53 without exposing the private TCP port' panel_open_firewall
-if grep -q '/tcp' "$work/ufw.log";then echo 'FAIL private management port opened';exit 1;fi
+if grep -q "^allow $panel_port/tcp " "$work/ufw.log";then echo 'FAIL private management port opened';exit 1;fi
 
 # A fake CLI echoes the requested endpoint, exercising actual installer URL selection.
 cat >"$work/cli" <<'SH'
@@ -160,7 +161,7 @@ grep -q '^--force delete allow 53/udp comment soar-panel-installer$' "$work/ufw.
 printf 'PASS rollback removes only firewall rules added by the installer\n'
 preserve_firewall() (
  firewall_added=()
- ufw(){ if [[ $1 == status ]];then printf 'Status: active\n53/udp ALLOW Anywhere # existing-rule\n2053/tcp ALLOW Anywhere\n';else return 77;fi; }
+ ufw(){ if [[ $1 == status ]];then printf 'Status: active\n53/udp ALLOW Anywhere # existing-rule\n53/tcp ALLOW Anywhere # existing-tcp-rule\n2053/tcp ALLOW Anywhere\n';else return 77;fi; }
  panel_access=1
  panel_open_firewall
  [[ ${#firewall_added[@]} == 0 ]]
@@ -192,6 +193,7 @@ check_stages() (
  CHECK_BIN=mock_check
  mock_check(){ printf '%s\n' "$*" >>"$work/tunnel.log";return "${fail_tunnel:-0}"; }
  panel_dns(){ [[ $1 == ready ]]; }
+ probe_profile="$work/cotten-probe.json"
  probe_zone=account.soar.example.com probe_key=test-public-key probe_expires=9999999999
  listen_ip=10.0.0.2
  : >"$work/tunnel.log"
@@ -203,10 +205,12 @@ check_stages() (
  panel_verify_connection || return 1
  grep -q -- '-resolver 10.0.0.2 -tcp off' "$work/tunnel.log"
  grep -q -- '-resolver 1.1.1.1,8.8.8.8 -tcp auto' "$work/tunnel.log"
+ grep -q -- '-cotten-profile-file .* -resolver 10.0.0.2 -tcp only' "$work/tunnel.log"
+ [[ $(wc -l <"$work/tunnel.log") == 5 ]]
 )
 expect_rc 0 'local and recursive authenticated tunnel tests are both required' check_stages
 refresh_expiring_probe() (
- CHECK_BIN=mock_check INSTALLED_BIN=mock_cli
+ CHECK_BIN=mock_check INSTALLED_BIN=mock_cli probe_profile="$work/cotten-probe.json"
  mock_check(){ return 0; }
  mock_cli(){ [[ $1 == create-install-probe ]] || return 1;printf '0123456789abcdef0123456789abcdef account.soar.example.com public-key 9999999999\n'; }
  systemctl(){ printf '%s\n' "$*" >>"$work/renew.log"; }
@@ -219,4 +223,18 @@ refresh_expiring_probe() (
  grep -q '^start soar-panel.service$' "$work/renew.log"
 )
 expect_rc 0 'long interactive retries refresh the expiring probe before testing again' refresh_expiring_probe
+maintenance_readiness() (
+ source "$repo/lib/panel-installer.sh"
+ INSTALLED_BIN=mock_ready DB=unused panel_bind=127.0.0.1:2053
+ mock_ready(){ return 0; }
+ sleep(){ :; }
+ systemctl(){ return 0; }
+ printf '0\n' >"$work/readiness-count"
+ curl(){ local n;n=$(cat "$work/readiness-count");n=$((n+1));printf '%s\n' "$n" >"$work/readiness-count";(( n>=3 )); }
+ panel_wait_health || return 1
+ [[ $(cat "$work/readiness-count") == 3 ]] || return 1
+ curl(){ return 1; }
+ if panel_wait_health; then return 1;fi
+)
+expect_rc 0 'healthy panel cannot hide a maintenance service that is not ready' maintenance_readiness
 printf '%s installer flow assertions passed, plus firewall, URL and rollback content checks.\n' "$passed"

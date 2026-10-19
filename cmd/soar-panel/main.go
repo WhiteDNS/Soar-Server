@@ -37,13 +37,15 @@ func execute(args []string) error {
 	f := flag.NewFlagSet(args[0], flag.ContinueOnError)
 	db := f.String("db", "/var/lib/soar-panel/panel.db", "Private database path")
 	zone := f.String("zone", "", "Existing delegated DNS zone (init only)")
+	nameserver := f.String("nameserver", "", "Existing NS target (init only)")
+	publicIP := f.String("public-ip", "", "Server public IPv4 for DNS instructions (init only)")
 	admin := f.String("admin", "admin", "Administrator name")
 	passfile := f.String("password-file", "", "Read admin password from protected file (init/admin-reset)")
 	country := f.String("country", "IR", "Discovery hint: IR or GLOBAL")
 	resolvers := f.String("resolvers", "1.1.1.1,8.8.8.8", "Comma separated bootstrap resolvers")
 	bind := f.String("listen", "127.0.0.1:2053", "Management HTTP listen address; use an SSH tunnel or HTTPS proxy")
 	insecureHTTP := f.Bool("allow-insecure-http", false, "Explicitly permit unencrypted public HTTP for a test server")
-	dns := f.String("dns-listen", ":53", "Authoritative DNS UDP listen address")
+	dns := f.String("dns-listen", ":53", "Authoritative DNS UDP/TCP listen address")
 	cert := f.String("tls-cert", "", "HTTPS certificate PEM file")
 	key := f.String("tls-key", "", "HTTPS private key PEM file")
 	proxy := f.Bool("trust-loopback-proxy", false, "Trust HTTPS forwarding header only from loopback proxy")
@@ -121,7 +123,11 @@ func execute(args []string) error {
 		if mail == "" {
 			mail = cfg.Email
 		}
-		plan, e := a.Prepare("http://"+*bind, "terminal", panel.AccessInput{Domain: host, HTTPS: host != "", Email: mail, GeneratePath: *randomPath, BasePath: cfg.BasePath}, panel.NewOpsClient(*opsSocket).AllowHTTPS)
+		aliases := []string{}
+		if host == cfg.Domain {
+			aliases = append(aliases, cfg.Aliases...)
+		}
+		plan, e := a.Prepare("http://"+*bind, "terminal", panel.AccessInput{Domain: host, Aliases: aliases, HTTPS: host != "", Email: mail, GeneratePath: *randomPath, BasePath: cfg.BasePath}, panel.NewOpsClient(*opsSocket).AllowHTTPS)
 		if e != nil {
 			return e
 		}
@@ -193,7 +199,7 @@ func execute(args []string) error {
 		for i := range rs {
 			rs[i] = strings.TrimSpace(rs[i])
 		}
-		err = s.Init(panel.Settings{BaseZone: *zone, Resolvers: rs, Country: *country, AllowPorts: []uint16{80, 443}}, *admin, password)
+		err = s.Init(panel.Settings{BaseZone: *zone, NameserverHost: *nameserver, PublicIP: *publicIP, Resolvers: rs, Country: *country, AllowPorts: []uint16{80, 443}}, *admin, password)
 		if err == nil {
 			fmt.Println("Panel initialized. Keep the database private; it contains account keys.")
 		}
@@ -204,6 +210,9 @@ func execute(args []string) error {
 	}
 	if args[0] == "create-install-probe" {
 		c, err := s.CreateInstallProbe()
+		if err == nil && *output != "" {
+			err = s.WriteInstallCottenProbe(c.ID, *output)
+		}
 		if err == nil {
 			fmt.Printf("%s %s %s %d\n", c.ID, c.Zone, c.PublicKey, c.ExpiresAt/1000)
 		}
@@ -253,11 +262,12 @@ func execute(args []string) error {
 	if _, err = net.InterfaceAddrs(); err != nil {
 		return fmt.Errorf("cannot enumerate local addresses; Linux service must permit AF_NETLINK: %w", err)
 	}
-	pc, err := net.ListenPacket("udp", *dns)
+	pc, tcpDNS, err := listenDNS(*dns)
 	if err != nil {
 		return fmt.Errorf("DNS listener: %w", err)
 	}
 	defer pc.Close()
+	defer tcpDNS.Close()
 	m := panel.NewManager(ctx, s, pc)
 	if err = m.Reconcile(); err != nil {
 		return err
@@ -285,8 +295,9 @@ func execute(args []string) error {
 	}
 	defer access.Close()
 	server := &http.Server{Handler: handler, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 90 * time.Second, WriteTimeout: 90 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 16 * 1024}
-	done := make(chan error, 2)
+	done := make(chan error, 3)
 	go func() { done <- m.Run() }()
+	go func() { done <- m.ServeTCP(tcpDNS) }()
 	go func() {
 		if *cert != "" {
 			done <- server.ServeTLS(listener, *cert, *key)
@@ -295,7 +306,7 @@ func execute(args []string) error {
 		}
 	}()
 	log.Printf("Soar panel beta: management=%s DNS=%s", listener.Addr(), pc.LocalAddr())
-	remaining := 2
+	remaining := 3
 	select {
 	case <-ctx.Done():
 	case err = <-done:

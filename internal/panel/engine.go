@@ -2,11 +2,10 @@ package panel
 
 import (
 	"context"
-	"crypto/ed25519"
+	"crypto/rand"
 	"encoding/binary"
 	"errors"
 	"io"
-	"log/slog"
 	"net"
 	"strconv"
 	"strings"
@@ -14,6 +13,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	cotten "cottendns-go/server"
 	"github.com/getlantern/soar"
 )
 
@@ -58,16 +58,20 @@ func (p *virtualPacketConn) SetReadDeadline(t time.Time) error {
 func (p *virtualPacketConn) SetWriteDeadline(t time.Time) error { return p.SetReadDeadline(t) }
 
 type accountRuntime struct {
-	client  Client
-	ctx     context.Context
-	cancel  context.CancelFunc
-	pc      *virtualPacketConn
-	mu      sync.Mutex
-	closed  bool
-	pending int
-	conns   map[*meterConn]struct{}
-	rateMu  sync.Mutex
-	next    time.Time
+	soarPCs  map[string]*virtualPacketConn
+	zones    []string
+	cottenMu sync.Mutex
+	cotten   *cotten.Server
+	client   Client
+	ctx      context.Context
+	cancel   context.CancelFunc
+	pc       *virtualPacketConn
+	mu       sync.Mutex
+	closed   bool
+	pending  int
+	conns    map[*meterConn]struct{}
+	rateMu   sync.Mutex
+	next     time.Time
 }
 
 func (r *accountRuntime) closeIO() {
@@ -82,17 +86,27 @@ func (r *accountRuntime) closeIO() {
 		c.Close()
 	}
 }
-func (r *accountRuntime) stop() { r.cancel(); r.pc.Close(); r.closeIO() }
+func (r *accountRuntime) stop() {
+	r.cancel()
+	r.pc.Close()
+	for _, pc := range r.soarPCs {
+		pc.Close()
+	}
+	r.closeIO()
+}
 
 type Manager struct {
-	store       *Store
-	pc          net.PacketConn
-	ctx         context.Context
-	mu          sync.RWMutex
-	reconcileMu sync.Mutex
-	accounts    map[string]*accountRuntime
-	zones       map[string]*accountRuntime
-	cfg         Settings
+	domainProofKey [32]byte
+	cancel         context.CancelFunc
+	cottenJobs     chan cottenJob
+	store          *Store
+	pc             net.PacketConn
+	ctx            context.Context
+	mu             sync.RWMutex
+	reconcileMu    sync.Mutex
+	accounts       map[string]*accountRuntime
+	zones          map[string]*accountRuntime
+	cfg            Settings
 	// dialOverride is supplied only by in-process integration tests. The shipped
 	// command never supplies it and always applies public-destination protection.
 	dialOverride          func(context.Context, string, string) (net.Conn, error)
@@ -102,7 +116,10 @@ type Manager struct {
 }
 
 func NewManager(ctx context.Context, s *Store, pc net.PacketConn) *Manager {
-	return &Manager{ctx: ctx, store: s, pc: pc, accounts: map[string]*accountRuntime{}, zones: map[string]*accountRuntime{}, started: time.Now()}
+	ctx, cancel := context.WithCancel(ctx)
+	m := &Manager{ctx: ctx, cancel: cancel, cottenJobs: make(chan cottenJob, 128), store: s, pc: pc, accounts: map[string]*accountRuntime{}, zones: map[string]*accountRuntime{}, started: time.Now()}
+	rand.Read(m.domainProofKey[:])
+	return m
 }
 func (m *Manager) Reconcile() error {
 	m.reconcileMu.Lock()
@@ -135,9 +152,11 @@ func (m *Manager) Reconcile() error {
 	m.cfg = cfg
 	for id, r := range m.accounts {
 		c, ok := desired[id]
-		if !ok || c.Zone != r.client.Zone || c.PublicKey != r.client.PublicKey {
+		if !ok || c.Zone != r.client.Zone || c.PublicKey != r.client.PublicKey || c.Engines != r.client.Engines || strings.Join(r.zones, ",") != strings.Join(cfg.accountZones(c), ",") {
 			delete(m.accounts, id)
-			delete(m.zones, r.client.Zone)
+			for _, zone := range r.zones {
+				delete(m.zones, zone)
+			}
 			r.stop()
 		}
 	}
@@ -146,7 +165,9 @@ func (m *Manager) Reconcile() error {
 			continue
 		} else if ok {
 			delete(m.accounts, id)
-			delete(m.zones, rt.client.Zone)
+			for _, zone := range rt.zones {
+				delete(m.zones, zone)
+			}
 			rt.stop()
 		}
 		seed, e := m.store.Seed(id)
@@ -155,17 +176,18 @@ func (m *Manager) Reconcile() error {
 		}
 		ctx, cancel := context.WithCancel(m.ctx)
 		v := &virtualPacketConn{owner: m, input: make(chan packet, 128), done: make(chan struct{})}
-		rt := &accountRuntime{client: c, ctx: ctx, cancel: cancel, pc: v, conns: map[*meterConn]struct{}{}}
+		rt := &accountRuntime{client: c, ctx: ctx, cancel: cancel, pc: v, conns: map[*meterConn]struct{}{}, zones: cfg.accountZones(c), soarPCs: map[string]*virtualPacketConn{}}
 		m.accounts[id] = rt
-		m.zones[c.Zone] = rt
+		for _, zone := range rt.zones {
+			m.zones[zone] = rt
+			pc := v
+			if zone != c.Zone {
+				pc = &virtualPacketConn{owner: m, input: make(chan packet, 128), done: make(chan struct{})}
+			}
+			rt.soarPCs[zone] = pc
+		}
 		m.workers.Add(1)
-		go func() {
-			defer m.workers.Done()
-			_ = soar.Serve(ctx, v, soar.ServerConfig{Zone: c.Zone, PrivateKey: ed25519.NewKeyFromSeed(seed), Dial: func(ctx context.Context, network, addr string) (net.Conn, error) {
-				return m.dial(rt, ctx, network, addr)
-			}, MaxSessions: 8, MaxTotalStreams: 128, MaxStreams: 128, Logger: slog.New(slog.NewTextHandler(io.Discard, nil))})
-			rt.stop()
-		}()
+		go m.runAccount(rt, seed)
 	}
 	return nil
 }
@@ -173,6 +195,7 @@ func (m *Manager) Run() error {
 	if e := m.Reconcile(); e != nil {
 		return e
 	}
+	m.startCottenWorkers()
 	done := make(chan struct{})
 	defer close(done)
 	go func() {
@@ -197,6 +220,7 @@ func (m *Manager) Run() error {
 		}
 	}()
 	defer func() {
+		m.cancel()
 		m.reconcileMu.Lock()
 		m.mu.Lock()
 		for _, r := range m.accounts {
@@ -206,7 +230,7 @@ func (m *Manager) Run() error {
 		m.reconcileMu.Unlock()
 		m.workers.Wait()
 	}()
-	b := make([]byte, 4096)
+	b := make([]byte, 65535)
 	for {
 		n, a, e := m.pc.ReadFrom(b)
 		if e != nil {
@@ -216,35 +240,10 @@ func (m *Manager) Run() error {
 			return e
 		}
 		m.dnsIn.Add(uint64(n))
-		name, end, typ, ok := dnsQuestion(b[:n])
-		if !ok {
-			continue
-		}
-		m.mu.RLock()
-		base := m.cfg.BaseZone
-		// The account label is immediately before the delegated base zone. Soar's
-		// packet label(s) remain untouched. There is no anonymous root-zone tunnel.
-		var rt *accountRuntime
-		if strings.HasSuffix(name, "."+base) {
-			prefix := strings.TrimSuffix(name, "."+base)
-			parts := strings.Split(prefix, ".")
-			rt = m.zones[parts[len(parts)-1]+"."+base]
-		}
-		m.mu.RUnlock()
-		if rt != nil {
-			q := packet{append([]byte{}, b[:n]...), a}
-			select {
-			case rt.pc.input <- q:
-			case <-rt.pc.done:
-			default:
-			}
-			continue
-		}
-		response := dnsControl(b[:n], end, name, typ, base)
-		if response != nil {
+		m.routeDNS(b[:n], a, false, func(response []byte) {
 			sent, _ := m.pc.WriteTo(response, a)
 			m.dnsOut.Add(uint64(sent))
-		}
+		})
 	}
 }
 
@@ -306,7 +305,7 @@ func dnsName(s string) []byte {
 	}
 	return append(out, 0)
 }
-func dnsControl(query []byte, end int, name string, typ uint16, base string) []byte {
+func dnsControl(query []byte, end int, name string, typ uint16, base string, nameserver ...string) []byte {
 	// Questions containing compression pointers are not reflected into small
 	// control responses, because their referenced offsets may not be retained.
 	if end > 512 || end < 17 {
@@ -327,18 +326,37 @@ func dnsControl(query []byte, end int, name string, typ uint16, base string) []b
 	binary.BigEndian.PutUint16(out[6:8], 0)
 	binary.BigEndian.PutUint16(out[8:10], 0)
 	binary.BigEndian.PutUint16(out[10:12], 0)
-	if name == base && (typ == 6 || typ == 2) {
+	ns := base
+	if len(nameserver) > 0 && nameserver[0] != "" {
+		ns = nameserver[0]
+	}
+	if name == base && base != "" && typ == 2 && ns != base {
+		binary.BigEndian.PutUint16(out[2:4], flags&^15)
+		binary.BigEndian.PutUint16(out[6:8], 1)
+		out = append(out, 0xc0, 0x0c)
+		out = binary.BigEndian.AppendUint16(out, 2)
+		out = binary.BigEndian.AppendUint16(out, 1)
+		out = binary.BigEndian.AppendUint32(out, 30)
+		data := dnsName(ns)
+		out = binary.BigEndian.AppendUint16(out, uint16(len(data)))
+		return append(out, data...)
+	}
+	if (name == base || strings.HasSuffix(name, "."+base)) && (typ == 6 || typ == 2) {
 		flags &^= 15
-		data := append(dnsName(base), dnsName("hostmaster."+base)...)
+		data := append(dnsName(ns), dnsName("hostmaster."+base)...)
 		for _, n := range []uint32{1, 300, 60, 3600, 30} {
 			data = binary.BigEndian.AppendUint32(data, n)
 		}
-		if typ == 6 {
+		if typ == 6 && name == base {
 			binary.BigEndian.PutUint16(out[6:8], 1)
 		} else {
 			binary.BigEndian.PutUint16(out[8:10], 1)
 		}
-		out = append(out, 0xc0, 0x0c)
+		if name == base {
+			out = append(out, 0xc0, 0x0c)
+		} else {
+			out = append(out, dnsName(base)...)
+		}
 		out = binary.BigEndian.AppendUint16(out, 6)
 		out = binary.BigEndian.AppendUint16(out, 1)
 		out = binary.BigEndian.AppendUint32(out, 30)
@@ -350,6 +368,10 @@ func dnsControl(query []byte, end int, name string, typ uint16, base string) []b
 }
 
 func (m *Manager) dial(r *accountRuntime, ctx context.Context, network, addr string) (net.Conn, error) {
+	return m.dialEgress(r, ctx, network, addr, false)
+}
+
+func (m *Manager) dialEgress(r *accountRuntime, ctx context.Context, network, addr string, resolver bool) (net.Conn, error) {
 	c, e := m.store.Get(r.client.ID)
 	if e != nil || c.Status(time.Now()) != "active" {
 		return nil, ErrDenied
@@ -370,6 +392,17 @@ func (m *Manager) dial(r *accountRuntime, ctx context.Context, network, addr str
 		}
 	}
 	m.mu.RUnlock()
+	if resolver {
+		allowed = false
+		m.mu.RLock()
+		for _, endpoint := range m.cfg.cottenResolvers() {
+			if endpoint == addr {
+				allowed = true
+				break
+			}
+		}
+		m.mu.RUnlock()
+	}
 	if !allowed {
 		return nil, errors.New("destination port denied")
 	}
@@ -403,7 +436,7 @@ func (m *Manager) dial(r *accountRuntime, ctx context.Context, network, addr str
 	if e != nil {
 		return nil, e
 	}
-	mc := &meterConn{Conn: upstream, manager: m, rt: r}
+	mc := &meterConn{Conn: upstream, manager: m, rt: r, datagram: strings.HasPrefix(network, "udp")}
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if r.closed || r.ctx.Err() != nil {
@@ -443,6 +476,7 @@ func (m *Manager) Disconnect(id string) {
 }
 
 type meterConn struct {
+	datagram bool
 	net.Conn
 	manager *Manager
 	rt      *accountRuntime
@@ -497,6 +531,9 @@ func (c *meterConn) pace(n int, rate int64) error {
 	}
 }
 func (c *meterConn) Read(p []byte) (int, error) {
+	if c.datagram {
+		return c.readDatagram(p)
+	}
 	info, e := c.manager.store.Get(c.rt.client.ID)
 	if e != nil || info.Status(time.Now()) != "active" {
 		return 0, ErrDenied
@@ -522,6 +559,9 @@ func (c *meterConn) Read(p []byte) (int, error) {
 	return n, e
 }
 func (c *meterConn) Write(p []byte) (int, error) {
+	if c.datagram {
+		return c.writeDatagram(p)
+	}
 	total := 0
 	for len(p) > 0 {
 		info, e := c.manager.store.Get(c.rt.client.ID)

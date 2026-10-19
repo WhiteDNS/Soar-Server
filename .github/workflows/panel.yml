@@ -12,15 +12,34 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
+      - name: Check out the exact Cotten engine source
+        uses: actions/checkout@v4
+        with:
+          repository: WhiteDNS/CottenDNS
+          ref: 48b52018a0c261bccefaf20ad65f5f615ba823ea
+          path: .engine-source/CottenDNS
+          persist-credentials: false
       - uses: actions/setup-go@v5
         with:
           go-version: '1.26.1'
           cache-dependency-path: go.sum
+      - name: Verify the public module build and prepare the engine workspace
+        run: |
+          GOWORK=off go mod download
+          GOWORK=off go build -mod=readonly ./cmd/soar-panel ./cmd/soar-panel-ops ./cmd/soar-check
+          # Cotten's upstream module name has no domain. A workspace allows
+          # go mod verify to handle it while preserving upstream imports.
+          go work init . ./.engine-source/CottenDNS
+      - name: Build the pinned native Cotten test client
+        run: |
+          COTTEN_SOURCE=$(go list -m -f '{{.Dir}}' cottendns-go)
+          (cd "$COTTEN_SOURCE" && go build -mod=readonly -o "$RUNNER_TEMP/cotten-client" ./cmd/client)
+          echo "PANEL_COTTEN_CLIENT=$RUNNER_TEMP/cotten-client" >> "$GITHUB_ENV"
       - name: Verify modules and behavior
         run: |
           go mod verify
-          go test ./... -count=1 -timeout 90s
-          go test -race ./internal/panel ./internal/panelops -count=1 -timeout 600s
+          go test ./... -count=1 -timeout 180s
+          go test -race ./internal/panel ./internal/panelops -count=1 -timeout 900s
           go vet ./...
           bash tests/installer_test.sh
           bash tests/panel_installer_test.sh
@@ -28,7 +47,7 @@ jobs:
       - name: Build offline Linux bundle
         run: |
           python3 scripts/build_panel_bundle.py
-          bash dist/soar-panel-0.4.1-linux-amd64/panel-install.sh --check-bundle
+          bash dist/soar-panel-0.5.0-linux-amd64/panel-install.sh --check-bundle
       - uses: actions/setup-node@v4
         with:
           node-version: '24'
@@ -38,7 +57,7 @@ jobs:
           node "$RUNNER_TEMP/panel-tools/node_modules/playwright/cli.js" install --with-deps chromium
       - name: Test browser workflows and responsive layout
         env:
-          PANEL_BINARY: ${{ github.workspace }}/dist/soar-panel-0.4.1-linux-amd64/bin/linux-amd64/soar-panel
+          PANEL_BINARY: ${{ github.workspace }}/dist/soar-panel-0.5.0-linux-amd64/bin/linux-amd64/soar-panel
           PANEL_PLAYWRIGHT: ${{ runner.temp }}/panel-tools/node_modules/playwright
           PANEL_SCREENSHOTS: ${{ runner.temp }}/panel-screenshots
         run: node tests/panel-ui.cjs

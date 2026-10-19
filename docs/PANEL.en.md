@@ -1,7 +1,8 @@
 # Install and use WhiteDNS Soar Panel
 
 WhiteDNS builds the management panel and installer. The tunnel engine is
-[Lantern Soar](https://github.com/getlantern/soar). The dashboard uses original
+[Lantern Soar](https://github.com/getlantern/soar), alongside the compatible
+[WhiteDNS CottenDNS fork](https://github.com/WhiteDNS/CottenDNS). The dashboard uses original
 code with a workflow inspired by 3x-ui; Xray is not installed.
 
 Supported servers: Ubuntu 22.04/24.04/26.04 or Debian 12/13, amd64/x86_64,
@@ -23,7 +24,7 @@ Disable DNS proxying for the A records. Choose a new delegated subdomain if
 MasterDNS or another service already uses one: do not add a second unrelated
 nameserver to its delegation. No separate DNS record is needed per account.
 
-Allow UDP/53 for the DNS tunnel, TCP/80 for certificate validation and TCP/443
+Allow UDP/53 and TCP/53 for the DNS tunnel, TCP/80 for certificate validation and TCP/443
 for HTTPS. Keep your SSH port accessible. The installer checks conflicts and
 DNS delegation; if another service owns port 53, resolve that conflict first.
 
@@ -48,7 +49,7 @@ installer downloads the pinned stable release, verifies its checksum, installs
 the services and prints the complete login URL. Save that URL: its random path
 is required. The bare IP/domain intentionally does not show a login page.
 
-The 0.4.1 wizard offers to install missing DNS/network tools. The local listener
+The 0.5.0 wizard offers to install missing DNS/network tools. The local listener
 address is detected from the default route; behind NAT, enter the provider's
 public IPv4 separately. DNS names accept uppercase or a trailing dot and are
 normalized. Incorrect input can be corrected without restarting installation.
@@ -69,7 +70,7 @@ server-side tests do not establish reachability from the phone's network.
 If checks fail, fix the displayed problem and retry, change test resolvers, roll
 back, or explicitly type KEEP to retain an **unverified** installation. KEEP
 finishes with a nonzero exit status; it does not certify working connectivity.
-Active UFW receives UDP/53 and, for direct access, the management TCP rule.
+Active UFW receives UDP/53 and TCP/53 and, for direct access, the management TCP rule.
 Existing broad allow rules and their comments are preserved. Automatic rollback
 restores previous program/data/access files and service enable states and removes
 only firewall rules added by this installation. Provider firewall/NAT changes
@@ -145,8 +146,20 @@ sudo systemctl status soar-panel soar-panel-ops --no-pager
 ```
 
 The security helper can recover/change the login address through SSH. For DNS
-errors, check delegation and UDP/53. For certificates, check A/AAAA records,
+errors, check delegation and UDP/53 and TCP/53. For certificates, check A/AAAA records,
 DNS proxying and ports 80/443. If the phone connects but browsing stalls, use
 the latest app, refresh the subscription while disconnected, reconnect and
 review the app diagnostics. A healthy server does not prove every DNS path
 works on every network.
+
+## Soar and Cotten accounts
+
+Installation uses one delegated DNS zone and the same guided command. No second DNS record, encryption key or engine installer is required. Both engines run inside the panel service. The automatic checks verify real HTTPS through Soar and Cotten, including Cotten over UDP and TCP.
+
+For a new account leave **Connection engine** on **Soar and Cotten (recommended)**, save it, then open **Link / QR → Subscription**. Import that subscription in the latest WhiteDNS app. Select either of its two profiles; if one does not work on the phone's network, try the other. Importing a subscription does not automatically switch engines. Both profiles share the account quota, expiry, speed and outbound connection limit.
+
+Existing accounts remain Soar and keep their links. Edit an account to enable both engines, then refresh its subscription. Direct Soar and Cotten links and QR codes are also available. Revoking or deleting an account closes both engines. Full backups already include the keys needed to restore both.
+
+The local installer and maintenance helper prepare active UFW rules automatically. The VPS provider firewall/NAT must permit both UDP/53 and TCP/53. DoT/DoH are not exposed by this panel release.
+
+Local 0.5.0 supports up to eight independent tunnel domains and eight HTTPS panel hostnames. Domain changes preserve account keys, quotas and subscription credentials. The initial installation still requires only one tunnel domain. See [the domain guide (Persian)](DOMAINS.fa.md) for DNS records, alternative subscription URLs and SSH recovery. Server-side DNS checks do not establish reachability on a filtered client network.

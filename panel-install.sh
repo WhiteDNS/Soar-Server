@@ -4,7 +4,7 @@ set -Eeuo pipefail
 export LC_ALL=C
 umask 077
 ROOT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
-PANEL_VERSION=0.4.1
+PANEL_VERSION=0.5.0
 DB=/var/lib/soar-panel/panel.db
 SERVICE=/etc/systemd/system/soar-panel.service
 BIN="$ROOT_DIR/bin/linux-amd64/soar-panel"
@@ -62,10 +62,11 @@ printf 'Keep all existing MasterDNS/Cotton records unchanged. Each panel account
 zone=;parent_zone=;ns_host=;public_ip=;listen_ip=;test_resolvers=1.1.1.1,8.8.8.8
 panel_collect_dns
 panel_require_records
+panel_port_available t "$listen_ip" 53 || die 'TCP/53 belongs to another service. Use another local IPv4 or a dedicated VPS; keep the existing service running.'
 panel_port_available u "$listen_ip" 53 || die 'UDP/53 belongs to another service. Choose another local IPv4 or a dedicated VPS; keep the existing service running.'
 printf '\n[3/7] Administrator account\n'
 password='';pwfile=''
-cleanup(){ [[ -z $pwfile ]] || rm -f -- "$pwfile"; unset password password2; }
+cleanup(){ [[ -z $pwfile ]] || rm -f -- "$pwfile"; [[ -z ${probe_profile:-} ]] || rm -f -- "$probe_profile"; unset password password2; }
 trap cleanup EXIT
 if [[ -e $DB ]]; then
  printf 'Existing database found. Its accounts, keys, admin password and usage will be preserved.\n'
@@ -110,8 +111,8 @@ else
 fi
 printf '\n[5/7] Review before activation\n'
 printf 'DNS listener: %s:53/UDP\nPanel listener: %s\nPanel URL: %s\nDatabase: %s\n' "$listen_ip" "$panel_bind" "$panel_url" "$DB"
-printf 'If UFW is active, allow inbound UDP/53 for the tunnel. Existing rules are kept.\n'
-printf 'Open UDP/53 in your provider firewall and forward it through NAT to %s.\n' "$listen_ip"
+printf 'If UFW is active, allow inbound UDP/53 and TCP/53 for both tunnel engines. Existing rules are kept.\n'
+printf 'Open UDP/53 and TCP/53 in your provider firewall and forward it through NAT to %s.\n' "$listen_ip"
 printf 'Service user: soar-panel; new-install destination ports: 80/443. Existing port policy is kept.\n'
 printf 'New-install bootstrap DNS: %s; discovery hint: Iran (editable). Existing saved settings are kept.\n' "$test_resolvers"
 printf 'These resolvers are starting points, not a guarantee of reachability in every network.\n'
@@ -162,7 +163,7 @@ fresh_install=0
 if [[ ! -f $DB ]];then
  fresh_install=1
  pwfile=$(mktemp /root/soar-panel-password.XXXXXX);printf '%s' "$password" >"$pwfile";unset password
- /usr/local/bin/soar-panel init --db "$DB" --zone "$zone" --resolvers "$test_resolvers" --admin "$admin" --password-file "$pwfile"
+ /usr/local/bin/soar-panel init --db "$DB" --zone "$zone" --nameserver "$ns_host" --public-ip "$public_ip" --resolvers "$test_resolvers" --admin "$admin" --password-file "$pwfile"
  rm -f -- "$pwfile";pwfile=''
 fi
 panel_create_probe || die 'Cannot prepare the temporary tunnel test account.'
@@ -231,12 +232,13 @@ UNIT
 install -d -m 0700 /var/lib/soar-panel-ops
 (( ! old_active )) || systemctl stop soar-server.service
 systemctl daemon-reload
+panel_open_firewall || die 'Cannot apply the reviewed firewall rules.'
 systemctl restart soar-panel-ops.service
 systemctl is-active --quiet soar-panel-ops.service || die 'Maintenance service failed to start.'
 systemctl start soar-panel.service
 panel_wait_health || die 'Panel failed readiness checks. See journalctl -u soar-panel -n 40.'
 ss -H -lun | awk -v target="$listen_ip:53" '$4==target{found=1}END{exit !found}' || die 'The expected UDP/53 listener was not found.'
-panel_open_firewall || die 'Cannot apply the reviewed firewall rules.'
+ss -H -ltn | awk -v target="$listen_ip:53" '$4==target{found=1}END{exit !found}' || die 'The expected TCP/53 listener was not found.'
 panel_run_checks || die 'Connection checks cancelled; rolling back.'
 panel_remove_probe || die 'Cannot remove the temporary test account or restart the panel.'
 systemctl enable soar-panel.service
@@ -247,7 +249,10 @@ panel_url=$(panel_access_url)
 printf '\n[7/7] Open the panel and create the first account\n'
 if (( connection_verified )); then printf '[OK] Installation and server-side tunnel checks completed.\n'
 else printf '[WARN] Installed with CHECKS PENDING. Working client connectivity has NOT been confirmed.\n';fi
-if [[ $panel_access == 1 ]];then
+if [[ $panel_url == https://* ]];then
+ printf 'Open this secure address directly in your browser: %s\n' "$panel_url"
+ printf 'Your existing HTTPS settings and login path have been preserved.\n'
+elif [[ $panel_access == 1 ]];then
  printf 'Open this address directly in your browser: %s\n' "$panel_url"
  printf 'No SSH tunnel is required. This test HTTP connection is not encrypted.\n'
 else
@@ -257,10 +262,10 @@ fi
 printf 'Sign in, open Accounts, choose New account, set quota/expiry, then save.\n'
 printf 'Open Link / QR and import the soar:// link into your existing WhiteDNS app.\n'
 printf 'Verify the phone opens websites and its public IP matches this server.\n'
-printf 'If it does not connect, check NS/A records, UDP/53 and client resolver reachability.\n'
+printf 'If it does not connect, check NS/A records, UDP/53, TCP/53 and client resolver reachability.\n'
 printf 'Service: systemctl status soar-panel\nLogs: journalctl -u soar-panel -n 40 --no-pager\n'
 printf 'Private rollback backup: %s\n' "$backup"
-printf 'Guide: https://github.com/WhiteDNS/Soar-Server/blob/panel-v0.4.1/docs/PANEL.fa.md\n'
+printf 'Guide: https://github.com/WhiteDNS/Soar-Server/blob/panel-v0.5.0/docs/PANEL.fa.md\n'
 printf '\nConfigure a domain, automatic HTTPS and a random login path now or later.\n'
 read -r -p 'Open the optional domain/HTTPS setup now? [y/N]: ' secure_now || secure_now=n
 if [[ $secure_now == y || $secure_now == Y ]];then

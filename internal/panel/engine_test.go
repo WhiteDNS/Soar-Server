@@ -23,8 +23,13 @@ import (
 
 func testManager(t *testing.T, s *Store, override func(context.Context, string, string) (net.Conn, error)) *Manager {
 	t.Helper()
-	pc, e := net.ListenPacket("udp", "127.0.0.1:0")
+	tcp, e := net.Listen("tcp", "127.0.0.1:0")
 	if e != nil {
+		t.Fatal(e)
+	}
+	pc, e := net.ListenPacket("udp", tcp.Addr().String())
+	if e != nil {
+		tcp.Close()
 		t.Fatal(e)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
@@ -35,6 +40,8 @@ func testManager(t *testing.T, s *Store, override func(context.Context, string, 
 	}
 	done := make(chan error, 1)
 	go func() { done <- m.Run() }()
+	tcpDone := make(chan error, 1)
+	go func() { tcpDone <- m.ServeTCP(tcp) }()
 	t.Cleanup(func() {
 		cancel()
 		select {
@@ -44,6 +51,14 @@ func testManager(t *testing.T, s *Store, override func(context.Context, string, 
 			}
 		case <-time.After(5 * time.Second):
 			t.Error("manager did not stop")
+		}
+		select {
+		case err := <-tcpDone:
+			if err != nil {
+				t.Error(err)
+			}
+		case <-time.After(5 * time.Second):
+			t.Error("TCP DNS did not stop")
 		}
 	})
 	return m

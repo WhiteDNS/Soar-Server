@@ -14,6 +14,18 @@ Pinned version: https://github.com/getlantern/soar/tree/v0.2.2
 The WhiteDNS copyright above concerns this installer and integration.
 Upstream engine code retains its original authorship and license notices.
 
+The management panel also embeds CottenDNS (MIT), maintained by tajirax,
+through the WhiteDNS/CottenDns integration fork. CottenDNS derives from
+StormDNS (NullRoute1970) and MasterDnsVPN (Amin Mahmoudi). Their original
+notices are retained in licenses/CottenDNS-LICENSE.txt. The pinned revision
+and dependency versions are recorded in SOURCE-VERSIONS.txt.
+Sources: https://github.com/TaJirax/cottenDNS
+         https://github.com/WhiteDNS/CottenDns
+
+CottenDNS dependencies include BurntSushi/toml, klauspost/compress,
+klauspost/cpuid, klauspost/reedsolomon and pierrec/lz4. Their original
+license texts are shipped in the management panel bundle.
+
 The optional WhiteDNS Soar Panel also includes bbolt (MIT) and go-qrcode (MIT).
 Their notices are shipped in the panel bundle's licenses/ directory.
 

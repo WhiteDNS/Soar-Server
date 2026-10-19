@@ -12,17 +12,28 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
+      - name: Check out the pinned engine for module verification
+        uses: actions/checkout@v4
+        with:
+          repository: WhiteDNS/CottenDNS
+          ref: 48b52018a0c261bccefaf20ad65f5f615ba823ea
+          path: .engine-source/CottenDNS
+          persist-credentials: false
       - uses: actions/setup-go@v5
         with:
           go-version: '1.26.1'
           cache-dependency-path: go.sum
+      - name: Prepare the upstream module workspace
+        run: |
+          GOWORK=off go mod download
+          go work init . ./.engine-source/CottenDNS
       - name: Verify installer, bootstrap and diagnostics
         run: |
           bash -n install.sh setup.sh
           bash tests/installer_test.sh
           bash tests/bootstrap_test.sh
           go mod verify
-          go test ./... -count=1 -timeout 60s
+          go test ./... -count=1 -timeout 240s
           go vet ./...
       - name: Build release bundle
         run: |
