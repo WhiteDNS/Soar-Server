@@ -2,7 +2,7 @@
 
 [English installation guide](docs/PANEL.en.md) · [راهنمای فارسی](docs/PANEL.fa.md)
 
-پنل مدیریت سرور **WhiteDNS Soar 0.4.0 — Stable** برای **Ubuntu 22.04/24.04/26.04 یا Debian 12/13، معماری amd64/x86_64**.
+پنل مدیریت سرور **WhiteDNS Soar 0.4.1 — Stable** برای **Ubuntu 22.04/24.04/26.04 یا Debian 12/13، معماری amd64/x86_64**.
 
 موتور اصلی **Soar توسط [Lantern / GetLantern](https://github.com/getlantern/soar) توسعه یافته است**. WhiteDNS پنل، نصب‌کننده و یکپارچه‌سازی کلاینت را توسعه می‌دهد.
 
@@ -53,7 +53,7 @@ sudo apt-get install -y curl
 - پشتیبان، بازیابی و به‌روزرسانی از خود پنل با تأیید رمز مدیر و بازگشت در صورت شکست فعال‌سازی.
 - دامنه، HTTPS با تمدید خودکار گواهی و مسیر ورود تصادفی؛ تنظیم از پنل یا ترمینال.
 
-نسخهٔ پایدار فقط به‌روزرسانی‌های پایدار را پیشنهاد می‌دهد. کاربران beta8 و جدیدتر می‌توانند از خود پنل به 0.4.0 ارتقا دهند؛ نسخه‌های قدیمی‌تر باید یک‌بار نصب‌کنندهٔ بالا را اجرا کنند تا سرویس نگهداری نصب شود. حساب‌ها، کلیدها، مصرف، تنظیمات ذخیره‌شده و مسیر ورود موجود حفظ می‌شوند. پیش از ارتقا پشتیبان بگیرید.
+نسخهٔ پایدار فقط به‌روزرسانی‌های پایدار را پیشنهاد می‌دهد. کاربران beta8 و جدیدتر می‌توانند از خود پنل به 0.4.1 ارتقا دهند؛ نسخه‌های قدیمی‌تر باید یک‌بار نصب‌کنندهٔ بالا را اجرا کنند تا سرویس نگهداری نصب شود. حساب‌ها، کلیدها، مصرف، تنظیمات ذخیره‌شده و مسیر ورود موجود حفظ می‌شوند. پیش از ارتقا پشتیبان بگیرید.
 
 ## محدوده و بررسی
 
@@ -61,7 +61,7 @@ sudo apt-get install -y curl
 
 آزمون‌های Go، race، نصب‌کننده، بازیابی/ارتقا و رابط مرورگر در [GitHub Actions](https://github.com/WhiteDNS/Soar-Server/actions/workflows/panel.yml) اجرا می‌شوند. آزمون گوشی فیزیکی، شبکه‌های ایران و بار تولیدی گسترده هنوز کامل نیست. [گزارش اختلال مرورگر](docs/SOAR-WEB-RELIABILITY-2026-10-18.fa.md) نتایج و توقف مقطعی مشاهده‌شده را ثبت کرده است؛ پاسخ بررسی ربات آمازون معادل بازشدن کامل فروشگاه نیست.
 
-[دانلود نسخهٔ پایدار](https://github.com/WhiteDNS/Soar-Server/releases/tag/panel-v0.4.0) · [معماری](docs/PANEL-DESIGN.md) · [راهنمای کامل](docs/PANEL.fa.md)
+[دانلود نسخهٔ پایدار](https://github.com/WhiteDNS/Soar-Server/releases/tag/panel-v0.4.1) · [معماری](docs/PANEL-DESIGN.md) · [راهنمای کامل](docs/PANEL.fa.md)
 
 ## پروژهٔ اصلی و مجوزها
 
@@ -92,5 +92,5 @@ go test ./... -count=1 -timeout 90s
 go test -race ./internal/panel ./internal/panelops -count=1 -timeout 300s
 go vet ./...
 python3 scripts/build_panel_bundle.py
-bash dist/soar-panel-0.4.0-linux-amd64/panel-install.sh --check-bundle
+bash dist/soar-panel-0.4.1-linux-amd64/panel-install.sh --check-bundle
 ```
