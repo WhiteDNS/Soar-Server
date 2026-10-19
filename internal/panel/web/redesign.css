@@ -164,8 +164,9 @@ td .domain{font-size:11px;line-height:1.6}td .usage{font-size:var(--text-xs);mar
 .maintenance-preview p,.maintenance-feedback{font-size:var(--text-sm);line-height:1.9;overflow-wrap:anywhere}.maintenance-preview button{margin-top:14px}.maintenance-preview label.checkbox,.access-form label.checkbox{font-size:var(--text-sm);font-weight:400;align-items:flex-start;line-height:1.9}
 .maintenance-preview .checkbox input,.access-form .checkbox input{flex-shrink:0;margin-top:4px}
 .maintenance-feedback{margin-top:16px;color:var(--color-ink-2)}.maintenance-feedback[data-kind=error]{color:var(--color-negative)}
-.maintenance-card input[type=password],.maintenance-preview input[type=password]{max-width:420px;margin-top:6px}
+.maintenance-card input[type=password],.maintenance-preview input[type=password]{display:block;max-width:420px;margin-top:6px}
 .maintenance-card>.hint{margin-bottom:14px}.access-form .form-grid{margin-top:10px}.terminal-command{font-family:var(--font-outlier);color:var(--color-ink)}
+label+input,label+textarea,label+select{display:block;margin-top:6px}
 input[type=file]{font-size:var(--text-xs);padding:8px;max-width:100%;overflow:hidden;margin:6px 0}
 input[type=file]::file-selector-button{font-family:var(--font-body);background:var(--color-paper-3);color:var(--color-ink);border:1px solid var(--color-rule);border-radius:var(--radius-button);padding:7px 12px;margin-inline-end:10px;cursor:pointer}
 #access-current-url,#access-next-url{font-family:var(--font-outlier);font-size:var(--text-xs);overflow-wrap:anywhere}
