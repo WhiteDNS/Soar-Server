@@ -41,12 +41,24 @@ def main() -> None:
     licenses = bundle / "licenses"
     licenses.mkdir(exist_ok=True)
     for module, filename in (
+        # The shared diagnostics binary can also probe Cotten tunnels.
+        ("cottendns-go", "CottenDNS-LICENSE.txt"),
+        ("github.com/BurntSushi/toml", "BurntSushi-toml-LICENSE.txt"),
+        ("github.com/klauspost/compress", "compress-LICENSE.txt"),
+        ("github.com/klauspost/cpuid/v2", "cpuid-LICENSE.txt"),
+        ("github.com/klauspost/reedsolomon", "reedsolomon-LICENSE.txt"),
+        ("github.com/pierrec/lz4/v4", "lz4-LICENSE.txt"),
         ("github.com/getlantern/soar", "Soar-APACHE-2.0.txt"),
         ("golang.org/x/crypto", "x-crypto-LICENSE.txt"),
         ("golang.org/x/sys", "x-sys-LICENSE.txt"),
+        ("golang.org/x/net", "x-net-LICENSE.txt"),
+        ("golang.org/x/text", "x-text-LICENSE.txt"),
     ):
         directory = Path(run("go", "list", "-m", "-f", "{{.Dir}}", module))
-        shutil.copyfile(directory / "LICENSE", licenses / filename)
+        original = next((directory / name for name in ("LICENSE", "COPYING", "LICENSE.txt") if (directory / name).is_file()), None)
+        if original is None:
+            raise RuntimeError(f"Missing original license for {module}")
+        shutil.copyfile(original, licenses / filename)
     soar_dir = Path(run("go", "list", "-m", "-f", "{{.Dir}}", "github.com/getlantern/soar"))
     # The embedded resolver lists retain upstream's third-party notice.
     shutil.copyfile(soar_dir / "data" / "THIRD_PARTY.md", licenses / "Soar-data-THIRD-PARTY.md")
