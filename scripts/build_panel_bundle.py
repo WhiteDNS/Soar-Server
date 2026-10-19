@@ -33,6 +33,8 @@ def main():
     (bundle/"lib").mkdir(exist_ok=True)
     (bundle/"lib/panel-installer.sh").write_bytes((ROOT/"lib/panel-installer.sh").read_text(encoding="utf8").replace("\r\n","\n").encode("utf8"))
     (bundle/"lib/standalone-install.sh").write_bytes((ROOT/"install.sh").read_text(encoding="utf8").replace("\r\n","\n").encode("utf8"))
+    for name in ["PANEL-0.5.0-VALIDATION.md", "RELEASE-panel-0.5.0.md"]:
+        (bundle/"docs"/name).write_bytes((ROOT/"docs"/name).read_text(encoding="utf8").replace("\r\n","\n").encode("utf8"))
     licenses=bundle/"licenses";licenses.mkdir(exist_ok=True)
     shutil.copyfile(ROOT/"internal/panel/web/fonts/OFL.txt",licenses/"Vazirmatn-OFL.txt")
     for mod,label in [("cottendns-go","CottenDNS"),("github.com/BurntSushi/toml","BurntSushi-toml"),("github.com/klauspost/compress","compress"),("github.com/klauspost/cpuid/v2","cpuid"),("github.com/klauspost/reedsolomon","reedsolomon"),("github.com/pierrec/lz4/v4","lz4"),("github.com/getlantern/soar","Soar"),("go.etcd.io/bbolt","bbolt"),("github.com/skip2/go-qrcode","go-qrcode"),("golang.org/x/crypto","x-crypto"),("golang.org/x/sys","x-sys"),("golang.org/x/net","x-net"),("golang.org/x/text","x-text")]:

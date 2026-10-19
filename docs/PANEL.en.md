@@ -1,9 +1,8 @@
 # Install and use WhiteDNS Soar Panel
 
-> This 0.5.0 build is local and unpublished. Use the offline archive and its panel-install.sh to test it. The public bootstrap still installs the preceding public release.
-
 WhiteDNS builds the management panel and installer. The tunnel engine is
-[Lantern Soar](https://github.com/getlantern/soar). The dashboard uses original
+[Lantern Soar](https://github.com/getlantern/soar), alongside the compatible
+[WhiteDNS CottenDNS fork](https://github.com/WhiteDNS/CottenDNS). The dashboard uses original
 code with a workflow inspired by 3x-ui; Xray is not installed.
 
 Supported servers: Ubuntu 22.04/24.04/26.04 or Debian 12/13, amd64/x86_64,

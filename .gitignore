@@ -9,3 +9,4 @@ __pycache__/
 .panel-data/
 go.work
 go.work.sum
+.engine-source/

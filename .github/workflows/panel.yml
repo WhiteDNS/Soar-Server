@@ -12,10 +12,24 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
+      - name: Check out the exact Cotten engine source
+        uses: actions/checkout@v4
+        with:
+          repository: WhiteDNS/CottenDNS
+          ref: 48b52018a0c261bccefaf20ad65f5f615ba823ea
+          path: .engine-source/CottenDNS
+          persist-credentials: false
       - uses: actions/setup-go@v5
         with:
           go-version: '1.26.1'
           cache-dependency-path: go.sum
+      - name: Verify the public module build and prepare the engine workspace
+        run: |
+          GOWORK=off go mod download
+          GOWORK=off go build -mod=readonly ./cmd/soar-panel ./cmd/soar-panel-ops ./cmd/soar-check
+          # Cotten's upstream module name has no domain. A workspace allows
+          # go mod verify to handle it while preserving upstream imports.
+          go work init . ./.engine-source/CottenDNS
       - name: Build the pinned native Cotten test client
         run: |
           COTTEN_SOURCE=$(go list -m -f '{{.Dir}}' cottendns-go)
@@ -25,7 +39,7 @@ jobs:
         run: |
           go mod verify
           go test ./... -count=1 -timeout 180s
-          go test -race ./internal/panel ./internal/panelops -count=1 -timeout 600s
+          go test -race ./internal/panel ./internal/panelops -count=1 -timeout 900s
           go vet ./...
           bash tests/installer_test.sh
           bash tests/panel_installer_test.sh

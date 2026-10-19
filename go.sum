@@ -1,5 +1,7 @@
 github.com/BurntSushi/toml v1.4.0 h1:kuoIxZQy2WRRk1pttg9asf+WVv6tWQuBNVmK8+nqPr0=
 github.com/BurntSushi/toml v1.4.0/go.mod h1:ukJfTF/6rtPPRCnwkur4qwRxa8vTRFBF0uk2lLoLwho=
+github.com/WhiteDNS/CottenDNS v0.0.0-20261019083927-48b52018a0c2 h1:ZxKwKwREmct1MTWiysqRIZPyoPexwQLcMLCxVZnhrgU=
+github.com/WhiteDNS/CottenDNS v0.0.0-20261019083927-48b52018a0c2/go.mod h1:jM8LoscHVll/1IV4BRjFwgO4jg/zxm/4D69FaFtt2wg=
 github.com/davecgh/go-spew v1.1.1 h1:vj9j/u1bqnvCEfJOwUhtlOARqs3+rkHYY13jYWTU97c=
 github.com/davecgh/go-spew v1.1.1/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
 github.com/getlantern/soar v0.2.2 h1:MrwWPE8aG46JtCCRkSLjR2zA8/01vsE0TwgBtCmoL1Y=

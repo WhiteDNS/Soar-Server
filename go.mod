@@ -12,7 +12,7 @@ require (
 	golang.org/x/sys v0.45.0
 )
 
-replace cottendns-go => ../../local-deps/CottenDns
+replace cottendns-go => github.com/WhiteDNS/CottenDNS v0.0.0-20261019083927-48b52018a0c2
 
 require (
 	github.com/BurntSushi/toml v1.4.0 // indirect
