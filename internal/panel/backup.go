@@ -103,7 +103,7 @@ func InspectBackupFile(path string) (summary BackupSummary, err error) {
 			if c.ID != string(k) || c.Revision == 0 || c.UsageEpoch == 0 || c.UploadBytes < 0 || c.DownloadBytes < 0 || c.UploadBytes > 1<<60 || c.DownloadBytes > 1<<60 {
 				return errors.New("invalid backup account counters")
 			}
-			in := ClientInput{Name: c.Name, Note: c.Note, Enabled: c.Enabled, QuotaBytes: c.QuotaBytes, ExpiresAt: c.ExpiresAt, RateBytes: c.RateBytes, StreamLimit: c.StreamLimit}
+			in := ClientInput{Engines: c.Engines, Name: c.Name, Note: c.Note, Enabled: c.Enabled, QuotaBytes: c.QuotaBytes, ExpiresAt: c.ExpiresAt, RateBytes: c.RateBytes, StreamLimit: c.StreamLimit}
 			if e := in.validate(); e != nil {
 				return e
 			}

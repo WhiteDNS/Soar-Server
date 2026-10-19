@@ -125,7 +125,7 @@ panel_wait_health() {
 }
 panel_open_firewall() {
  local status port
- local -a ports=(53/udp)
+ local -a ports=(53/udp 53/tcp)
  [[ $panel_access != 1 ]] || ports+=("$panel_port/tcp")
  if command -v ufw >/dev/null; then
   status=$(ufw status) || { printf '[WARN] Cannot inspect UFW.\n';return 1; }
@@ -140,7 +140,7 @@ panel_open_firewall() {
    done
   fi
  fi
- printf 'Provider firewall/NAT must also forward public UDP/53 to %s:53.\n' "$listen_ip"
+ printf 'Provider firewall/NAT must also forward public UDP/53 and TCP/53 to %s:53.\n' "$listen_ip"
 }
 # Back up only after the running panel is stopped, so bbolt is consistent.
 panel_snapshot() {
@@ -185,7 +185,8 @@ panel_restore() {
 }
 panel_create_probe() {
  local identity
- identity=$("$INSTALLED_BIN" create-install-probe --db "$DB") || return 1
+ [[ -n ${probe_profile:-} ]] || probe_profile=$(mktemp /root/soar-panel-cotten.XXXXXX) || return 1
+ identity=$("$INSTALLED_BIN" create-install-probe --db "$DB" --output "$probe_profile") || return 1
  read -r probe_id probe_zone probe_key probe_expires <<< "$identity"
  [[ $probe_id =~ ^[a-f0-9]{32}$ && -n $probe_zone && -n $probe_key && $probe_expires =~ ^[0-9]+$ ]]
 }
@@ -200,7 +201,7 @@ panel_remove_probe() {
  panel_wait_health
 }
 panel_verify_connection() {
- if (( $(date +%s) + 180 >= probe_expires )); then
+ if (( $(date +%s) + 300 >= probe_expires )); then
   printf 'Refreshing the expiring temporary test account.\n'
   systemctl stop soar-panel.service || return 1
   panel_create_probe || return 1
@@ -213,6 +214,12 @@ panel_verify_connection() {
  panel_dns ready || return 1
  printf '\nTest C: authenticated HTTPS through recursive DNS (%s)\n' "$test_resolvers"
  "$CHECK_BIN" -zone "$probe_zone" -pubkey "$probe_key" -resolver "$test_resolvers" -tcp auto -timeout 60s || return 1
+ printf '\nTest D: Cotten authenticated HTTPS over local UDP DNS\n'
+ "$CHECK_BIN" -cotten-profile-file "$probe_profile" -resolver "$listen_ip" -tcp off -timeout 40s || return 1
+ printf '\nTest E: Cotten authenticated HTTPS over local TCP DNS\n'
+ "$CHECK_BIN" -cotten-profile-file "$probe_profile" -resolver "$listen_ip" -tcp only -timeout 40s || return 1
+ printf '\nTest F: Cotten authenticated HTTPS through recursive DNS\n'
+ "$CHECK_BIN" -cotten-profile-file "$probe_profile" -resolver "$test_resolvers" -tcp auto -timeout 60s || return 1
  printf '[OK] Server-side tunnel checks passed. Test the phone on its own network next.\n'
 }
 panel_run_checks() {

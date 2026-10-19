@@ -96,6 +96,9 @@ func (h *HTTP) subscriptionURL(r *http.Request, credential string) string {
 		cfg := h.access.Config()
 		if cfg.HTTPS {
 			scheme, host = "https", cfg.Domain
+			if cfg.hasDomain((&url.URL{Host: r.Host}).Hostname()) {
+				host = (&url.URL{Host: r.Host}).Hostname()
+			}
 		}
 	}
 	return (&url.URL{Scheme: scheme, Host: host, Path: "/sub/" + credential}).String()
@@ -119,7 +122,16 @@ func (h *HTTP) subscriptionAdmin(w http.ResponseWriter, r *http.Request, id stri
 		_, _ = w.Write(png)
 		return
 	}
-	jsonReply(w, 200, map[string]any{"url": link, "update_interval_hours": 12})
+	urls := []string{link}
+	if h.access != nil {
+		for _, domain := range h.access.Config().domains() {
+			alternative := (&url.URL{Scheme: "https", Host: domain, Path: "/sub/" + credential}).String()
+			if alternative != link {
+				urls = append(urls, alternative)
+			}
+		}
+	}
+	jsonReply(w, 200, map[string]any{"url": link, "urls": urls, "update_interval_hours": 12})
 }
 
 func (h *HTTP) serveSubscription(w http.ResponseWriter, r *http.Request) {
@@ -152,12 +164,19 @@ func (h *HTTP) serveSubscription(w http.ResponseWriter, r *http.Request) {
 		jsonReply(w, http.StatusForbidden, map[string]string{"error": "subscription account is inactive", "status": state})
 		return
 	}
-	link, err := profileFor(c, cfg)
-	if err != nil {
-		http.Error(w, "subscription unavailable", 500)
-		return
+	body := ""
+	for _, zone := range cfg.orderedZones() {
+		links, err := h.store.profilesAt(c, cfg, zone)
+		if err != nil {
+			http.Error(w, "subscription unavailable", 500)
+			return
+		}
+		for _, engine := range []string{"soar", "cotten"} {
+			if link := links[engine]; link != "" {
+				body += link + "\n"
+			}
+		}
 	}
-	body := link + "\n"
 	switch r.URL.Query().Get("format") {
 	case "", "base64":
 		body = base64.StdEncoding.EncodeToString([]byte(body)) + "\n"

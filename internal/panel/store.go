@@ -27,14 +27,32 @@ var ErrConflict = errors.New("account changed; refresh and retry")
 const MaxClients = 512
 
 type Settings struct {
-	BaseZone     string           `json:"base_zone"`
-	Resolvers    []string         `json:"resolvers"`
-	Country      string           `json:"country"`
-	AllowPorts   []uint16         `json:"allow_ports"`
-	SoarSettings *ProfileSettings `json:"soarSettings,omitempty"`
+	TunnelNameservers map[string]string `json:"tunnel_nameservers,omitempty"`
+	PublicIP          string            `json:"public_ip,omitempty"`
+	NameserverHost    string            `json:"nameserver_host,omitempty"`
+	TunnelZones       []string          `json:"tunnel_zones,omitempty"`
+	PrimaryZone       string            `json:"primary_zone,omitempty"`
+	BaseZone          string            `json:"base_zone"`
+	Resolvers         []string          `json:"resolvers"`
+	Country           string            `json:"country"`
+	AllowPorts        []uint16          `json:"allow_ports"`
+	SoarSettings      *ProfileSettings  `json:"soarSettings,omitempty"`
 }
 
 func (s Settings) Validate() error {
+	if s.PublicIP != "" {
+		if ip, err := netip.ParseAddr(s.PublicIP); err != nil || !ip.Is4() || !ip.IsGlobalUnicast() {
+			return errors.New("invalid public IPv4 address")
+		}
+	}
+	if s.NameserverHost != "" {
+		if err := ValidateDomain(s.NameserverHost); err != nil {
+			return errors.New("invalid nameserver host")
+		}
+	}
+	if err := s.validateTunnelZones(); err != nil {
+		return err
+	}
 	if len(s.BaseZone) < 3 || len(s.BaseZone) > 24 || !strings.Contains(s.BaseZone, ".") {
 		return errors.New("base zone must be an ASCII domain, at most 24 characters")
 	}
@@ -70,6 +88,7 @@ func (s Settings) Validate() error {
 }
 
 type Client struct {
+	Engines        string `json:"engines,omitempty"`
 	InstallerProbe bool   `json:"installer_probe,omitempty"`
 	ID             string `json:"id"`
 	Name           string `json:"name"`
@@ -91,6 +110,7 @@ type Client struct {
 }
 
 type ClientInput struct {
+	Engines     string `json:"engines,omitempty"`
 	Name        string `json:"name"`
 	Note        string `json:"note"`
 	Enabled     bool   `json:"enabled"`
@@ -115,6 +135,9 @@ func (c Client) Status(now time.Time) string {
 	return "active"
 }
 func (c ClientInput) validate() error {
+	if c.Engines != "" && c.Engines != "soar" && c.Engines != "cotten" && c.Engines != "both" {
+		return errors.New("choose Soar, Cotten or both")
+	}
 	if strings.TrimSpace(c.Name) == "" || len(c.Name) > 160 || len(c.Note) > 2048 {
 		return errors.New("name required (max 160 bytes); note max 2048 bytes")
 	}
@@ -239,6 +262,17 @@ func (s *Store) SaveSettings(v Settings) error {
 		if old.BaseZone != v.BaseZone {
 			return errors.New("base zone is fixed; changing it invalidates existing profiles")
 		}
+		if v.NameserverHost == "" {
+			v.NameserverHost = old.NameserverHost
+		}
+		if v.PublicIP == "" {
+			v.PublicIP = old.PublicIP
+		}
+		if v.TunnelZones == nil {
+			v.TunnelZones = old.TunnelZones
+			v.PrimaryZone = old.PrimaryZone
+			v.TunnelNameservers = old.TunnelNameservers
+		}
 		// Older API callers and databases omit this field. Preserve saved tuning
 		// instead of silently reverting it when they change resolver/port settings.
 		if v.SoarSettings == nil {
@@ -308,6 +342,10 @@ func (s *Store) create(in ClientInput, installerProbe bool) (c Client, e error) 
 	return
 }
 func applyInput(c *Client, in ClientInput) {
+	// Omitted engine selection preserves older API callers and existing accounts.
+	if in.Engines != "" {
+		c.Engines = in.Engines
+	}
 	c.Name = strings.TrimSpace(in.Name)
 	c.Note = in.Note
 	c.Enabled = in.Enabled
@@ -448,6 +486,17 @@ func (s *Store) reserve(id string, n int, up bool) (allowed int, revision uint64
 	return s.reserveEpoch(id, n, up, 0)
 }
 func (s *Store) reserveEpoch(id string, n int, up bool, expected uint64) (allowed int, revision uint64, e error) {
+	return s.reservePayload(id, n, up, expected, false)
+}
+
+func (s *Store) reserveDatagramEpoch(id string, n int, up bool, expected uint64) (int, uint64, error) {
+	if n > 65535 {
+		return 0, 0, errors.New("datagram too large")
+	}
+	return s.reservePayload(id, n, up, expected, true)
+}
+
+func (s *Store) reservePayload(id string, n int, up bool, expected uint64, datagram bool) (allowed int, revision uint64, e error) {
 	if n <= 0 {
 		return
 	}
@@ -460,7 +509,13 @@ func (s *Store) reserveEpoch(id string, n int, up bool, expected uint64) (allowe
 			return ErrDenied
 		}
 		allowed = min(n, 32*1024)
+		if datagram {
+			allowed = n
+		}
 		if c.QuotaBytes > 0 {
+			if datagram && int64(n) > c.QuotaBytes-c.Used() {
+				return ErrDenied
+			}
 			allowed = min(allowed, int(c.QuotaBytes-c.Used()))
 		}
 		if allowed <= 0 {
@@ -547,7 +602,11 @@ func (s *Store) Profile(id string) (link string, e error) {
 	if e != nil {
 		return
 	}
-	return profileFor(c, cfg)
+	links, e := s.profiles(c, cfg)
+	if e != nil {
+		return "", e
+	}
+	return selectedProfile(links, "")
 }
 
 func profileFor(c Client, cfg Settings) (string, error) {

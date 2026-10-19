@@ -19,18 +19,20 @@ import (
 )
 
 type AccessConfig struct {
-	BasePath string `json:"base_path"`
-	Domain   string `json:"domain"`
-	HTTPS    bool   `json:"https"`
-	Email    string `json:"email,omitempty"`
+	Aliases  []string `json:"aliases,omitempty"`
+	BasePath string   `json:"base_path"`
+	Domain   string   `json:"domain"`
+	HTTPS    bool     `json:"https"`
+	Email    string   `json:"email,omitempty"`
 }
 type AccessInput struct {
-	Domain       string `json:"domain"`
-	HTTPS        bool   `json:"https"`
-	Email        string `json:"email"`
-	GeneratePath bool   `json:"generate_path"`
-	BasePath     string `json:"base_path"`
-	Password     string `json:"password"`
+	Aliases      []string `json:"aliases"`
+	Domain       string   `json:"domain"`
+	HTTPS        bool     `json:"https"`
+	Email        string   `json:"email"`
+	GeneratePath bool     `json:"generate_path"`
+	BasePath     string   `json:"base_path"`
+	Password     string   `json:"password"`
 }
 type AccessPlan struct {
 	ID      string       `json:"id"`
@@ -48,6 +50,7 @@ type AccessController struct {
 	cfg                     AccessConfig
 	plan                    *AccessPlan
 	requestedHost           string
+	requestedHosts          map[string]bool
 	handler                 http.Handler
 	manager                 *autocert.Manager
 	servers                 []*http.Server
@@ -78,6 +81,16 @@ func ValidateDomain(domain string) error {
 	return nil
 }
 func ValidateAccess(c AccessConfig) error {
+	if len(c.Aliases) > 7 {
+		return errors.New("use at most eight panel domains")
+	}
+	seen := map[string]bool{c.Domain: true}
+	for _, domain := range c.Aliases {
+		if !c.HTTPS || ValidateDomain(domain) != nil || seen[domain] {
+			return errors.New("panel aliases must be unique HTTPS domains")
+		}
+		seen[domain] = true
+	}
 	if c.BasePath != "" && !securePathPattern.MatchString(c.BasePath) {
 		return errors.New("secure path must contain 24–96 random URL-safe characters")
 	}
@@ -150,7 +163,27 @@ func NewAccessController(file string) (*AccessController, error) {
 	}
 	return a, nil
 }
-func (a *AccessController) Config() AccessConfig { a.mu.RLock(); defer a.mu.RUnlock(); return a.cfg }
+func (c AccessConfig) domains() []string {
+	if !c.HTTPS {
+		return nil
+	}
+	return append([]string{c.Domain}, c.Aliases...)
+}
+func (c AccessConfig) hasDomain(host string) bool {
+	for _, domain := range c.domains() {
+		if strings.EqualFold(host, domain) {
+			return true
+		}
+	}
+	return false
+}
+func (a *AccessController) Config() AccessConfig {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+	cfg := a.cfg
+	cfg.Aliases = append([]string(nil), cfg.Aliases...)
+	return cfg
+}
 func (a *AccessController) localPeer(remote string) bool {
 	host, _, _ := net.SplitHostPort(remote)
 	return a.localIPs[host]
@@ -198,7 +231,7 @@ func (a *AccessController) startTLS() error {
 	manager := &autocert.Manager{Prompt: autocert.AcceptTOS, Email: cfg.Email, Cache: autocert.DirCache(filepath.Join(filepath.Dir(a.file), "certificates")), HostPolicy: func(ctx context.Context, host string) error {
 		a.mu.RLock()
 		defer a.mu.RUnlock()
-		if host == a.cfg.Domain && a.cfg.HTTPS || host == a.requestedHost && host != "" {
+		if a.cfg.hasDomain(host) || a.requestedHosts[host] && a.plan != nil && time.Now().UnixMilli() < a.plan.Expires {
 			return nil
 		}
 		return errors.New("unconfigured certificate domain")
@@ -209,8 +242,8 @@ func (a *AccessController) startTLS() error {
 	challenges := &http.Server{Handler: manager.HTTPHandler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		cfg := a.Config()
 		host := strings.Split(r.Host, ":")[0]
-		if cfg.HTTPS && host == cfg.Domain && (cfg.BasePath == "" || strings.HasPrefix(r.URL.Path, cfg.BasePath)) {
-			http.Redirect(w, r, "https://"+cfg.Domain+r.URL.RequestURI(), http.StatusPermanentRedirect)
+		if cfg.hasDomain(host) && (cfg.BasePath == "" || strings.HasPrefix(r.URL.Path, cfg.BasePath)) {
+			http.Redirect(w, r, "https://"+host+r.URL.RequestURI(), http.StatusPermanentRedirect)
 			return
 		}
 		http.NotFound(w, r)
@@ -233,6 +266,17 @@ func (a *AccessController) Plan() *AccessPlan {
 }
 func (a *AccessController) Prepare(origin, owner string, in AccessInput, firewall func(context.Context) error) (*AccessPlan, error) {
 	c := AccessConfig{Domain: strings.ToLower(strings.TrimSuffix(strings.TrimSpace(in.Domain), ".")), HTTPS: in.HTTPS, Email: strings.TrimSpace(in.Email), BasePath: in.BasePath}
+	for _, domain := range in.Aliases {
+		c.Aliases = append(c.Aliases, strings.ToLower(strings.TrimSuffix(strings.TrimSpace(domain), ".")))
+	}
+	if in.Aliases == nil && c.HTTPS {
+		previous := a.Config()
+		for _, domain := range previous.domains() {
+			if domain != c.Domain {
+				c.Aliases = append(c.Aliases, domain)
+			}
+		}
+	}
 	if in.GeneratePath {
 		c.BasePath = "/" + token() + "/"
 	}
@@ -263,6 +307,10 @@ func (a *AccessController) Prepare(origin, owner string, in AccessInput, firewal
 	p := &AccessPlan{ID: token(), State: "preparing", URL: next, Config: c, Expires: time.Now().Add(15 * time.Minute).UnixMilli(), owner: owner}
 	a.plan = p
 	a.requestedHost = c.Domain
+	a.requestedHosts = map[string]bool{}
+	for _, domain := range c.domains() {
+		a.requestedHosts[domain] = true
+	}
 	a.mu.Unlock()
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 4*time.Minute)
@@ -273,20 +321,28 @@ func (a *AccessController) Prepare(origin, owner string, in AccessInput, firewal
 			if lookup == nil {
 				lookup = net.DefaultResolver.LookupHost
 			}
-			if _, e = lookup(ctx, c.Domain); e != nil {
-				e = errors.New("domain DNS lookup failed; create its A record first")
+			for _, domain := range c.domains() {
+				if _, e = lookup(ctx, domain); e != nil {
+					e = errors.New("domain DNS lookup failed; create its A record first")
+					break
+				}
 			}
 			if e == nil && firewall != nil {
 				e = firewall(ctx)
 			}
 			if e == nil {
-				if a.issue != nil {
-					e = a.issue(c.Domain)
-				} else if e = a.startTLS(); e == nil {
-					cert, ce := a.manager.GetCertificate(&tls.ClientHelloInfo{ServerName: c.Domain})
-					e = ce
-					if e == nil && cert == nil {
-						e = errors.New("certificate was not issued")
+				for _, domain := range c.domains() {
+					if a.issue != nil {
+						e = a.issue(domain)
+					} else if e = a.startTLS(); e == nil {
+						cert, ce := a.manager.GetCertificate(&tls.ClientHelloInfo{ServerName: domain})
+						e = ce
+						if e == nil && cert == nil {
+							e = errors.New("certificate was not issued")
+						}
+					}
+					if e != nil {
+						break
 					}
 				}
 			}
@@ -300,6 +356,7 @@ func (a *AccessController) Prepare(origin, owner string, in AccessInput, firewal
 			p.State = "failed"
 			p.Error = "Certificate setup failed. Check the domain A/AAAA records and inbound TCP ports 80/443; the previous address is unchanged. " + e.Error()
 			a.requestedHost = ""
+			a.requestedHosts = nil
 		} else {
 			p.State = "ready"
 		}
@@ -318,6 +375,7 @@ func (a *AccessController) Apply(id, owner string) (string, error) {
 	}
 	a.cfg = p.Config
 	a.requestedHost = ""
+	a.requestedHosts = nil
 	a.plan = nil
 	return p.URL, nil
 }

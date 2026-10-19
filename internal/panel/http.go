@@ -124,7 +124,7 @@ func (h *HTTP) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		// Subscription URLs never include or reveal the administrator's private path.
 		if strings.HasPrefix(r.URL.Path, "/sub/") {
-			if cfg.HTTPS && (!h.isSecure(r) || !strings.EqualFold((&url.URL{Host: r.Host}).Hostname(), cfg.Domain)) {
+			if cfg.HTTPS && (!h.isSecure(r) || !cfg.hasDomain((&url.URL{Host: r.Host}).Hostname())) {
 				http.NotFound(w, r)
 				return
 			}
@@ -147,7 +147,7 @@ func (h *HTTP) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		if cfg.HTTPS {
 			host := strings.ToLower(strings.Split(r.Host, ":")[0])
-			if !h.isSecure(r) || host != cfg.Domain {
+			if !h.isSecure(r) || !cfg.hasDomain(host) {
 				http.NotFound(w, r)
 				return
 			}
@@ -254,6 +254,10 @@ func (h *HTTP) serveHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	if r.URL.Path == "/api/settings" {
 		h.settings(w, r)
+		return
+	}
+	if r.URL.Path == "/api/tunnel-domains" || r.URL.Path == "/api/tunnel-domains/check" {
+		h.tunnelDomains(w, r)
 		return
 	}
 	if r.URL.Path == "/api/admin" {
@@ -403,7 +407,20 @@ func (h *HTTP) clientList(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		sort.Slice(list, func(i, j int) bool { return list[i].CreatedAt > list[j].CreatedAt })
-		jsonReply(w, 200, map[string]any{"clients": list, "connections": h.manager.ActiveCounts(), "now": time.Now().UnixMilli()})
+		cfg, e := h.store.Settings()
+		if e != nil {
+			errorReply(w, 500, e)
+			return
+		}
+		type clientView struct {
+			Client
+			ConnectZone string `json:"connect_zone"`
+		}
+		views := make([]clientView, 0, len(list))
+		for _, client := range list {
+			views = append(views, clientView{client, cfg.accountZone(client, cfg.primaryZone())})
+		}
+		jsonReply(w, 200, map[string]any{"clients": views, "connections": h.manager.ActiveCounts(), "now": time.Now().UnixMilli()})
 	case "POST":
 		var in ClientInput
 		if e := decodeJSON(w, r, &in); e != nil {
@@ -450,13 +467,23 @@ func (h *HTTP) clientAction(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if action == "link" || action == "qr.png" {
-			link, e := h.store.Profile(id)
+			links, e := h.store.Profiles(id)
 			if e != nil {
 				errorReply(w, 500, errors.New("cannot render profile"))
 				return
 			}
 			if action == "link" {
-				jsonReply(w, 200, map[string]string{"link": link})
+				link, e := selectedProfile(links, r.URL.Query().Get("engine"))
+				if e != nil {
+					errorReply(w, 400, e)
+					return
+				}
+				jsonReply(w, 200, map[string]any{"link": link, "links": links})
+				return
+			}
+			link, e := selectedProfile(links, r.URL.Query().Get("engine"))
+			if e != nil {
+				errorReply(w, 400, e)
 				return
 			}
 			png, e := qrcode.Encode(link, qrcode.Medium, 512)

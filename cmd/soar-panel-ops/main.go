@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"log"
@@ -49,6 +50,12 @@ func run() error {
 		return e
 	}
 	service := &panelops.Service{DB: *db, Binary: *binary, OpsBinary: *opsBinary, SecurityScript: *securityScript, StateDir: *state, HealthAddress: *health, UID: uid, GID: gid}
+	firewallCtx, cancelFirewall := context.WithTimeout(context.Background(), 15*time.Second)
+	e = panelops.EnsureDNSFirewall(firewallCtx)
+	cancelFirewall()
+	if e != nil {
+		return e
+	}
 	if e = service.Initialize(); e != nil {
 		return e
 	}

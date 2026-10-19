@@ -19,6 +19,7 @@ import (
 	"strings"
 	"time"
 
+	cottenprobe "cottendns-go/probe"
 	"github.com/getlantern/soar"
 )
 
@@ -124,6 +125,7 @@ func run(args []string, output io.Writer) int {
 	fs.SetOutput(output)
 	zone := fs.String("zone", "", "delegated tunnel domain")
 	pubkey := fs.String("pubkey", "", "base64 server public key (never the private key)")
+	cottenFile := fs.String("cotten-profile-file", "", "Private installer-only Cotten probe credentials; never put a shared key in argv")
 	resolvers := fs.String("resolver", "", "comma-separated resolver IPs or IP:port values")
 	target := fs.String("url", "https://example.com/", "HTTPS destination for the tunnel test")
 	tcp := fs.String("tcp", "auto", "resolver transport: auto, on, only or off")
@@ -141,7 +143,7 @@ func run(args []string, output io.Writer) int {
 		return 0
 	}
 	key, err := base64.StdEncoding.DecodeString(*pubkey)
-	if err != nil || len(key) != ed25519.PublicKeySize || *zone == "" || fs.NArg() != 0 {
+	if (*cottenFile == "" && (err != nil || len(key) != ed25519.PublicKeySize || *zone == "")) || fs.NArg() != 0 {
 		fmt.Fprintln(output, "[ERROR] Supply -zone, -pubkey and -resolver. Use -help for examples.")
 		return 2
 	}
@@ -160,7 +162,36 @@ func run(args []string, output io.Writer) int {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), *timeout)
 	defer cancel()
-	r := check(ctx, soar.Config{Zone: *zone, ServerKey: key, Resolvers: list, TCP: *tcp}, *target, nil)
+	var r result
+	if *cottenFile != "" {
+		r = result{Stage: "cotten tunnel"}
+		info, e := os.Stat(*cottenFile)
+		if e != nil || !info.Mode().IsRegular() || info.Size() > 4096 || os.PathSeparator != '\\' && info.Mode().Perm()&0077 != 0 {
+			r.Error = "Cotten probe file must be private (0600)"
+		} else {
+			raw, e := os.ReadFile(*cottenFile)
+			var cfg cottenprobe.Config
+			if e != nil || json.Unmarshal(raw, &cfg) != nil {
+				r.Error = "invalid Cotten probe file"
+			} else {
+				cfg.Resolvers, cfg.URL, cfg.Transport = list, *target, "auto"
+				if *tcp == "off" {
+					cfg.Transport = "udp"
+				} else if *tcp == "only" {
+					cfg.Transport = "tcp"
+				}
+				code, e := cottenprobe.CheckHTTP(ctx, cfg)
+				r.HTTP = code
+				if e != nil {
+					r.Error = e.Error()
+				} else {
+					r.OK, r.Handshake, r.Stage = true, true, "complete"
+				}
+			}
+		}
+	} else {
+		r = check(ctx, soar.Config{Zone: *zone, ServerKey: key, Resolvers: list, TCP: *tcp}, *target, nil)
+	}
 	if *asJSON {
 		_ = json.NewEncoder(output).Encode(r)
 	} else if r.OK {
