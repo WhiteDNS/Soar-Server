@@ -392,8 +392,16 @@ func (m *Manager) dialEgress(r *accountRuntime, ctx context.Context, network, ad
 		}
 	}
 	m.mu.RUnlock()
-	if resolver && p == 53 {
-		allowed = true
+	if resolver {
+		allowed = false
+		m.mu.RLock()
+		for _, endpoint := range m.cfg.cottenResolvers() {
+			if endpoint == addr {
+				allowed = true
+				break
+			}
+		}
+		m.mu.RUnlock()
 	}
 	if !allowed {
 		return nil, errors.New("destination port denied")

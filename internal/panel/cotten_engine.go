@@ -8,6 +8,7 @@ import (
 	"io"
 	"log/slog"
 	"net"
+	"net/netip"
 	"runtime"
 	"strings"
 	"sync"
@@ -249,24 +250,60 @@ func (m *Manager) cottenDNS(rt *accountRuntime, parent context.Context, query []
 		return nil, errors.New("invalid tunneled DNS query")
 	}
 	m.mu.RLock()
-	resolvers := append([]string(nil), m.cfg.Resolvers...)
+	resolvers := m.cfg.cottenResolvers()
 	m.mu.RUnlock()
 	ctx, cancel := context.WithTimeout(parent, 6*time.Second)
 	defer cancel()
-	for _, resolver := range resolvers {
-		endpoint := net.JoinHostPort(resolver, "53")
-		response, err := m.exchangeCottenDNS(rt, ctx, "udp", endpoint, query)
+	for i, resolver := range resolvers {
+		endpoint := resolverEndpoint(resolver)
+		deadline, _ := ctx.Deadline()
+		budget := min(2*time.Second, time.Until(deadline)/time.Duration(len(resolvers)-i))
+		if budget <= 0 {
+			break
+		}
+		attempt, stop := context.WithTimeout(ctx, budget)
+		response, err := m.exchangeCottenDNS(rt, attempt, "udp", endpoint, query)
 		if err != nil {
+			stop()
 			continue
 		}
 		if len(response) >= 4 && response[2]&2 != 0 {
-			response, err = m.exchangeCottenDNS(rt, ctx, "tcp", endpoint, query)
+			response, err = m.exchangeCottenDNS(rt, attempt, "tcp", endpoint, query)
 		}
+		stop()
 		if err == nil && len(response) >= 12 && response[0] == query[0] && response[1] == query[1] && response[2]&0x80 != 0 {
+			if code := response[3] & 15; code == 2 || code == 5 {
+				continue
+			}
 			return response, nil
 		}
 	}
 	return nil, errors.New("DNS resolver unavailable")
+}
+
+func resolverEndpoint(resolver string) string {
+	if address, err := netip.ParseAddr(resolver); err == nil {
+		return net.JoinHostPort(address.String(), "53")
+	}
+	if address, err := netip.ParseAddrPort(resolver); err == nil {
+		return address.String()
+	}
+	return ""
+}
+
+// Bootstrap resolvers may belong to a phone carrier and be unreachable from a
+// VPS. Keep public server-side fallbacks without exposing another install prompt.
+func (s Settings) cottenResolvers() []string {
+	var result []string
+	seen := map[string]bool{}
+	for _, resolver := range append(append([]string(nil), s.Resolvers...), "1.1.1.1", "8.8.8.8") {
+		endpoint := resolverEndpoint(resolver)
+		if endpoint != "" && !seen[endpoint] {
+			seen[endpoint] = true
+			result = append(result, endpoint)
+		}
+	}
+	return result
 }
 
 func (m *Manager) exchangeCottenDNS(rt *accountRuntime, ctx context.Context, network, address string, query []byte) ([]byte, error) {
