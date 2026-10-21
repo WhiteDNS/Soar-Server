@@ -36,14 +36,20 @@ type MaintenanceOps interface {
 	Start(context.Context, MaintenanceRequest) (MaintenanceJob, error)
 	AllowHTTPS(context.Context) error
 }
-type OpsClient struct{ client *http.Client }
+type OpsClient struct {
+	client        *http.Client
+	routerManaged bool
+}
 
 func NewOpsClient(socket string) *OpsClient {
-	return &OpsClient{&http.Client{Timeout: 20 * time.Second, Transport: &http.Transport{DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
+	return &OpsClient{client: &http.Client{Timeout: 20 * time.Second, Transport: &http.Transport{DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
 		return (&net.Dialer{}).DialContext(ctx, "unix", socket)
-	}}}}
+	}}}, routerManaged: filepath.Base(socket) == "router-managed-ops.sock"}
 }
 func (c *OpsClient) call(ctx context.Context, path string, body any, out any) error {
+	if c.routerManaged {
+		return errors.New("CottenRouter manages this installation. Update with: sudo cottenrouter update --project whitedns-panel. Use SSH forwarding for the private administration page; account settings and backup downloads remain available here")
+	}
 	var raw []byte
 	method := "GET"
 	if body != nil {
