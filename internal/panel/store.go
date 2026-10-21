@@ -102,6 +102,7 @@ type Client struct {
 	ExpiresAt      int64  `json:"expires_at"`
 	RateBytes      int64  `json:"rate_bytes"`
 	StreamLimit    int    `json:"stream_limit"`
+	SessionLimit   int    `json:"session_limit,omitempty"`
 	Revision       uint64 `json:"revision"`
 	UsageEpoch     uint64 `json:"usage_epoch"`
 	CreatedAt      int64  `json:"created_at"`
@@ -110,18 +111,27 @@ type Client struct {
 }
 
 type ClientInput struct {
-	Engines     string `json:"engines,omitempty"`
-	Name        string `json:"name"`
-	Note        string `json:"note"`
-	Enabled     bool   `json:"enabled"`
-	QuotaBytes  int64  `json:"quota_bytes"`
-	ExpiresAt   int64  `json:"expires_at"`
-	RateBytes   int64  `json:"rate_bytes"`
-	StreamLimit int    `json:"stream_limit"`
-	Revision    uint64 `json:"revision"`
+	Engines      string `json:"engines,omitempty"`
+	Name         string `json:"name"`
+	Note         string `json:"note"`
+	Enabled      bool   `json:"enabled"`
+	QuotaBytes   int64  `json:"quota_bytes"`
+	ExpiresAt    int64  `json:"expires_at"`
+	RateBytes    int64  `json:"rate_bytes"`
+	StreamLimit  int    `json:"stream_limit"`
+	SessionLimit int    `json:"session_limit,omitempty"`
+	Revision     uint64 `json:"revision"`
 }
 
 func (c Client) Used() int64 { return c.UploadBytes + c.DownloadBytes }
+
+// Existing records retain the previous limit until an administrator changes it.
+func (c Client) sessionLimit() int {
+	if c.SessionLimit > 0 {
+		return c.SessionLimit
+	}
+	return 8
+}
 func (c Client) Status(now time.Time) string {
 	if !c.Enabled {
 		return "disabled"
@@ -135,6 +145,9 @@ func (c Client) Status(now time.Time) string {
 	return "active"
 }
 func (c ClientInput) validate() error {
+	if c.SessionLimit < 0 || c.SessionLimit > 4096 {
+		return errors.New("session limit must be 1–4096, or omitted to preserve the existing value")
+	}
 	if c.Engines != "" && c.Engines != "soar" && c.Engines != "cotten" && c.Engines != "both" {
 		return errors.New("choose Soar, Cotten or both")
 	}
@@ -324,7 +337,7 @@ func (s *Store) create(in ClientInput, installerProbe bool) (c Client, e error) 
 		return
 	}
 	now := time.Now().UnixMilli()
-	c = Client{ID: id, Zone: zone, PublicKey: pub, CreatedAt: now, UpdatedAt: now, Revision: 1, UsageEpoch: 1, InstallerProbe: installerProbe}
+	c = Client{ID: id, Zone: zone, PublicKey: pub, CreatedAt: now, UpdatedAt: now, Revision: 1, UsageEpoch: 1, InstallerProbe: installerProbe, SessionLimit: 64}
 	applyInput(&c, in)
 	e = s.db.Update(func(tx *bolt.Tx) error {
 		b := tx.Bucket(clients)
@@ -353,6 +366,9 @@ func applyInput(c *Client, in ClientInput) {
 	c.ExpiresAt = in.ExpiresAt
 	c.RateBytes = in.RateBytes
 	c.StreamLimit = in.StreamLimit
+	if in.SessionLimit > 0 {
+		c.SessionLimit = in.SessionLimit
+	}
 }
 func getClient(tx *bolt.Tx, id string) (c Client, e error) {
 	raw := tx.Bucket(clients).Get([]byte(id))

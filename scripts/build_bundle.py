@@ -27,8 +27,13 @@ def main() -> None:
     binaries.mkdir(parents=True, exist_ok=True)
     env = os.environ.copy()
     env.update(GOOS="linux", GOARCH="amd64", CGO_ENABLED="0")
+    # The standalone Soar 2.2 installer keeps its explicit older engine.
+    # The management panel and shared diagnostics use the main module graph.
+    standalone_env = dict(env, GOBIN=str(binaries.resolve()), GOWORK="off")
+    subprocess.run(["go", "install", "-trimpath", "-buildvcs=false", "-ldflags=-s -w",
+                    "github.com/getlantern/soar/cmd/soar-server@v0.2.2"],
+                   cwd=ROOT, env=standalone_env, check=True)
     for program, package in (
-        ("soar-server", "github.com/getlantern/soar/cmd/soar-server"),
         ("soar-check", "./cmd/soar-check"),
     ):
         subprocess.run(
@@ -59,7 +64,7 @@ def main() -> None:
         if original is None:
             raise RuntimeError(f"Missing original license for {module}")
         shutil.copyfile(original, licenses / filename)
-    soar_dir = Path(run("go", "list", "-m", "-f", "{{.Dir}}", "github.com/getlantern/soar"))
+    soar_dir = Path(run("go", "env", "GOMODCACHE")) / "github.com/getlantern/soar@v0.2.2"
     # The embedded resolver lists retain upstream's third-party notice.
     shutil.copyfile(soar_dir / "data" / "THIRD_PARTY.md", licenses / "Soar-data-THIRD-PARTY.md")
     shutil.copyfile(Path(run("go", "env", "GOROOT")) / "LICENSE", licenses / "Go-LICENSE.txt")

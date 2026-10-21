@@ -10,3 +10,10 @@ __pycache__/
 go.work
 go.work.sum
 .engine-source/
+
+# Local verification and scratch material
+**/*_test.go
+**/test/
+**/tests/
+**/[Rr][Ee][Aa][Dd][Mm][Ee]*
+**/__pycache__/

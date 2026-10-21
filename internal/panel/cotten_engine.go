@@ -37,7 +37,7 @@ func (m *Manager) runAccount(rt *accountRuntime, seed []byte) {
 				defer rt.cancel()
 				_ = soar.Serve(rt.ctx, pc, soar.ServerConfig{Zone: zone, PrivateKey: ed25519.NewKeyFromSeed(seed), Dial: func(ctx context.Context, network, address string) (net.Conn, error) {
 					return m.dial(rt, ctx, network, address)
-				}, MaxSessions: 8, MaxTotalStreams: 128, MaxStreams: 128, Logger: slog.New(slog.NewTextHandler(io.Discard, nil))})
+				}, MaxSessions: rt.client.sessionLimit(), MaxTotalStreams: 128, MaxStreams: 128, Logger: slog.New(slog.NewTextHandler(io.Discard, nil))})
 			}()
 		}
 		go func() { servers.Wait(); close(soarDone) }()
@@ -73,6 +73,7 @@ func (m *Manager) cottenFor(rt *accountRuntime) (*cotten.Server, error) {
 		domains[i] = "cot." + zone
 	}
 	engine, err := cotten.New(rt.ctx, cotten.Config{Domain: domains[0], Domains: domains, Key: cottenKey(seed),
+		MaxActiveSessions: rt.client.sessionLimit(), MaxStreamsPerSession: 128,
 		Allowed: func() bool {
 			c, err := m.store.Get(rt.client.ID)
 			return err == nil && c.Status(time.Now()) == "active" && c.hasEngine("cotten") && c.UsageEpoch == rt.client.UsageEpoch && c.PublicKey == rt.client.PublicKey

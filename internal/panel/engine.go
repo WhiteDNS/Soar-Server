@@ -70,8 +70,8 @@ type accountRuntime struct {
 	closed   bool
 	pending  int
 	conns    map[*meterConn]struct{}
-	rateMu   sync.Mutex
-	next     time.Time
+	rateOnce sync.Once
+	rateGate chan struct{}
 }
 
 func (r *accountRuntime) closeIO() {
@@ -152,7 +152,7 @@ func (m *Manager) Reconcile() error {
 	m.cfg = cfg
 	for id, r := range m.accounts {
 		c, ok := desired[id]
-		if !ok || c.Zone != r.client.Zone || c.PublicKey != r.client.PublicKey || c.Engines != r.client.Engines || strings.Join(r.zones, ",") != strings.Join(cfg.accountZones(c), ",") {
+		if !ok || c.Zone != r.client.Zone || c.PublicKey != r.client.PublicKey || c.Engines != r.client.Engines || c.sessionLimit() != r.client.sessionLimit() || strings.Join(r.zones, ",") != strings.Join(cfg.accountZones(c), ",") {
 			delete(m.accounts, id)
 			for _, zone := range r.zones {
 				delete(m.zones, zone)
@@ -478,14 +478,22 @@ func (m *Manager) Disconnect(id string) {
 type meterConn struct {
 	datagram bool
 	net.Conn
-	manager *Manager
-	rt      *accountRuntime
-	once    sync.Once
+	manager  *Manager
+	rt       *accountRuntime
+	once     sync.Once
+	doneOnce sync.Once
+	done     chan struct{}
+}
+
+func (c *meterConn) closedSignal() chan struct{} {
+	c.doneOnce.Do(func() { c.done = make(chan struct{}) })
+	return c.done
 }
 
 func (c *meterConn) Close() error {
 	var e error
 	c.once.Do(func() {
+		close(c.closedSignal())
 		e = c.Conn.Close()
 		c.rt.mu.Lock()
 		delete(c.rt.conns, c)
@@ -512,20 +520,33 @@ func (c *meterConn) pace(n int, rate int64) error {
 		return nil
 	}
 	r := c.rt
-	r.rateMu.Lock()
-	now := time.Now()
-	start := r.next
-	if start.Before(now) {
-		start = now
+	r.rateOnce.Do(func() { r.rateGate = make(chan struct{}, 1) })
+	done := c.closedSignal()
+	// Reserve time only while this connection owns the account's pacing gate.
+	// Abandoned waiters cannot leave virtual future debt for other streams.
+	select {
+	case <-r.ctx.Done():
+		return ErrDenied
+	case <-done:
+		return net.ErrClosed
+	case r.rateGate <- struct{}{}:
 	}
-	r.next = start.Add(time.Duration(float64(n) / float64(rate) * float64(time.Second)))
-	delay := time.Until(r.next)
-	r.rateMu.Unlock()
-	timer := time.NewTimer(delay)
+	defer func() { <-r.rateGate }()
+	if r.ctx.Err() != nil {
+		return ErrDenied
+	}
+	select {
+	case <-done:
+		return net.ErrClosed
+	default:
+	}
+	timer := time.NewTimer(time.Duration(float64(n) / float64(rate) * float64(time.Second)))
 	defer timer.Stop()
 	select {
 	case <-r.ctx.Done():
 		return ErrDenied
+	case <-done:
+		return net.ErrClosed
 	case <-timer.C:
 		return nil
 	}

@@ -47,7 +47,7 @@ def main():
     shutil.copyfile(Path(run("go","env","GOROOT"))/"LICENSE",licenses/"Go-LICENSE.txt")
     cotten=Path(run("go","list","-m","-f","{{.Dir}}","cottendns-go"))
     cotten_revision=run("git","-C",str(cotten),"rev-parse","HEAD") if (cotten/".git").exists() else run("go","list","-m","-f","{{.Replace.Version}}","cottendns-go")
-    (bundle/"SOURCE-VERSIONS.txt").write_text(f"WhiteDNS Soar Panel: {VERSION}\nPanel source commit: {run('git','rev-parse','HEAD')}\nLantern Soar: v0.2.2\nCottenDNS source revision: {cotten_revision}\nToolchain: {run('go','version')}\nTarget: linux/amd64; CGO_ENABLED=0\n\n{run('go','list','-m','all')}\n",encoding="ascii")
+    (bundle/"SOURCE-VERSIONS.txt").write_text(f"WhiteDNS Soar Panel: {VERSION}\nPanel source commit: {run('git','rev-parse','HEAD')}\nLantern Soar: v0.2.3\nCottenDNS source revision: {cotten_revision}\nToolchain: {run('go','version')}\nTarget: linux/amd64; CGO_ENABLED=0\n\n{run('go','list','-m','all')}\n",encoding="ascii")
     sums="".join(f"{hashlib.sha256(f.read_bytes()).hexdigest()}  {f.relative_to(bundle).as_posix()}\n" for f in sorted(bundle.rglob("*")) if f.is_file() and f.name!="SHA256SUMS")
     (bundle/"SHA256SUMS").write_bytes(sums.encode("ascii"))
     archive=args.output/(NAME+".tar.gz")
