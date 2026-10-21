@@ -1,7 +1,7 @@
 github.com/BurntSushi/toml v1.4.0 h1:kuoIxZQy2WRRk1pttg9asf+WVv6tWQuBNVmK8+nqPr0=
 github.com/BurntSushi/toml v1.4.0/go.mod h1:ukJfTF/6rtPPRCnwkur4qwRxa8vTRFBF0uk2lLoLwho=
-github.com/WhiteDNS/CottenDNS v0.0.0-20261021123422-0f1d6f0eb34e h1:H8Rb4zUQah8dafP2t0IGweozJMpu+aR6As49YqTLJvg=
-github.com/WhiteDNS/CottenDNS v0.0.0-20261021123422-0f1d6f0eb34e/go.mod h1:pEWfPJF7EAz4JhrgUiH4LwWOjdgGIfcp15Vdo+2RzGk=
+github.com/WhiteDNS/CottenDNS v0.0.0-20261021140715-0a7a241fbcff h1:dBZlOCUoQQhR6O3NXbuOCD0fn3imW/FgCRr+MA7Iosk=
+github.com/WhiteDNS/CottenDNS v0.0.0-20261021140715-0a7a241fbcff/go.mod h1:pEWfPJF7EAz4JhrgUiH4LwWOjdgGIfcp15Vdo+2RzGk=
 github.com/getlantern/soar v0.2.3 h1:BAahWy3b4J6wtrAJD7WgoO2O+x2Q3T6KN2r0E3ogNgs=
 github.com/getlantern/soar v0.2.3/go.mod h1:6T2+Kbx0GVqYIHqfEaUqlYI5ZRRVZYYhuoMWcxHC+xA=
 github.com/klauspost/compress v1.18.5 h1:/h1gH5Ce+VWNLSWqPzOVn6XBO+vJbCNGvjoaGBFW2IE=

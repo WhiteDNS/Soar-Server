@@ -27,6 +27,10 @@ func main() {
 	}
 }
 func execute(args []string) error {
+	if len(args) == 1 && args[0] == "capabilities" {
+		fmt.Println("account-session-limits canceled-stream-pacing embedded-dial-cancellation")
+		return nil
+	}
 	if len(args) == 1 && args[0] == "version" {
 		fmt.Println(panel.Version)
 		return nil

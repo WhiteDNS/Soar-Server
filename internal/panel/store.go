@@ -125,12 +125,13 @@ type ClientInput struct {
 
 func (c Client) Used() int64 { return c.UploadBytes + c.DownloadBytes }
 
-// Existing records retain the previous limit until an administrator changes it.
+// Records that predate the configurable limit use the current account default.
+// An explicit administrator limit is preserved, including smaller values.
 func (c Client) sessionLimit() int {
 	if c.SessionLimit > 0 {
 		return c.SessionLimit
 	}
-	return 8
+	return 64
 }
 func (c Client) Status(now time.Time) string {
 	if !c.Enabled {
