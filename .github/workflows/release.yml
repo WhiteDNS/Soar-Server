@@ -23,10 +23,11 @@ jobs:
         with:
           go-version: '1.26.1'
           cache-dependency-path: go.sum
-      - name: Prepare the upstream module workspace
+      - name: Prepare the verified patched engine workspace
         run: |
           GOWORK=off go mod download
-          go work init . ./.engine-source/CottenDNS
+          python3 scripts/prepare_cotten_engine.py --source .engine-source/CottenDNS --workspace .engine-source/patched.go.work
+          echo "GOWORK=$GITHUB_WORKSPACE/.engine-source/patched.go.work" >> "$GITHUB_ENV"
       - name: Verify installer, bootstrap and diagnostics
         run: |
           bash -n install.sh setup.sh

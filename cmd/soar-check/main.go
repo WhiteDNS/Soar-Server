@@ -26,11 +26,12 @@ import (
 const version = "0.1.0"
 
 type result struct {
-	OK        bool   `json:"ok"`
-	Stage     string `json:"stage"`
-	Handshake bool   `json:"handshake"`
-	HTTP      int    `json:"http_status,omitempty"`
-	Error     string `json:"error,omitempty"`
+	OK         bool   `json:"ok"`
+	Stage      string `json:"stage"`
+	Handshake  bool   `json:"handshake"`
+	HTTP       int    `json:"http_status,omitempty"`
+	Error      string `json:"error,omitempty"`
+	ErrorClass string `json:"error_class,omitempty"`
 }
 
 func resolverList(raw string) ([]string, error) {
@@ -180,12 +181,12 @@ func run(args []string, output io.Writer) int {
 				} else if *tcp == "only" {
 					cfg.Transport = "tcp"
 				}
-				code, e := cottenprobe.CheckHTTP(ctx, cfg)
-				r.HTTP = code
+				detailed, e := cottenprobe.CheckHTTPDetailed(ctx, cfg)
+				r.HTTP, r.Handshake, r.Stage, r.ErrorClass = detailed.HTTPStatus, detailed.Handshake, detailed.Stage, detailed.ErrorClass
 				if e != nil {
 					r.Error = e.Error()
 				} else {
-					r.OK, r.Handshake, r.Stage = true, true, "complete"
+					r.OK, r.Stage = detailed.OK, "complete"
 				}
 			}
 		}

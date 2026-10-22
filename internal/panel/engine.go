@@ -17,6 +17,12 @@ import (
 	"github.com/getlantern/soar"
 )
 
+var (
+	errAccountStreamLimit   = errors.New("stream limit reached")
+	errServerStreamCapacity = errors.New("server stream capacity reached")
+	errDestinationPort      = errors.New("destination port denied")
+)
+
 type packet struct {
 	data []byte
 	addr net.Addr
@@ -42,9 +48,7 @@ func (p *virtualPacketConn) WriteTo(b []byte, a net.Addr) (int, error) {
 		return 0, net.ErrClosed
 	default:
 	}
-	n, e := p.owner.pc.WriteTo(b, a)
-	p.owner.dnsOut.Add(uint64(n))
-	return n, e
+	return p.owner.writeDNSUDP(b, a)
 }
 func (p *virtualPacketConn) Close() error                  { p.once.Do(func() { close(p.done) }); return nil }
 func (p *virtualPacketConn) LocalAddr() net.Addr           { return p.owner.pc.LocalAddr() }
@@ -58,20 +62,23 @@ func (p *virtualPacketConn) SetReadDeadline(t time.Time) error {
 func (p *virtualPacketConn) SetWriteDeadline(t time.Time) error { return p.SetReadDeadline(t) }
 
 type accountRuntime struct {
-	soarPCs  map[string]*virtualPacketConn
-	zones    []string
-	cottenMu sync.Mutex
-	cotten   *cotten.Server
-	client   Client
-	ctx      context.Context
-	cancel   context.CancelFunc
-	pc       *virtualPacketConn
-	mu       sync.Mutex
-	closed   bool
-	pending  int
-	conns    map[*meterConn]struct{}
-	rateMu   sync.Mutex
-	next     time.Time
+	soarPCs        map[string]*virtualPacketConn
+	zones          []string
+	cottenMu       sync.Mutex
+	cotten         *cotten.Server
+	client         Client
+	ctx            context.Context
+	cancel         context.CancelFunc
+	pc             *virtualPacketConn
+	mu             sync.Mutex
+	closed         bool
+	pending        int
+	conns          map[*meterConn]struct{}
+	rateMu         sync.Mutex
+	rateHead       *paceTicket
+	rateTail       *paceTicket
+	resolverMu     sync.Mutex
+	resolverHealth map[string]*resolverHealth
 }
 
 func (r *accountRuntime) closeIO() {
@@ -86,12 +93,18 @@ func (r *accountRuntime) closeIO() {
 		c.Close()
 	}
 }
-func (r *accountRuntime) stop() {
+func (r *accountRuntime) retire() {
+	r.mu.Lock()
+	r.closed = true
+	r.mu.Unlock()
 	r.cancel()
 	r.pc.Close()
 	for _, pc := range r.soarPCs {
 		pc.Close()
 	}
+}
+func (r *accountRuntime) stop() {
+	r.retire()
 	r.closeIO()
 }
 
@@ -113,6 +126,7 @@ type Manager struct {
 	dnsIn, dnsOut, active atomic.Uint64
 	started               time.Time
 	workers               sync.WaitGroup
+	diagnostics           runtimeCounters
 }
 
 func NewManager(ctx context.Context, s *Store, pc net.PacketConn) *Manager {
@@ -147,46 +161,64 @@ func (m *Manager) Reconcile() error {
 			desired[c.ID] = c
 		}
 	}
+	var retired []*accountRuntime
+	var create []Client
 	m.mu.Lock()
-	defer m.mu.Unlock()
 	m.cfg = cfg
 	for id, r := range m.accounts {
 		c, ok := desired[id]
-		if !ok || c.Zone != r.client.Zone || c.PublicKey != r.client.PublicKey || c.Engines != r.client.Engines || strings.Join(r.zones, ",") != strings.Join(cfg.accountZones(c), ",") {
+		if !ok || r.ctx.Err() != nil || c.Zone != r.client.Zone || c.PublicKey != r.client.PublicKey || c.Engines != r.client.Engines ||
+			c.StreamLimit != r.client.StreamLimit || c.UsageEpoch != r.client.UsageEpoch ||
+			c.SoarSessionLimit != r.client.SoarSessionLimit || c.CottenSessionLimit != r.client.CottenSessionLimit ||
+			strings.Join(r.zones, ",") != strings.Join(cfg.accountZones(c), ",") {
 			delete(m.accounts, id)
 			for _, zone := range r.zones {
 				delete(m.zones, zone)
 			}
-			r.stop()
+			r.retire()
+			retired = append(retired, r)
 		}
 	}
 	for id, c := range desired {
-		if rt, ok := m.accounts[id]; ok && rt.client.UsageEpoch == c.UsageEpoch {
-			continue
-		} else if ok {
-			delete(m.accounts, id)
-			for _, zone := range rt.zones {
-				delete(m.zones, zone)
-			}
-			rt.stop()
+		if m.accounts[id] == nil {
+			create = append(create, c)
 		}
-		seed, e := m.store.Seed(id)
-		if e != nil {
-			return e
+	}
+	m.mu.Unlock()
+	// Network Close and seed/database reads must never hold the shared routing
+	// lock. Publish new runtimes before draining retired connections.
+	defer func() {
+		for _, r := range retired {
+			r.closeIO()
+		}
+	}()
+	for _, c := range create {
+		seed, err := m.store.Seed(c.ID)
+		if err != nil {
+			return err
 		}
 		ctx, cancel := context.WithCancel(m.ctx)
 		v := &virtualPacketConn{owner: m, input: make(chan packet, 128), done: make(chan struct{})}
 		rt := &accountRuntime{client: c, ctx: ctx, cancel: cancel, pc: v, conns: map[*meterConn]struct{}{}, zones: cfg.accountZones(c), soarPCs: map[string]*virtualPacketConn{}}
-		m.accounts[id] = rt
 		for _, zone := range rt.zones {
-			m.zones[zone] = rt
 			pc := v
 			if zone != c.Zone {
 				pc = &virtualPacketConn{owner: m, input: make(chan packet, 128), done: make(chan struct{})}
 			}
 			rt.soarPCs[zone] = pc
 		}
+		m.mu.Lock()
+		if m.ctx.Err() != nil {
+			m.mu.Unlock()
+			rt.stop()
+			return nil
+		}
+		m.accounts[c.ID] = rt
+		for _, zone := range rt.zones {
+			m.zones[zone] = rt
+		}
 		m.workers.Add(1)
+		m.mu.Unlock()
 		go m.runAccount(rt, seed)
 	}
 	return nil
@@ -223,10 +255,15 @@ func (m *Manager) Run() error {
 		m.cancel()
 		m.reconcileMu.Lock()
 		m.mu.Lock()
+		var retired []*accountRuntime
 		for _, r := range m.accounts {
-			r.stop()
+			r.retire()
+			retired = append(retired, r)
 		}
 		m.mu.Unlock()
+		for _, r := range retired {
+			r.closeIO()
+		}
 		m.reconcileMu.Unlock()
 		m.workers.Wait()
 	}()
@@ -241,8 +278,9 @@ func (m *Manager) Run() error {
 		}
 		m.dnsIn.Add(uint64(n))
 		m.routeDNS(b[:n], a, false, func(response []byte) {
-			sent, _ := m.pc.WriteTo(response, a)
-			m.dnsOut.Add(uint64(sent))
+			if len(response) > 0 {
+				_, _ = m.writeDNSUDP(response, a)
+			}
 		})
 	}
 }
@@ -371,9 +409,20 @@ func (m *Manager) dial(r *accountRuntime, ctx context.Context, network, addr str
 	return m.dialEgress(r, ctx, network, addr, false)
 }
 
+func (m *Manager) dialForEngine(r *accountRuntime, ctx context.Context, network, addr string, engine upstreamEngine) (net.Conn, error) {
+	return m.dialEgressFor(r, ctx, network, addr, false, engine)
+}
 func (m *Manager) dialEgress(r *accountRuntime, ctx context.Context, network, addr string, resolver bool) (net.Conn, error) {
+	engine := upstreamUnknown
+	if resolver {
+		engine = upstreamCotten
+	}
+	return m.dialEgressFor(r, ctx, network, addr, resolver, engine)
+}
+func (m *Manager) dialEgressFor(r *accountRuntime, ctx context.Context, network, addr string, resolver bool, engine upstreamEngine) (net.Conn, error) {
 	c, e := m.store.Get(r.client.ID)
 	if e != nil || c.Status(time.Now()) != "active" {
+		m.diagnostics.rejectedInactive.Add(1)
 		return nil, ErrDenied
 	}
 	_, port, e := net.SplitHostPort(addr)
@@ -404,19 +453,21 @@ func (m *Manager) dialEgress(r *accountRuntime, ctx context.Context, network, ad
 		m.mu.RUnlock()
 	}
 	if !allowed {
-		return nil, errors.New("destination port denied")
+		m.diagnostics.rejectedPolicy.Add(1)
+		return nil, errDestinationPort
 	}
 	r.mu.Lock()
-	if r.closed || len(r.conns)+r.pending >= c.StreamLimit {
+	if r.closed || c.StreamLimit > 0 && len(r.conns)+r.pending >= c.StreamLimit {
 		r.mu.Unlock()
-		return nil, errors.New("stream limit reached")
+		m.diagnostics.rejectedAccountLimit.Add(1)
+		return nil, errAccountStreamLimit
 	}
 	r.pending++
 	r.mu.Unlock()
 	defer func() { r.mu.Lock(); r.pending--; r.mu.Unlock() }()
-	if m.active.Add(1) > 2048 {
-		m.active.Add(^uint64(0))
-		return nil, errors.New("server stream capacity reached")
+	if !m.reserveStream() {
+		m.diagnostics.rejectedServerLimit.Add(1)
+		return nil, errServerStreamCapacity
 	}
 	transferred := false
 	defer func() {
@@ -432,11 +483,14 @@ func (m *Manager) dialEgress(r *accountRuntime, ctx context.Context, network, ad
 	if dial == nil {
 		dial = (&net.Dialer{Timeout: 15 * time.Second, Control: soar.PublicOnly}).DialContext
 	}
+	m.diagnostics.dialAttempts.Add(1)
+	started := time.Now()
 	upstream, e := dial(ctx, network, addr)
+	m.diagnostics.recordDial(time.Since(started), e != nil)
 	if e != nil {
 		return nil, e
 	}
-	mc := &meterConn{Conn: upstream, manager: m, rt: r, datagram: strings.HasPrefix(network, "udp")}
+	mc := &meterConn{Conn: upstream, manager: m, rt: r, datagram: strings.HasPrefix(network, "udp"), engine: engine}
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if r.closed || r.ctx.Err() != nil {
@@ -444,8 +498,26 @@ func (m *Manager) dialEgress(r *accountRuntime, ctx context.Context, network, ad
 		return nil, ErrDenied
 	}
 	r.conns[mc] = struct{}{}
+	m.diagnostics.upstreamOpened(engine)
 	transferred = true
 	return mc, nil
+}
+
+// The settings read lock serializes admission with a global limit change.
+// Pending dials reserve the same capacity as established streams and refund it
+// on failure; closing a connection releases its reservation exactly once.
+func (m *Manager) reserveStream() bool {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	for {
+		active := m.active.Load()
+		if m.cfg.ServerStreamLimit > 0 && active >= uint64(m.cfg.ServerStreamLimit) {
+			return false
+		}
+		if m.active.CompareAndSwap(active, active+1) {
+			return true
+		}
+	}
 }
 func (m *Manager) ActiveCounts() map[string]int {
 	m.mu.RLock()
@@ -459,38 +531,51 @@ func (m *Manager) ActiveCounts() map[string]int {
 	return v
 }
 func (m *Manager) Disconnect(id string) {
-	m.mu.RLock()
-	r := m.accounts[id]
-	m.mu.RUnlock()
-	if r != nil {
-		r.stop()
-	}
+	m.reconcileMu.Lock()
+	defer m.reconcileMu.Unlock()
 	m.mu.Lock()
-	if m.accounts[id] == r {
+	r := m.accounts[id]
+	if r != nil {
 		delete(m.accounts, id)
-		if r != nil {
-			delete(m.zones, r.client.Zone)
+		for _, zone := range r.zones {
+			delete(m.zones, zone)
 		}
+		r.retire()
 	}
 	m.mu.Unlock()
+	if r != nil {
+		r.closeIO()
+	}
 }
 
 type meterConn struct {
+	engine   upstreamEngine
 	datagram bool
 	net.Conn
-	manager *Manager
-	rt      *accountRuntime
-	once    sync.Once
+	manager                     *Manager
+	rt                          *accountRuntime
+	once                        sync.Once
+	stateMu                     sync.Mutex
+	closed                      bool
+	done                        chan struct{}
+	deadlineChanged             chan struct{}
+	readDeadline, writeDeadline time.Time
 }
 
 func (c *meterConn) Close() error {
 	var e error
 	c.once.Do(func() {
+		c.stateMu.Lock()
+		c.initIOStateLocked()
+		c.closed = true
+		close(c.done)
+		c.stateMu.Unlock()
 		e = c.Conn.Close()
 		c.rt.mu.Lock()
 		delete(c.rt.conns, c)
 		c.rt.mu.Unlock()
 		c.manager.active.Add(^uint64(0))
+		c.manager.diagnostics.upstreamClosed(c.engine, e)
 	})
 	return e
 }
@@ -507,29 +592,6 @@ func (c *meterConn) chunk(p []byte, rate int64) []byte {
 	}
 	return p[:n]
 }
-func (c *meterConn) pace(n int, rate int64) error {
-	if rate <= 0 || n == 0 {
-		return nil
-	}
-	r := c.rt
-	r.rateMu.Lock()
-	now := time.Now()
-	start := r.next
-	if start.Before(now) {
-		start = now
-	}
-	r.next = start.Add(time.Duration(float64(n) / float64(rate) * float64(time.Second)))
-	delay := time.Until(r.next)
-	r.rateMu.Unlock()
-	timer := time.NewTimer(delay)
-	defer timer.Stop()
-	select {
-	case <-r.ctx.Done():
-		return ErrDenied
-	case <-timer.C:
-		return nil
-	}
-}
 func (c *meterConn) Read(p []byte) (int, error) {
 	if c.datagram {
 		return c.readDatagram(p)
@@ -542,7 +604,7 @@ func (c *meterConn) Read(p []byte) (int, error) {
 	if n == 0 {
 		return 0, e
 	}
-	if err := c.pace(n, info.RateBytes); err != nil {
+	if err := c.pace(n, info.RateBytes, true); err != nil {
 		return 0, err
 	}
 	// Bill payload after it exists, before it can be forwarded to the client.
@@ -569,7 +631,7 @@ func (c *meterConn) Write(p []byte) (int, error) {
 			return total, ErrDenied
 		}
 		part := c.chunk(p, info.RateBytes)
-		if e := c.pace(len(part), info.RateBytes); e != nil {
+		if e := c.pace(len(part), info.RateBytes, false); e != nil {
 			return total, e
 		}
 		if c.rt.ctx.Err() != nil {

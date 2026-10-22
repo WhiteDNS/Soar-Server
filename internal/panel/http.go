@@ -230,6 +230,10 @@ func (h *HTTP) serveHTTP(w http.ResponseWriter, r *http.Request) {
 		h.dashboard(w)
 		return
 	}
+	if r.URL.Path == "/api/diagnostics" && r.Method == "GET" {
+		jsonReply(w, 200, map[string]any{"runtime": h.manager.Diagnostics(), "accounting": h.store.AccountingStats(), "host": h.metrics.sample()})
+		return
+	}
 	if h.maintenance(w, r, session) {
 		return
 	}
@@ -249,7 +253,7 @@ func (h *HTTP) serveHTTP(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/octet-stream")
 		w.Header().Set("Content-Disposition", `attachment; filename="soar-panel-backup.db"`)
 		_ = h.store.Audit("backup.exported", "")
-		_ = h.store.Backup(w)
+		_ = h.store.BackupContext(r.Context(), w)
 		return
 	}
 	if r.URL.Path == "/api/settings" {
@@ -367,7 +371,7 @@ func (h *HTTP) dashboard(w http.ResponseWriter) {
 			online++
 		}
 	}
-	jsonReply(w, 200, map[string]any{"accounts": len(list), "states": states, "upload_bytes": up, "download_bytes": down, "active_streams": connected, "accounts_with_streams": online, "dns_received_bytes": h.manager.dnsIn.Load(), "dns_sent_bytes": h.manager.dnsOut.Load(), "uptime_seconds": int64(time.Since(h.manager.started).Seconds()), "host": h.metrics.sample(), "version": Version})
+	jsonReply(w, 200, map[string]any{"accounts": len(list), "states": states, "upload_bytes": up, "download_bytes": down, "active_streams": connected, "accounts_with_streams": online, "dns_received_bytes": h.manager.dnsIn.Load(), "dns_sent_bytes": h.manager.dnsOut.Load(), "uptime_seconds": int64(time.Since(h.manager.started).Seconds()), "host": h.metrics.sample(), "version": Version, "diagnostics": h.manager.Diagnostics(), "accounting": h.store.AccountingStats()})
 }
 func (h *HTTP) settings(w http.ResponseWriter, r *http.Request) {
 	if r.Method == "GET" {
@@ -383,12 +387,15 @@ func (h *HTTP) settings(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(405)
 		return
 	}
-	var in Settings
+	var in struct {
+		Settings
+		ServerStreamLimit *int `json:"server_stream_limit"`
+	}
 	if e := decodeJSON(w, r, &in); e != nil {
 		errorReply(w, 400, e)
 		return
 	}
-	if e := h.store.SaveSettings(in); e != nil {
+	if e := h.store.saveSettings(in.Settings, in.ServerStreamLimit); e != nil {
 		errorReply(w, 400, e)
 		return
 	}
@@ -396,7 +403,12 @@ func (h *HTTP) settings(w http.ResponseWriter, r *http.Request) {
 		errorReply(w, 500, errors.New("saved settings; runtime synchronization failed"))
 		return
 	}
-	jsonReply(w, 200, in)
+	saved, e := h.store.Settings()
+	if e != nil {
+		errorReply(w, 500, errors.New("cannot read saved settings"))
+		return
+	}
+	jsonReply(w, 200, saved)
 }
 func (h *HTTP) clientList(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {

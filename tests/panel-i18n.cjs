@@ -13,6 +13,13 @@ module.exports = async ({page, out, assert}) => {
  await page.getByRole('option',{name:'Active',exact:true}).click();
  assert.equal(await page.locator('#clients-body tr').count(),1);
  await page.locator('#status-filter-trigger').click();await page.getByRole('option',{name:'All statuses',exact:true}).click();
+ await page.locator('#page-clients .new-client').click();
+ assert.equal(await page.getByLabel('Account TCP stream limit',{exact:true}).inputValue(),'0');
+ assert.equal(await page.getByLabel('Soar session limit',{exact:true}).inputValue(),'32768');
+ assert.equal(await page.getByLabel('Cotten session limit',{exact:true}).inputValue(),'65535');
+ assert.match(await page.locator('#soar-session-limit-help').innerText(),/Concurrent Soar tunnel sessions, separate from TCP streams/);
+ assert.match(await page.locator('#cotten-session-limit-help').innerText(),/Concurrent Cotten tunnel sessions, separate from TCP streams/);
+ await page.locator('#client-dialog .close-dialog').first().click();
  await page.screenshot({path:path.join(out,'clients-en-1440.png'),fullPage:true});
  for(const section of ['dashboard','settings','backup','updates','security','events']){
   await page.locator(`nav a[data-page=${section}]`).click();

@@ -50,7 +50,7 @@ func (p ProfileSettings) Validate() error {
 		{"safeQName", p.SafeQName, 101, 253}, {"maxQName", p.MaxQName, p.SafeQName, 253},
 		{"maxAnswer", p.MaxAnswer, 512, 1232}, {"holdMs", p.HoldMs, 100, 1500},
 		{"maxInflight", p.MaxInflight, 8, 1024}, {"maxPathWindow", p.MaxPathWindow, 2, 128},
-		// The panel server currently caps each account at 128 streams.
+		// Preserve the released client profile's supported tuning range.
 		{"maxStreams", p.MaxStreams, 8, 128},
 		{"streamWindowKiB", p.StreamWindowKiB, 64, 1024}, {"sendBufferKiB", p.SendBufferKiB, 32, 1024},
 		{"sessionIdleSeconds", p.SessionIdleSeconds, 15, 110},

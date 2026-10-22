@@ -1,0 +1,3834 @@
+diff --git a/docs/EMBEDDED_SERVER.md b/docs/EMBEDDED_SERVER.md
+index 97e97bd..3cef6bf 100644
+--- a/docs/EMBEDDED_SERVER.md
++++ b/docs/EMBEDDED_SERVER.md
+@@ -20,6 +20,18 @@ should create instances lazily because the protocol's session table has fixed
+ per-instance memory overhead. It does not provide a multi-user database or a
+ capacity guarantee. The standalone CLI retains its existing configuration.
+ 
++`server.Config.MaxActiveSessions` optionally sets the combined native and legacy
++session limit for an account. Zero retains the embedded default of eight;
++explicit values must be 1–65535. Native clients can use at most 65280 session IDs
++and legacy clients 255. This setting changes admission capacity, not the wire
++format or the per-session stream limit, and does not guarantee host capacity.
++
++`server.Config.MaxStreamsPerSession` optionally bounds data streams in each
++session. Zero retains the embedded default of 128; explicit values must be
++1–65535. The control stream (ID zero) is excluded, and existing streams remain
++usable when the limit is reached. Stream state is allocated as streams open.
++The caller owns aggregate egress limits across sessions and accounts.
++
+ `cottendns-go/probe.CheckHTTP` runs the native client against an account and
+ checks HTTPS through the tunnel. It takes credentials in memory, uses private
+ temporary files and a loopback SOCKS listener, and cleans up after cancellation.
+diff --git a/internal/client/transport.go b/internal/client/transport.go
+index a6384a2..6dd1838 100644
+--- a/internal/client/transport.go
++++ b/internal/client/transport.go
+@@ -21,8 +21,10 @@ import (
+ 	"errors"
+ 	"io"
+ 	"net"
++	"os"
+ 	"strconv"
+ 	"strings"
++	"sync"
+ 	"time"
+ )
+ 
+@@ -97,13 +99,12 @@ func (c *Client) newQueryTransport(resolverLabel string) (queryExchanger, error)
+ 	case transportDoH:
+ 		return c.newDoHQueryTransport(resolverLabel)
+ 	case transportDoT:
+-		conn, err := c.dialDoTResolver(resolverLabel, tcpQueryDialTimeout)
+-		if err != nil {
+-			return nil, err
+-		}
+ 		// DoT is the TCP/53 wire format inside TLS, so the framing exchanger is
+-		// reused verbatim — only the dial differs.
+-		return &tcpQueryTransport{conn: conn}, nil
++		// reused verbatim — including its TLS dial when a damaged stream needs
++		// to be replaced before a later probe.
++		return newStreamQueryTransport(func(timeout time.Duration) (net.Conn, error) {
++			return c.dialDoTResolver(resolverLabel, timeout)
++		}, tcpQueryDialTimeout)
+ 	case transportTCP:
+ 		return newTCPQueryTransport(resolverLabel, tcpQueryDialTimeout)
+ 	default:
+@@ -154,20 +155,43 @@ func resolverHostWithPort(resolverLabel string, port int) string {
+ // reused across the many queries a probe sends, so there is no per-query
+ // handshake cost.
+ type tcpQueryTransport struct {
+-	conn net.Conn
++	// exchangeMu keeps this synchronous exchanger's query/reply pairs together;
++	// mu protects connection replacement against concurrent cancellation/Close.
++	// Close never waits for exchangeMu, so it can interrupt an in-flight read.
++	exchangeMu  sync.Mutex
++	mu          sync.Mutex
++	conn        net.Conn
++	dial        func(time.Duration) (net.Conn, error)
++	dialTimeout time.Duration
++	closed      bool
+ }
+ 
+ func newTCPQueryTransport(resolverLabel string, dialTimeout time.Duration) (*tcpQueryTransport, error) {
+-	d := net.Dialer{Timeout: dialTimeout}
+-	conn, err := d.Dial("tcp", resolverLabel)
++	return newStreamQueryTransport(func(timeout time.Duration) (net.Conn, error) {
++		d := net.Dialer{Timeout: timeout}
++		return d.Dial("tcp", resolverLabel)
++	}, dialTimeout)
++}
++
++func newStreamQueryTransport(dial func(time.Duration) (net.Conn, error), dialTimeout time.Duration) (*tcpQueryTransport, error) {
++	conn, err := dial(dialTimeout)
+ 	if err != nil {
+ 		return nil, err
+ 	}
+-	return &tcpQueryTransport{conn: conn}, nil
++	return &tcpQueryTransport{conn: conn, dial: dial, dialTimeout: dialTimeout}, nil
+ }
+ 
+ func (t *tcpQueryTransport) exchange(packet []byte, timeout time.Duration) ([]byte, error) {
+-	if t == nil || t.conn == nil {
++	if t == nil {
++		return nil, net.ErrClosed
++	}
++	deadline := time.Now().Add(timeout)
++	t.exchangeMu.Lock()
++	defer t.exchangeMu.Unlock()
++	t.mu.Lock()
++	closed, conn := t.closed, t.conn
++	t.mu.Unlock()
++	if closed {
+ 		return nil, net.ErrClosed
+ 	}
+ 	if len(packet) < 2 {
+@@ -175,31 +199,88 @@ func (t *tcpQueryTransport) exchange(packet []byte, timeout time.Duration) ([]by
+ 	}
+ 	expectedID := binary.BigEndian.Uint16(packet[:2])
+ 
+-	deadline := time.Now().Add(timeout)
+-	_ = t.conn.SetDeadline(deadline)
++	if conn == nil {
++		if t.dial == nil {
++			return nil, net.ErrClosed
++		}
++		remaining := time.Until(deadline)
++		if remaining <= 0 {
++			return nil, os.ErrDeadlineExceeded
++		}
++		if t.dialTimeout > 0 && remaining > t.dialTimeout {
++			remaining = t.dialTimeout
++		}
++		var err error
++		conn, err = t.dial(remaining)
++		if err != nil {
++			return nil, err
++		}
++		t.mu.Lock()
++		if t.closed {
++			t.mu.Unlock()
++			_ = conn.Close()
++			return nil, net.ErrClosed
++		}
++		t.conn = conn
++		t.mu.Unlock()
++	}
++	if err := conn.SetDeadline(deadline); err != nil {
++		t.discardConnection(conn)
++		return nil, err
++	}
+ 
+-	if err := writeTCPDNSFramed(t.conn, packet); err != nil {
++	if err := writeTCPDNSFramed(conn, packet); err != nil {
++		t.discardConnection(conn)
+ 		return nil, err
+ 	}
+ 
+ 	// TCP is ordered, but tolerate a stray non-matching message defensively.
+ 	for attempts := 0; attempts < 8; attempts++ {
+-		resp, err := readTCPDNSFramed(t.conn)
++		resp, err := readTCPDNSFramed(conn)
+ 		if err != nil {
++			// A timeout may already have consumed a prefix or partial body.
++			// Discard the stream rather than letting the next probe interpret
++			// those remaining bytes as a new DNS frame. The caller decides
++			// whether to retry; that later exchange gets a fresh connection.
++			t.discardConnection(conn)
+ 			return nil, err
+ 		}
+ 		if len(resp) >= 2 && binary.BigEndian.Uint16(resp[:2]) == expectedID {
+ 			return resp, nil
+ 		}
+ 	}
++	t.discardConnection(conn)
+ 	return nil, errors.New("too many mismatched dns responses over tcp")
+ }
+ 
+ func (t *tcpQueryTransport) Close() error {
+-	if t == nil || t.conn == nil {
++	if t == nil {
++		return nil
++	}
++	t.mu.Lock()
++	if t.closed {
++		t.mu.Unlock()
++		return nil
++	}
++	t.closed = true
++	conn := t.conn
++	t.conn = nil
++	t.mu.Unlock()
++	if conn != nil {
++		return conn.Close()
++	}
++	return nil
++}
++
++func (t *tcpQueryTransport) discardConnection(conn net.Conn) error {
++	t.mu.Lock()
++	if t.conn != conn {
++		t.mu.Unlock()
+ 		return nil
+ 	}
+-	return t.conn.Close()
++	t.conn = nil
++	t.mu.Unlock()
++	return conn.Close()
+ }
+ 
+ // writeTCPDNSFramed writes a 2-byte length prefix followed by the DNS message.
+diff --git a/internal/inflight/manager.go b/internal/inflight/manager.go
+index 5289bed..ee2e58b 100644
+--- a/internal/inflight/manager.go
++++ b/internal/inflight/manager.go
+@@ -1,4 +1,4 @@
+-﻿// ==============================================================================
++// ==============================================================================
+ // CottenDNS
+ // Author: tajirax
+ // Github: https://github.com/TaJirax/CottenDns
+@@ -8,6 +8,7 @@
+ package inflight
+ 
+ import (
++	"context"
+ 	"sync"
+ 	"time"
+ )
+@@ -98,7 +99,16 @@ func (m *Manager[T]) Resolve(key string, value T, hasValue bool) {
+ }
+ 
+ func (m *Manager[T]) Wait(entry *Entry[T], timeout time.Duration) (T, bool) {
++	return m.WaitContext(context.Background(), entry, timeout)
++}
++
++// WaitContext stops waiting when this caller leaves without cancelling the
++// shared lookup needed by other callers.
++func (m *Manager[T]) WaitContext(ctx context.Context, entry *Entry[T], timeout time.Duration) (T, bool) {
+ 	var zero T
++	if ctx == nil {
++		ctx = context.Background()
++	}
+ 	if entry == nil {
+ 		return zero, false
+ 	}
+@@ -113,6 +123,8 @@ func (m *Manager[T]) Wait(entry *Entry[T], timeout time.Duration) (T, bool) {
+ 	defer timer.Stop()
+ 
+ 	select {
++	case <-ctx.Done():
++		return zero, false
+ 	case <-entry.ready:
+ 		if !entry.hasValue {
+ 			return zero, true
+diff --git a/internal/udpserver/deferred_session.go b/internal/udpserver/deferred_session.go
+index 37ccafc..7c0c36b 100644
+--- a/internal/udpserver/deferred_session.go
++++ b/internal/udpserver/deferred_session.go
+@@ -23,10 +23,13 @@ type deferredSessionLane struct {
+ }
+ 
+ type deferredSessionTask struct {
+-	lane deferredSessionLane
+-	run  func(context.Context)
++	lane       deferredSessionLane
++	generation uint64
++	run        func(context.Context)
+ }
+ 
++type deferredSessionRun struct{ cancel context.CancelFunc }
++
+ type deferredSessionWorker struct {
+ 	jobs    chan deferredSessionTask
+ 	pending atomic.Int32
+@@ -38,8 +41,10 @@ type deferredSessionProcessor struct {
+ 	workers            []deferredSessionWorker
+ 	mu                 sync.Mutex
+ 	laneWorker         map[deferredSessionLane]int
++	lanePending        map[deferredSessionLane]int32
++	laneGeneration     map[deferredSessionLane]uint64
+ 	cancelled          map[deferredSessionLane]struct{}
+-	running            map[deferredSessionLane]context.CancelFunc
++	running            map[deferredSessionLane]*deferredSessionRun
+ 	sessionPending     map[uint16]int32
+ 	sessionPendingCap  int32
+ 	sessionPressureLog throttledLogState
+@@ -101,8 +106,10 @@ func newDeferredSessionProcessor(workerCount int, queueLimit int, log *logger.Lo
+ 		log:               log,
+ 		workers:           workers,
+ 		laneWorker:        make(map[deferredSessionLane]int, 128),
++		lanePending:       make(map[deferredSessionLane]int32, 128),
++		laneGeneration:    make(map[deferredSessionLane]uint64, 128),
+ 		cancelled:         make(map[deferredSessionLane]struct{}, 128),
+-		running:           make(map[deferredSessionLane]context.CancelFunc, 128),
++		running:           make(map[deferredSessionLane]*deferredSessionRun, 128),
+ 		sessionPending:    make(map[uint16]int32, 64),
+ 		sessionPendingCap: deriveDeferredSessionPendingCap(workerCount, queueLimit),
+ 	}
+@@ -151,6 +158,7 @@ func (p *deferredSessionProcessor) Enqueue(lane deferredSessionLane, run func(co
+ 
+ 	p.mu.Lock()
+ 	delete(p.cancelled, lane)
++	task.generation = p.laneGeneration[lane]
+ 	if !p.canAcceptSessionLocked(lane.sessionID) {
+ 		p.mu.Unlock()
+ 		return false
+@@ -183,21 +191,26 @@ func (p *deferredSessionProcessor) RemoveSession(sessionID uint16) {
+ 		return
+ 	}
+ 	p.mu.Lock()
+-	for lane, cancel := range p.running {
++	for lane, running := range p.running {
+ 		if lane.sessionID == sessionID {
+-			cancel()
++			running.cancel()
+ 			delete(p.running, lane)
+ 		}
+ 	}
+ 	for lane := range p.laneWorker {
+ 		if lane.sessionID == sessionID {
+ 			p.cancelled[lane] = struct{}{}
+-			delete(p.laneWorker, lane)
++			p.laneGeneration[lane]++
+ 		}
+ 	}
+ 	p.compactQueuesLocked(func(lane deferredSessionLane) bool {
+ 		return lane.sessionID == sessionID
+ 	})
++	for lane := range p.laneWorker {
++		if lane.sessionID == sessionID {
++			p.clearIdleLaneLocked(lane)
++		}
++	}
+ 	p.mu.Unlock()
+ }
+ 
+@@ -206,12 +219,11 @@ func (p *deferredSessionProcessor) RemoveLane(lane deferredSessionLane) {
+ 		return
+ 	}
+ 	p.mu.Lock()
+-	if cancel, ok := p.running[lane]; ok {
+-		cancel()
++	if running, ok := p.running[lane]; ok {
++		running.cancel()
+ 		delete(p.running, lane)
+ 	}
+-
+-	delete(p.laneWorker, lane)
++	p.laneGeneration[lane]++
+ 
+ 	if _, ok := p.cancelled[lane]; !ok {
+ 		p.cancelled[lane] = struct{}{}
+@@ -220,6 +232,7 @@ func (p *deferredSessionProcessor) RemoveLane(lane deferredSessionLane) {
+ 	p.compactQueuesLocked(func(candidate deferredSessionLane) bool {
+ 		return candidate == lane
+ 	})
++	p.clearIdleLaneLocked(lane)
+ 
+ 	p.mu.Unlock()
+ }
+@@ -230,7 +243,7 @@ func (p *deferredSessionProcessor) FinalizeLane(lane deferredSessionLane) {
+ 	}
+ 	p.mu.Lock()
+ 
+-	delete(p.laneWorker, lane)
++	p.laneGeneration[lane]++
+ 	if _, ok := p.cancelled[lane]; !ok {
+ 		p.cancelled[lane] = struct{}{}
+ 	}
+@@ -238,6 +251,7 @@ func (p *deferredSessionProcessor) FinalizeLane(lane deferredSessionLane) {
+ 	p.compactQueuesLocked(func(candidate deferredSessionLane) bool {
+ 		return candidate == lane
+ 	})
++	p.clearIdleLaneLocked(lane)
+ 
+ 	p.mu.Unlock()
+ }
+@@ -253,11 +267,11 @@ func (p *deferredSessionProcessor) runDeferredWorker(ctx context.Context, worker
+ 				return
+ 			}
+ 			func() {
+-				taskCtx, cancel := p.beginTaskContext(ctx, task.lane)
++				taskCtx, running := p.beginTaskContext(ctx, task.lane, task.generation)
+ 				defer func() {
+-					cancel()
++					running.cancel()
+ 					worker.pending.Add(-1)
+-					p.finishLane(task.lane, workerIdx)
++					p.finishLane(task.lane, running)
+ 					if recovered := recover(); recovered != nil && p.log != nil {
+ 						p.log.Debugf(
+ 							"Deferred Session Worker Panic, Worker: %d, Session: %d, Stream: %d, Error: %v",
+@@ -274,26 +288,33 @@ func (p *deferredSessionProcessor) runDeferredWorker(ctx context.Context, worker
+ 	}
+ }
+ 
+-func (p *deferredSessionProcessor) beginTaskContext(parent context.Context, lane deferredSessionLane) (context.Context, context.CancelFunc) {
++func (p *deferredSessionProcessor) beginTaskContext(parent context.Context, lane deferredSessionLane, generation ...uint64) (context.Context, *deferredSessionRun) {
+ 	taskCtx, cancel := context.WithCancel(parent)
++	running := &deferredSessionRun{cancel: cancel}
+ 	if p == nil {
+-		return taskCtx, cancel
++		return taskCtx, running
+ 	}
+ 
+ 	p.mu.Lock()
+ 	if _, cancelled := p.cancelled[lane]; cancelled {
+ 		cancel()
+ 		p.mu.Unlock()
+-		return taskCtx, func() {}
++		return taskCtx, running
++	}
++	if len(generation) > 0 && generation[0] != p.laneGeneration[lane] {
++		cancel()
++		p.mu.Unlock()
++		return taskCtx, running
+ 	}
+-	p.running[lane] = cancel
++	p.running[lane] = running
+ 	p.mu.Unlock()
+-	return taskCtx, cancel
++	return taskCtx, running
+ }
+ 
+ func (p *deferredSessionProcessor) enqueueToExistingWorkerLocked(workerIdx int, task deferredSessionTask) bool {
+ 	worker := &p.workers[workerIdx]
+ 	worker.pending.Add(1)
++	p.lanePending[task.lane]++
+ 	p.sessionPending[task.lane.sessionID]++
+ 	select {
+ 	case worker.jobs <- task:
+@@ -301,6 +322,7 @@ func (p *deferredSessionProcessor) enqueueToExistingWorkerLocked(workerIdx int,
+ 		return true
+ 	default:
+ 		worker.pending.Add(-1)
++		p.decrementLanePendingLocked(task.lane)
+ 		p.decrementSessionPendingLocked(task.lane.sessionID)
+ 		return false
+ 	}
+@@ -309,6 +331,7 @@ func (p *deferredSessionProcessor) enqueueToExistingWorkerLocked(workerIdx int,
+ func (p *deferredSessionProcessor) tryEnqueueLocked(workerIdx int, task deferredSessionTask) bool {
+ 	worker := &p.workers[workerIdx]
+ 	worker.pending.Add(1)
++	p.lanePending[task.lane]++
+ 	p.sessionPending[task.lane.sessionID]++
+ 	select {
+ 	case worker.jobs <- task:
+@@ -316,24 +339,22 @@ func (p *deferredSessionProcessor) tryEnqueueLocked(workerIdx int, task deferred
+ 		return true
+ 	default:
+ 		worker.pending.Add(-1)
++		p.decrementLanePendingLocked(task.lane)
+ 		p.decrementSessionPendingLocked(task.lane.sessionID)
+ 		return false
+ 	}
+ }
+ 
+-func (p *deferredSessionProcessor) finishLane(lane deferredSessionLane, workerIdx int) {
++func (p *deferredSessionProcessor) finishLane(lane deferredSessionLane, completed *deferredSessionRun) {
+ 	if p == nil {
+ 		return
+ 	}
+ 	p.mu.Lock()
+-	if mappedWorker, ok := p.laneWorker[lane]; ok && mappedWorker == workerIdx {
+-		delete(p.laneWorker, lane)
+-	}
+-	if cancel, ok := p.running[lane]; ok {
+-		cancel()
++	if running, ok := p.running[lane]; ok && running == completed {
++		running.cancel()
+ 		delete(p.running, lane)
+ 	}
+-	delete(p.cancelled, lane)
++	p.decrementLanePendingLocked(lane)
+ 	p.decrementSessionPendingLocked(lane.sessionID)
+ 	p.mu.Unlock()
+ }
+@@ -359,7 +380,7 @@ func (p *deferredSessionProcessor) compactWorkerLocked(workerIdx int, drop func(
+ 		case task := <-worker.jobs:
+ 			if p.shouldDropTaskLocked(task.lane, drop) {
+ 				worker.pending.Add(-1)
+-				delete(p.laneWorker, task.lane)
++				p.decrementLanePendingLocked(task.lane)
+ 				p.decrementSessionPendingLocked(task.lane.sessionID)
+ 				dropped++
+ 				continue
+@@ -374,6 +395,27 @@ func (p *deferredSessionProcessor) compactWorkerLocked(workerIdx int, drop func(
+ 	}
+ }
+ 
++// The mapping belongs to all queued and running tasks in a lane. Removing it
++// after only one task finishes lets a retry move to another worker and execute
++// concurrently with the original stream's remaining fragments.
++func (p *deferredSessionProcessor) decrementLanePendingLocked(lane deferredSessionLane) {
++	if pending := p.lanePending[lane]; pending > 1 {
++		p.lanePending[lane] = pending - 1
++		return
++	}
++	delete(p.lanePending, lane)
++	p.clearIdleLaneLocked(lane)
++}
++
++func (p *deferredSessionProcessor) clearIdleLaneLocked(lane deferredSessionLane) {
++	if p.lanePending[lane] != 0 {
++		return
++	}
++	delete(p.laneWorker, lane)
++	delete(p.laneGeneration, lane)
++	delete(p.cancelled, lane)
++}
++
+ func (p *deferredSessionProcessor) canAcceptSessionLocked(sessionID uint16) bool {
+ 	if p == nil || sessionID == 0 {
+ 		return true
+diff --git a/internal/udpserver/dns_tunnel.go b/internal/udpserver/dns_tunnel.go
+index 1060976..464e6d5 100644
+--- a/internal/udpserver/dns_tunnel.go
++++ b/internal/udpserver/dns_tunnel.go
+@@ -8,6 +8,7 @@
+ package udpserver
+ 
+ import (
++	"context"
+ 	"encoding/binary"
+ 	"errors"
+ 	"io"
+@@ -68,6 +69,13 @@ func (m *dnsResolveInflightManager) Wait(entry *dnsResolveInflightEntry, timeout
+ 	return m.inner.Wait(entry, timeout)
+ }
+ 
++func (m *dnsResolveInflightManager) WaitContext(ctx context.Context, entry *dnsResolveInflightEntry, timeout time.Duration) ([]byte, bool) {
++	if m == nil {
++		return nil, false
++	}
++	return m.inner.WaitContext(ctx, entry, timeout)
++}
++
+ func cloneInflightBytes(value []byte) []byte {
+ 	if len(value) == 0 {
+ 		return nil
+@@ -75,13 +83,40 @@ func cloneInflightBytes(value []byte) []byte {
+ 	return append([]byte(nil), value...)
+ }
+ 
+-func (s *Server) buildDNSQueryResponsePayload(rawQuery []byte, sessionID uint16, sequenceNum uint16) []byte {
+-	if s.embeddedDNSExchange != nil {
+-		response, err := s.embeddedDNSExchange(rawQuery)
+-		if err != nil {
+-			return nil
++// Queueing consumes the same DNS budget as the lookup itself. Otherwise a
++// resolver outage can leave minutes of stale work that each starts a fresh
++// timeout after the workers recover.
++func (s *Server) deferredDNSRun(run func(context.Context)) func(context.Context) {
++	if run == nil {
++		return nil
++	}
++	timeout := s.cfg.DNSUpstreamTimeout()
++	if timeout <= 0 {
++		timeout = 4 * time.Second
++	}
++	deadline := time.Now().Add(timeout)
++	return func(parent context.Context) {
++		if !time.Now().Before(deadline) {
++			return
++		}
++		ctx, cancel := context.WithDeadline(parent, deadline)
++		defer cancel()
++		if ctx.Err() == nil {
++			run(ctx)
+ 		}
+-		return response
++	}
++}
++
++func (s *Server) buildDNSQueryResponsePayload(rawQuery []byte, sessionID uint16, sequenceNum uint16) []byte {
++	return s.buildDNSQueryResponsePayloadContext(context.Background(), rawQuery, sessionID, sequenceNum)
++}
++
++func (s *Server) buildDNSQueryResponsePayloadContext(ctx context.Context, rawQuery []byte, sessionID uint16, sequenceNum uint16) []byte {
++	if ctx == nil {
++		ctx = context.Background()
++	}
++	if ctx.Err() != nil || !s.dnsAccountAllowed() {
++		return nil
+ 	}
+ 	parsed, err := DnsParser.ParseDNSRequestLite(rawQuery)
+ 	if err != nil {
+@@ -103,7 +138,7 @@ func (s *Server) buildDNSQueryResponsePayload(rawQuery []byte, sessionID uint16,
+ 		return response
+ 	}
+ 
+-	if !DnsParser.IsSupportedTunnelDNSQuery(parsed.FirstQuestion.Type, parsed.FirstQuestion.Class) {
++	if s.embeddedDNSExchange == nil && !DnsParser.IsSupportedTunnelDNSQuery(parsed.FirstQuestion.Type, parsed.FirstQuestion.Class) {
+ 		response, responseErr := DnsParser.BuildNotImplementedResponseFromLite(rawQuery, parsed)
+ 		if responseErr != nil {
+ 			return nil
+@@ -112,8 +147,11 @@ func (s *Server) buildDNSQueryResponsePayload(rawQuery []byte, sessionID uint16,
+ 	}
+ 
+ 	cacheKey := dnscache.BuildKey(parsed.FirstQuestion.Name, parsed.FirstQuestion.Type, parsed.FirstQuestion.Class)
++	if s.embeddedDNSExchange != nil {
++		cacheKey = embeddedDNSQueryKey(rawQuery, cacheKey)
++	}
+ 	now := time.Now()
+-	if cached, ok := s.dnsCache.GetReady(cacheKey, rawQuery, now); ok {
++	if cached, ok := s.cachedDNSResponse(cacheKey, rawQuery, now); ok {
+ 		if s.log != nil {
+ 			s.log.Debugf(
+ 				"🧠 <green>Tunnel DNS Cache Hit</green> <magenta>|</magenta> <blue>Domain</blue>: <cyan>%s</cyan> <magenta>|</magenta> <blue>Type</blue>: <yellow>%s</yellow> <magenta>|</magenta> <blue>Session</blue>: <cyan>%d</cyan> <magenta>|</magenta> <blue>Seq</blue>: <cyan>%d</cyan>",
+@@ -141,10 +179,16 @@ func (s *Server) buildDNSQueryResponsePayload(rawQuery []byte, sessionID uint16,
+ 		if waitTimeout <= 0 {
+ 			waitTimeout = 8 * time.Second
+ 		}
+-		if resolved, ok := s.dnsResolveInflight.Wait(inflightEntry, waitTimeout); ok && len(resolved) != 0 {
+-			return dnscache.PatchResponseForQuery(resolved, rawQuery)
++		if resolved, ok := s.dnsResolveInflight.WaitContext(ctx, inflightEntry, waitTimeout); ok && len(resolved) != 0 {
++			if !s.dnsAccountAllowed() || ctx.Err() != nil {
++				return nil
++			}
++			return patchEmbeddedDNSQuestion(dnscache.PatchResponseForQuery(resolved, rawQuery), rawQuery)
++		}
++		if !s.dnsAccountAllowed() || ctx.Err() != nil {
++			return nil
+ 		}
+-		if cached, ok := s.dnsCache.GetReady(cacheKey, rawQuery, now); ok {
++		if cached, ok := s.cachedDNSResponse(cacheKey, rawQuery, time.Now()); ok {
+ 			return cached
+ 		}
+ 		response, responseErr := DnsParser.BuildServerFailureResponseFromLite(rawQuery, parsed)
+@@ -154,7 +198,12 @@ func (s *Server) buildDNSQueryResponsePayload(rawQuery []byte, sessionID uint16,
+ 		return response
+ 	}
+ 
+-	resolved, err := s.resolveDNSUpstream(rawQuery)
++	var resolved []byte
++	if s.embeddedDNSExchange != nil {
++		resolved, err = s.embeddedDNSExchange(ctx, rawQuery)
++	} else {
++		resolved, err = s.resolveDNSUpstream(rawQuery)
++	}
+ 	if s.log != nil {
+ 		s.log.Debugf(
+ 			"🔎 <green>Tunnel DNS Upstream Lookup</green> <magenta>|</magenta> <blue>Domain</blue>: <cyan>%s</cyan> <magenta>|</magenta> <blue>Type</blue>: <yellow>%s</yellow> <magenta>|</magenta> <blue>Session</blue>: <cyan>%d</cyan> <magenta>|</magenta> <blue>Seq</blue>: <cyan>%d</cyan>",
+@@ -164,8 +213,12 @@ func (s *Server) buildDNSQueryResponsePayload(rawQuery []byte, sessionID uint16,
+ 			sequenceNum,
+ 		)
+ 	}
+-	s.dnsResolveInflight.Resolve(cacheKey, resolved)
++	if !s.dnsAccountAllowed() || ctx.Err() != nil {
++		s.dnsResolveInflight.Resolve(cacheKey, nil)
++		return nil
++	}
+ 	if err != nil || len(resolved) == 0 {
++		s.dnsResolveInflight.Resolve(cacheKey, nil)
+ 		if s.log != nil {
+ 			s.log.Debugf(
+ 				"⚠️ <yellow>Tunnel DNS Upstream Failed</yellow> <magenta>|</magenta> <blue>Domain</blue>: <cyan>%s</cyan> <magenta>|</magenta> <blue>Type</blue>: <yellow>%s</yellow> <magenta>|</magenta> <blue>Session</blue>: <cyan>%d</cyan> <magenta>|</magenta> <blue>Seq</blue>: <cyan>%d</cyan>",
+@@ -182,14 +235,19 @@ func (s *Server) buildDNSQueryResponsePayload(rawQuery []byte, sessionID uint16,
+ 		return response
+ 	}
+ 
+-	s.dnsCache.SetReady(
+-		cacheKey,
+-		parsed.FirstQuestion.Name,
+-		parsed.FirstQuestion.Type,
+-		parsed.FirstQuestion.Class,
+-		resolved,
+-		now,
+-	)
++	if s.embeddedDNSExchange != nil {
++		s.cacheEmbeddedDNSResponse(cacheKey, rawQuery, resolved, parsed.FirstQuestion, time.Now())
++	} else {
++		s.dnsCache.SetReady(
++			cacheKey,
++			parsed.FirstQuestion.Name,
++			parsed.FirstQuestion.Type,
++			parsed.FirstQuestion.Class,
++			resolved,
++			now,
++		)
++	}
++	s.dnsResolveInflight.Resolve(cacheKey, resolved)
+ 	if s.log != nil {
+ 		s.log.Debugf(
+ 			"🌍 <green>Tunnel DNS Resolved Upstream</green> <magenta>|</magenta> <blue>Domain</blue>: <cyan>%s</cyan> <magenta>|</magenta> <blue>Type</blue>: <yellow>%s</yellow> <magenta>|</magenta> <blue>Session</blue>: <cyan>%d</cyan> <magenta>|</magenta> <blue>Seq</blue>: <cyan>%d</cyan> <magenta>|</magenta> <blue>Bytes</blue>: <cyan>%d</cyan>",
+diff --git a/internal/udpserver/embedded.go b/internal/udpserver/embedded.go
+index 270dfae..9f3c0d3 100644
+--- a/internal/udpserver/embedded.go
++++ b/internal/udpserver/embedded.go
+@@ -22,6 +22,13 @@ type EmbeddedConfig struct {
+ 	DialContext func(context.Context, string, string) (net.Conn, error)
+ 	ExchangeDNS func(context.Context, []byte) ([]byte, error)
+ 	Allowed     func() bool
++
++	// MaxActiveSessions bounds live sessions across native and legacy clients.
++	// Zero preserves the embedded default of eight; valid explicit values are 1–65535.
++	MaxActiveSessions int
++	// MaxStreamsPerSession bounds data streams within each tunnel session.
++	// Zero preserves the embedded default of 128; valid explicit values are 1–65535.
++	MaxStreamsPerSession int
+ }
+ 
+ type Embedded struct {
+@@ -38,6 +45,12 @@ func NewEmbedded(parent context.Context, in EmbeddedConfig) (*Embedded, error) {
+ 	if parent == nil || in.Domain == "" || len(in.Domain) > 128 || strings.ContainsAny(in.Domain, " /\\\t\n") || len(in.Key) < 32 || in.DialContext == nil || in.ExchangeDNS == nil || in.Allowed == nil {
+ 		return nil, errors.New("embedded server requires a domain, key and all account-policy hooks")
+ 	}
++	if in.MaxActiveSessions < 0 || in.MaxActiveSessions > maxServerSessionSlots {
++		return nil, errors.New("embedded session limit must be between 1 and 65535, or zero for the default")
++	}
++	if in.MaxStreamsPerSession < 0 || in.MaxStreamsPerSession > 65535 {
++		return nil, errors.New("embedded stream limit must be between 1 and 65535, or zero for the default")
++	}
+ 	codec, err := security.NewCodec(5, in.Key)
+ 	if err != nil {
+ 		return nil, err
+@@ -60,6 +73,12 @@ func NewEmbedded(parent context.Context, in EmbeddedConfig) (*Embedded, error) {
+ 	cfg.TCPListenerEnabled, cfg.UDPIPv6Enabled, cfg.TCPIPv6Enabled = false, false, false
+ 	cfg.MinVPNLabelLength = 1
+ 	cfg.MaxActiveSessions, cfg.MaxStreamsPerSession = 8, 128
++	if in.MaxActiveSessions > 0 {
++		cfg.MaxActiveSessions = in.MaxActiveSessions
++	}
++	if in.MaxStreamsPerSession > 0 {
++		cfg.MaxStreamsPerSession = in.MaxStreamsPerSession
++	}
+ 	cfg.DeferredSessionWorkers, cfg.DeferredSessionQueueLimit = 2, 64
+ 	cfg.SessionOrphanQueueInitialCap, cfg.StreamQueueInitialCapacity = 8, 16
+ 	cfg.DNSFragmentStoreCapacity, cfg.SOCKS5FragmentStoreCapacity = 32, 32
+@@ -71,22 +90,53 @@ func NewEmbedded(parent context.Context, in EmbeddedConfig) (*Embedded, error) {
+ 	cfg.SessionCleanupIntervalSecs = 5
+ 	ctx, cancel := context.WithCancel(parent)
+ 	s := New(cfg, logger.New("Cotten account", "ERROR"), codec)
+-	s.embeddedDialContext = func(_ context.Context, network, address string) (net.Conn, error) {
++	// A slow destination must not serialize all other connection attempts for
++	// a shared account. Keep the previous 128 queued slots and 32 per-session
++	// admissions, while allowing eight independent dials. DNS retains its
++	// separately sized pool above.
++	s.deferredConnectSession = newDeferredSessionProcessor(8, 16, s.log)
++	s.embeddedAllowed = func() bool { return ctx.Err() == nil && in.Allowed() }
++	s.embeddedDialContext = func(caller context.Context, network, address string) (net.Conn, error) {
+ 		if ctx.Err() != nil || !in.Allowed() {
+ 			return nil, net.ErrClosed
+ 		}
+-		dialCtx, stop := context.WithTimeout(ctx, 15*time.Second)
++		if caller == nil {
++			caller = context.Background()
++		}
++		if err := caller.Err(); err != nil {
++			return nil, err
++		}
++		dialCtx, cancelDial := context.WithTimeout(caller, 15*time.Second)
++		defer cancelDial()
++		stop := context.AfterFunc(ctx, cancelDial)
+ 		defer stop()
+ 		return in.DialContext(dialCtx, network, address)
+ 	}
+-	s.dialStreamUpstreamFn = func(network, address string, _ time.Duration) (net.Conn, error) {
+-		return s.embeddedDialContext(ctx, network, address)
++	s.dialStreamUpstreamFn = func(network, address string, timeout time.Duration) (net.Conn, error) {
++		caller := ctx
++		if timeout > 0 {
++			var cancelTimeout context.CancelFunc
++			caller, cancelTimeout = context.WithTimeout(caller, timeout)
++			defer cancelTimeout()
++		}
++		return s.embeddedDialContext(caller, network, address)
+ 	}
+-	s.embeddedDNSExchange = func(raw []byte) ([]byte, error) {
++	s.embeddedDNSExchange = func(caller context.Context, raw []byte) ([]byte, error) {
+ 		if ctx.Err() != nil || !in.Allowed() {
+ 			return nil, net.ErrClosed
+ 		}
+-		return in.ExchangeDNS(ctx, raw)
++		if caller == nil {
++			caller = context.Background()
++		}
++		timeout := s.cfg.DNSUpstreamTimeout()
++		if timeout <= 0 {
++			timeout = 4 * time.Second
++		}
++		lookupCtx, cancelLookup := context.WithTimeout(caller, timeout)
++		defer cancelLookup()
++		stop := context.AfterFunc(ctx, cancelLookup)
++		defer stop()
++		return in.ExchangeDNS(lookupCtx, raw)
+ 	}
+ 	e := &Embedded{s: s, ctx: ctx, cancel: cancel, allowed: in.Allowed}
+ 	s.deferredDNSSession.Start(ctx)
+@@ -96,17 +146,36 @@ func NewEmbedded(parent context.Context, in EmbeddedConfig) (*Embedded, error) {
+ 	return e, nil
+ }
+ 
+-// HandleDNS processes a complete wire-format DNS message over either transport.
++// HandleDNS processes a complete wire-format UDP DNS message.
+ // The caller owns framing, socket limits, queuing and domain-based routing.
+ func (e *Embedded) HandleDNS(query []byte) []byte {
++	return e.handleDNS(query, false)
++}
++
++// HandleDNSTCP preserves the larger response budget of a framed TCP transport.
++func (e *Embedded) HandleDNSTCP(query []byte) []byte {
++	return e.handleDNS(query, true)
++}
++
++func (e *Embedded) handleDNS(query []byte, tcp bool) []byte {
+ 	e.mu.RLock()
+ 	defer e.mu.RUnlock()
+ 	if e.ctx.Err() != nil || len(query) > 65535 || !e.allowed() {
+ 		return nil
+ 	}
++	if tcp {
++		return e.s.safeHandlePacketTCP(query)
++	}
+ 	return e.s.safeHandlePacket(query)
+ }
+ 
++// SessionCount reports live native and legacy sessions for this account.
++func (e *Embedded) SessionCount() int {
++	e.s.sessions.mu.RLock()
++	defer e.s.sessions.mu.RUnlock()
++	return len(e.s.sessions.activeIDs)
++}
++
+ func (e *Embedded) Close() error {
+ 	e.once.Do(func() {
+ 		e.cancel()
+diff --git a/internal/udpserver/embedded_test.go b/internal/udpserver/embedded_test.go
+index fc3301c..8f2a4e9 100644
+--- a/internal/udpserver/embedded_test.go
++++ b/internal/udpserver/embedded_test.go
+@@ -3,11 +3,13 @@ package udpserver
+ import (
+ 	"context"
+ 	"errors"
++	"fmt"
+ 	"net"
+ 	"sync/atomic"
+ 	"testing"
+ 	"time"
+ 
++	"cottendns-go/internal/arq"
+ 	DnsParser "cottendns-go/internal/dnsparser"
+ 	Enums "cottendns-go/internal/enums"
+ 	"cottendns-go/internal/security"
+@@ -53,8 +55,11 @@ func TestEmbeddedIsolationPolicyAndShutdown(t *testing.T) {
+ 		t.Fatal("UDP bypassed policy", err)
+ 	}
+ 	u.Close()
+-	if e.s.buildDNSQueryResponsePayload([]byte("dns"), 1, 1) != nil {
+-		t.Fatal("DNS bypassed policy")
++	dnsQuery := embeddedTestDNSQuery(t, "example.com", 1)
++	dnsResponse := e.s.buildDNSQueryResponsePayload(dnsQuery, 1, 1)
++	parsedDNS, parseErr := DnsParser.ParsePacketLite(dnsResponse)
++	if parseErr != nil || parsedDNS.Header.RCode != 2 {
++		t.Fatal("DNS bypassed policy", parseErr)
+ 	}
+ 	if tcpCalls.Load() != 1 || udpCalls.Load() != 1 || dnsCalls.Load() != 1 {
+ 		t.Fatal("missing egress hooks")
+@@ -81,3 +86,148 @@ func TestEmbeddedRequiresPolicyHooks(t *testing.T) {
+ 		t.Fatal("embedding without account policy was accepted")
+ 	}
+ }
++
++func embeddedSessionLimitConfig(limit int) EmbeddedConfig {
++	return EmbeddedConfig{
++		Domain: "v.example.com", Key: "embedded-account-key-material-000001", MaxActiveSessions: limit,
++		Allowed:     func() bool { return true },
++		DialContext: func(context.Context, string, string) (net.Conn, error) { return nil, net.ErrClosed },
++		ExchangeDNS: func(context.Context, []byte) ([]byte, error) { return nil, net.ErrClosed },
++	}
++}
++
++func TestEmbeddedSessionLimit(t *testing.T) {
++	for _, tt := range []struct {
++		name  string
++		limit int
++		want  int
++	}{
++		{name: "default", want: 8},
++		{name: "minimum", limit: 1, want: 1},
++		{name: "above_previous_limit", limit: 9, want: 9},
++	} {
++		t.Run(tt.name, func(t *testing.T) {
++			in := embeddedSessionLimitConfig(tt.limit)
++			e, err := NewEmbedded(context.Background(), in)
++			if err != nil {
++				t.Fatal(err)
++			}
++			t.Cleanup(func() { e.Close() })
++			codec, err := security.NewCodec(5, in.Key)
++			if err != nil {
++				t.Fatal(err)
++			}
++			initSession := func(n int) VpnProto.Packet {
++				t.Helper()
++				payload := []byte{security.DownstreamEncryptedFlag, 0, 0, 100, 2, 0, 1, 2, 3, byte(n)}
++				query := secureTestQuery(t, codec, Enums.DNS_RECORD_TYPE_TXT, VpnProto.BuildOptions{
++					PacketType: Enums.PACKET_SESSION_INIT, Payload: payload,
++				})
++				packet, err := DnsParser.ExtractEncryptedVPNResponseMatching(e.HandleDNS(query), false, []string{in.Domain}, codec)
++				if err != nil {
++					t.Fatal(err)
++				}
++				return packet
++			}
++			for n := 0; n < tt.want; n++ {
++				if packet := initSession(n); packet.PacketType != Enums.PACKET_SESSION_ACCEPT {
++					t.Fatalf("session %d: packet type = %d, want SESSION_ACCEPT", n+1, packet.PacketType)
++				}
++			}
++			if packet := initSession(tt.want); packet.PacketType != Enums.PACKET_SESSION_BUSY {
++				t.Fatalf("session above cap: packet type = %d, want SESSION_BUSY", packet.PacketType)
++			}
++			if packet := initSession(0); packet.PacketType != Enums.PACKET_SESSION_ACCEPT {
++				t.Fatalf("existing session at cap: packet type = %d, want SESSION_ACCEPT", packet.PacketType)
++			}
++		})
++	}
++}
++
++func TestEmbeddedSessionLimitBounds(t *testing.T) {
++	for _, limit := range []int{-1, 65536} {
++		t.Run(fmt.Sprint(limit), func(t *testing.T) {
++			e, err := NewEmbedded(context.Background(), embeddedSessionLimitConfig(limit))
++			if e != nil {
++				e.Close()
++			}
++			if err == nil {
++				t.Fatal("invalid session limit accepted")
++			}
++		})
++	}
++	e, err := NewEmbedded(context.Background(), embeddedSessionLimitConfig(65535))
++	if err != nil {
++		t.Fatalf("maximum session limit rejected: %v", err)
++	}
++	t.Cleanup(func() { e.Close() })
++	if got := e.s.sessions.maxActiveSessions; got != 65535 {
++		t.Fatalf("maximum session limit = %d, want 65535", got)
++	}
++}
++
++func TestEmbeddedStreamLimit(t *testing.T) {
++	for _, tt := range []struct {
++		name  string
++		limit int
++		want  int
++	}{
++		{name: "default", want: 128},
++		{name: "minimum", limit: 1, want: 1},
++		{name: "above_previous_limit", limit: 129, want: 129},
++	} {
++		t.Run(tt.name, func(t *testing.T) {
++			in := embeddedSessionLimitConfig(0)
++			in.MaxStreamsPerSession = tt.limit
++			e, err := NewEmbedded(context.Background(), in)
++			if err != nil {
++				t.Fatal(err)
++			}
++			t.Cleanup(func() { e.Close() })
++			record, _, err := e.s.sessions.findOrCreate(legacyInitPayload(1), 0, 0, 8, false)
++			if err != nil || record == nil {
++				t.Fatal("session creation failed", err)
++			}
++			cfg := arq.Config{IsVirtual: true}
++			for n := 1; n <= tt.want; n++ {
++				if stream := record.getOrCreateStream(uint16(n), cfg, nil, nil); stream == nil {
++					t.Fatalf("stream %d rejected within cap %d", n, tt.want)
++				}
++			}
++			if stream := record.getOrCreateStream(uint16(tt.want+1), cfg, nil, nil); stream != nil {
++				t.Fatal("stream above configured cap accepted")
++			}
++			for _, id := range []uint16{0, 1} {
++				if stream := record.getOrCreateStream(id, cfg, nil, nil); stream == nil {
++					t.Fatalf("existing stream %d blocked at cap", id)
++				}
++			}
++		})
++	}
++}
++
++func TestEmbeddedStreamLimitBounds(t *testing.T) {
++	for _, limit := range []int{-1, 65536} {
++		t.Run(fmt.Sprint(limit), func(t *testing.T) {
++			in := embeddedSessionLimitConfig(0)
++			in.MaxStreamsPerSession = limit
++			e, err := NewEmbedded(context.Background(), in)
++			if e != nil {
++				e.Close()
++			}
++			if err == nil {
++				t.Fatal("invalid stream limit accepted")
++			}
++		})
++	}
++	in := embeddedSessionLimitConfig(0)
++	in.MaxStreamsPerSession = 65535
++	e, err := NewEmbedded(context.Background(), in)
++	if err != nil {
++		t.Fatalf("maximum stream limit rejected: %v", err)
++	}
++	t.Cleanup(func() { e.Close() })
++	if got := e.s.sessions.maxStreamsPerSession; got != 65535 {
++		t.Fatalf("maximum stream limit = %d, want 65535", got)
++	}
++}
+diff --git a/internal/udpserver/server.go b/internal/udpserver/server.go
+index 2705fb9..c6c1b02 100644
+--- a/internal/udpserver/server.go
++++ b/internal/udpserver/server.go
+@@ -44,7 +44,10 @@ var preSessionPacketTypes = buildPreSessionPacketTypes()
+ 
+ type Server struct {
+ 	embeddedDialContext      func(context.Context, string, string) (net.Conn, error)
+-	embeddedDNSExchange      func([]byte) ([]byte, error)
++	embeddedDNSExchange      func(context.Context, []byte) ([]byte, error)
++	embeddedAllowed          func() bool
++	embeddedDNSCacheMu       sync.Mutex
++	embeddedDNSCache         map[string]embeddedDNSCacheEntry
+ 	cfg                      config.ServerConfig
+ 	log                      *logger.Logger
+ 	codec                    *security.Codec
+@@ -564,7 +567,7 @@ func splitDeferredSessionPools(totalWorkers int, totalQueue int) (dnsWorkers int
+ 
+ 	// DNS queries use a dedicated lightweight pool so connect-heavy work keeps
+ 	// the full user-configured deferred capacity.
+-	dnsWorkers = 1
++	dnsWorkers = min(max(totalWorkers, 2), 8)
+ 	connectWorkers = totalWorkers
+ 
+ 	connectQueue = totalQueue
+diff --git a/internal/udpserver/server_deferred.go b/internal/udpserver/server_deferred.go
+index b2d3474..1e99b0d 100644
+--- a/internal/udpserver/server_deferred.go
++++ b/internal/udpserver/server_deferred.go
+@@ -38,6 +38,55 @@ func (s *Server) deferredConnectAttemptTimeout() time.Duration {
+ 	return timeout
+ }
+ 
++// Include admission queue time in the existing connection budget. Starting a
++// new full-length dial after a long queue wait strands clients that already
++// received SYN_ACK and are waiting for the reliable connect result.
++func (s *Server) deferredConnectRun(packet VpnProto.Packet, run func(context.Context)) func(context.Context) {
++	deadline := time.Now().Add(s.deferredConnectAttemptTimeout())
++	return func(parent context.Context) {
++		if parent.Err() != nil {
++			return
++		}
++		ctx, cancel := context.WithDeadline(parent, deadline)
++		defer cancel()
++		if ctx.Err() != nil {
++			if parent.Err() == nil && errors.Is(ctx.Err(), context.DeadlineExceeded) {
++				s.rejectExpiredDeferredConnect(packet)
++			}
++			return
++		}
++		run(ctx)
++		// The deadline can expire between the admission check and the task's
++		// own initial cancellation check. Do not leave that narrow race silent.
++		if parent.Err() == nil && errors.Is(ctx.Err(), context.DeadlineExceeded) && s.isDeferredPacketStillTracked(packet) {
++			s.rejectExpiredDeferredConnect(packet)
++		}
++	}
++}
++
++func (s *Server) rejectExpiredDeferredConnect(packet VpnProto.Packet) {
++	if !s.shouldExecuteDeferredPacket(packet) {
++		return
++	}
++	record, ok := s.sessions.Get(packet.SessionID)
++	if !ok {
++		return
++	}
++	stream := record.getOrCreateStream(packet.StreamID, s.streamARQConfig(record.DownloadCompression), nil, s.log)
++	if stream == nil || stream.ARQ == nil {
++		record.enqueueOrphanReset(Enums.PACKET_STREAM_RST, packet.StreamID, 0)
++		s.finalizeStreamArtifacts(packet.SessionID, packet.StreamID)
++		return
++	}
++	packetType := uint8(Enums.PACKET_STREAM_CONNECT_FAIL)
++	if packet.PacketType == Enums.PACKET_SOCKS5_SYN {
++		packetType = Enums.PACKET_SOCKS5_TTL_EXPIRED
++	}
++	stream.ARQ.SendControlPacketWithTTL(packetType, packet.SequenceNum, 0, 0, nil,
++		Enums.DefaultPacketPriority(packetType), true, nil, s.cfg.StreamFailurePacketTTL())
++	s.finalizeStreamArtifacts(packet.SessionID, packet.StreamID)
++}
++
+ func (s *Server) processDeferredDNSQuery(ctx context.Context, sessionID uint16, sessionCookie uint8, sequenceNum uint16, downloadCompression uint8, downloadMTUBytes int, assembledQuery []byte) {
+ 	if ctx != nil && ctx.Err() != nil {
+ 		return
+@@ -50,7 +99,7 @@ func (s *Server) processDeferredDNSQuery(ctx context.Context, sessionID uint16,
+ 		return
+ 	}
+ 
+-	rawResponse := s.buildDNSQueryResponsePayload(assembledQuery, sessionID, sequenceNum)
++	rawResponse := s.buildDNSQueryResponsePayloadContext(ctx, assembledQuery, sessionID, sequenceNum)
+ 	if len(rawResponse) == 0 {
+ 		return
+ 	}
+diff --git a/internal/udpserver/server_doh.go b/internal/udpserver/server_doh.go
+index f910ca2..e944737 100644
+--- a/internal/udpserver/server_doh.go
++++ b/internal/udpserver/server_doh.go
+@@ -204,7 +204,7 @@ func (s *Server) handleDoHRequest(w http.ResponseWriter, r *http.Request, maxMes
+ 		return
+ 	}
+ 
+-	response := s.safeHandlePacket(query)
++	response := s.safeHandlePacketTCP(query)
+ 	if len(response) == 0 {
+ 		// No tunnel answer (e.g. a keepalive or an unrecognized query). Signal a
+ 		// transient upstream failure so the client falls back rather than caching.
+diff --git a/internal/udpserver/server_ingress.go b/internal/udpserver/server_ingress.go
+index e85008a..50f4896 100644
+--- a/internal/udpserver/server_ingress.go
++++ b/internal/udpserver/server_ingress.go
+@@ -18,7 +18,7 @@ import (
+ 	VpnProto "cottendns-go/internal/vpnproto"
+ )
+ 
+-func (s *Server) handlePacket(packet []byte) []byte {
++func (s *Server) handlePacket(packet []byte, tcp ...bool) []byte {
+ 	parsed, err := DnsParser.ParseDNSRequestLite(packet)
+ 	if err != nil {
+ 		if errors.Is(err, DnsParser.ErrNotDNSRequest) || errors.Is(err, DnsParser.ErrPacketTooShort) {
+@@ -34,7 +34,7 @@ func (s *Server) handlePacket(packet []byte) []byte {
+ 
+ 	decision := s.domainMatcher.Match(parsed)
+ 	if decision.Action == domainMatcher.ActionProcess {
+-		response := s.handleTunnelCandidate(packet, parsed, decision)
++		response := s.handleTunnelCandidate(packet, parsed, decision, tcp...)
+ 		if response != nil {
+ 			return response
+ 		}
+@@ -49,7 +49,7 @@ func (s *Server) handlePacket(packet []byte) []byte {
+ 	return s.buildNoDataResponseLiteLogged(packet, parsed, "domain-match-no-data")
+ }
+ 
+-func (s *Server) handleTunnelCandidate(packet []byte, parsed DnsParser.LitePacket, decision domainMatcher.Decision) []byte {
++func (s *Server) handleTunnelCandidate(packet []byte, parsed DnsParser.LitePacket, decision domainMatcher.Decision, tcp ...bool) []byte {
+ 	// Encryption-method auto-detection: the upstream frame is fully encrypted, so
+ 	// the client's method is discovered by trying each candidate codec. s.codecs
+ 	// is pre-ordered AEAD-first (see SetCodecSet), so iterating from index 0 tries
+@@ -66,7 +66,7 @@ func (s *Server) handleTunnelCandidate(packet []byte, parsed DnsParser.LitePacke
+ 	if codecIdx != startIdx {
+ 		s.preferredCodec.Store(int32(codecIdx))
+ 	}
+-	return s.handleDecodedTunnelPacket(packet, parsed, decision, vpnPacket)
++	return s.handleDecodedTunnelPacket(packet, parsed, decision, vpnPacket, tcp...)
+ }
+ 
+ func (s *Server) handlePreparedIngress(packet []byte, prepared preparedIngress) []byte {
+@@ -81,13 +81,13 @@ func (s *Server) handlePreparedIngress(packet []byte, prepared preparedIngress)
+ 	return s.handleDecodedTunnelPacket(packet, prepared.parsed, prepared.decision, vpnPacket)
+ }
+ 
+-func (s *Server) handleDecodedTunnelPacket(packet []byte, parsed DnsParser.LitePacket, decision domainMatcher.Decision, vpnPacket VpnProto.Packet) []byte {
++func (s *Server) handleDecodedTunnelPacket(packet []byte, parsed DnsParser.LitePacket, decision domainMatcher.Decision, vpnPacket VpnProto.Packet, tcp ...bool) []byte {
+ 	return s.handleReplayProtectedPacket(packet, parsed, decision, vpnPacket, func() []byte {
+-		return s.handleNewDecodedTunnelPacket(packet, parsed, decision, vpnPacket)
++		return s.handleNewDecodedTunnelPacket(packet, parsed, decision, vpnPacket, tcp...)
+ 	})
+ }
+ 
+-func (s *Server) handleNewDecodedTunnelPacket(packet []byte, parsed DnsParser.LitePacket, decision domainMatcher.Decision, vpnPacket VpnProto.Packet) []byte {
++func (s *Server) handleNewDecodedTunnelPacket(packet []byte, parsed DnsParser.LitePacket, decision domainMatcher.Decision, vpnPacket VpnProto.Packet, tcp ...bool) []byte {
+ 
+ 	if vpnPacket.PacketType == Enums.PACKET_SESSION_CLOSE {
+ 		s.handleSessionCloseNotice(vpnPacket, time.Now())
+@@ -104,7 +104,7 @@ func (s *Server) handleNewDecodedTunnelPacket(packet []byte, parsed DnsParser.Li
+ 			return s.buildNoDataResponseLiteLogged(packet, parsed, fmt.Sprintf("post-session-unhandled-%s", Enums.PacketTypeName(vpnPacket.PacketType)))
+ 		}
+ 
+-		return s.serveQueuedOrPong(packet, decision.RequestName, validation.record, time.Now())
++		return s.serveQueuedOrPong(packet, decision.RequestName, validation.record, time.Now(), tcp...)
+ 	}
+ 
+ 	switch vpnPacket.PacketType {
+@@ -113,7 +113,7 @@ func (s *Server) handleNewDecodedTunnelPacket(packet []byte, parsed DnsParser.Li
+ 	case Enums.PACKET_MTU_DOWN_REQ:
+ 		return s.handleMTUDownRequest(packet, parsed, decision, vpnPacket)
+ 	case Enums.PACKET_SESSION_INIT:
+-		return s.handleSessionInitRequest(packet, decision, vpnPacket)
++		return s.handleSessionInitRequest(packet, decision, vpnPacket, tcp...)
+ 	default:
+ 		return s.buildNoDataResponseLiteLogged(packet, parsed, fmt.Sprintf("pre-session-unhandled-%s", Enums.PacketTypeName(vpnPacket.PacketType)))
+ 	}
+diff --git a/internal/udpserver/server_postsession.go b/internal/udpserver/server_postsession.go
+index 6ef531a..0841a42 100644
+--- a/internal/udpserver/server_postsession.go
++++ b/internal/udpserver/server_postsession.go
+@@ -1,4 +1,4 @@
+-﻿// ==============================================================================
++// ==============================================================================
+ // CottenDNS
+ // Author: tajirax
+ // Github: https://github.com/TaJirax/CottenDns
+@@ -465,6 +465,9 @@ func (s *Server) dispatchDeferredSessionPacketTracked(vpnPacket VpnProto.Packet,
+ 	if !s.tryBeginDeferredPacket(vpnPacket) {
+ 		return deferredDispatchAlreadyPending
+ 	}
++	if vpnPacket.PacketType == Enums.PACKET_STREAM_SYN || vpnPacket.PacketType == Enums.PACKET_SOCKS5_SYN {
++		run = s.deferredConnectRun(vpnPacket, run)
++	}
+ 
+ 	wrappedRun := func(ctx context.Context) {
+ 		defer s.finishDeferredPacket(vpnPacket)
+diff --git a/internal/udpserver/server_runtime.go b/internal/udpserver/server_runtime.go
+index 9b9a527..f96b5f0 100644
+--- a/internal/udpserver/server_runtime.go
++++ b/internal/udpserver/server_runtime.go
+@@ -16,6 +16,7 @@ import (
+ 	"sync/atomic"
+ 	"time"
+ 
++	DnsParser "cottendns-go/internal/dnsparser"
+ 	Enums "cottendns-go/internal/enums"
+ 	"cottendns-go/internal/logger"
+ )
+@@ -424,6 +425,14 @@ func (s *Server) processIngressRequest(req request, workerID int) {
+ }
+ 
+ func (s *Server) safeHandlePacket(packet []byte) (response []byte) {
++	return s.safeHandlePacketTransport(packet, false)
++}
++
++func (s *Server) safeHandlePacketTCP(packet []byte) []byte {
++	return s.safeHandlePacketTransport(packet, true)
++}
++
++func (s *Server) safeHandlePacketTransport(packet []byte, tcp bool) (response []byte) {
+ 	defer func() {
+ 		if recovered := recover(); recovered != nil {
+ 			if s.log != nil {
+@@ -436,7 +445,11 @@ func (s *Server) safeHandlePacket(packet []byte) (response []byte) {
+ 		}
+ 	}()
+ 
+-	return markAuthoritative(s.handlePacket(packet))
++	response = s.handlePacket(packet, tcp)
++	if !tcp {
++		response = DnsParser.BoundUDPResponse(packet, response)
++	}
++	return markAuthoritative(response)
+ }
+ 
+ func (s *Server) safeHandlePreparedIngress(packet []byte, prepared preparedIngress) (response []byte) {
+@@ -448,7 +461,7 @@ func (s *Server) safeHandlePreparedIngress(packet []byte, prepared preparedIngre
+ 			response = nil
+ 		}
+ 	}()
+-	return s.handlePreparedIngress(packet, prepared)
++	return DnsParser.BoundUDPResponse(packet, s.handlePreparedIngress(packet, prepared))
+ }
+ 
+ func (s *Server) onDrop(addr *net.UDPAddr, queueLen int, queueCap int) {
+diff --git a/internal/udpserver/server_session.go b/internal/udpserver/server_session.go
+index 923ff47..bb7368f 100644
+--- a/internal/udpserver/server_session.go
++++ b/internal/udpserver/server_session.go
+@@ -20,6 +20,7 @@ import (
+ 	DnsParser "cottendns-go/internal/dnsparser"
+ 	domainMatcher "cottendns-go/internal/domainmatcher"
+ 	Enums "cottendns-go/internal/enums"
++	"cottendns-go/internal/fec"
+ 	"cottendns-go/internal/security"
+ 	VpnProto "cottendns-go/internal/vpnproto"
+ )
+@@ -342,7 +343,7 @@ func (s *Server) finalizeStreamArtifacts(sessionID uint16, streamID uint16) {
+ 	s.removeSOCKS5SynFragmentsForStream(sessionID, streamID)
+ }
+ 
+-func (s *Server) serveQueuedOrPong(questionPacket []byte, requestName string, record *sessionRuntimeView, now time.Time) []byte {
++func (s *Server) serveQueuedOrPong(questionPacket []byte, requestName string, record *sessionRuntimeView, now time.Time, tcp ...bool) []byte {
+ 	if record == nil {
+ 		return nil
+ 	}
+@@ -352,16 +353,22 @@ func (s *Server) serveQueuedOrPong(questionPacket []byte, requestName string, re
+ 	// Only hand this query what its record type can carry: anything larger would
+ 	// fall back to a TXT answer the resolver strips, losing it until an ARQ
+ 	// retransmit. It stays queued for the next TXT/NULL/HTTPS/AAAA query instead.
+-	capacity := DnsParser.MatchingFrameCapacity(questionPacket, s.tunnelBaseDomain(requestName), s.cfg.ARecordDataDelivery, s.cfg.AAAARecordDataDelivery)
+-	if capacity != dnsResponseUnlimited {
+-		capacity -= maxVPNFrameHeaderLen
+-		if record.ResponseMode&security.DownstreamEncryptedFlag != 0 {
+-			capacity -= record.Codec.CiphertextOverhead()
+-		}
++	capacity := s.responsePayloadCapacity(questionPacket, s.tunnelBaseDomain(requestName), record.ResponseMode, record.Codec, isTCPResponse(tcp))
++	if s.resetBudgetStalledSession(questionPacket, requestName, record, capacity, now, isTCPResponse(tcp)) {
++		return s.buildInvalidSessionErrorResponse(questionPacket, requestName, record.ID, record.ResponseMode, record.LegacySessionID, record.Codec)
+ 	}
+ 
+-	if pkt, ok := s.dequeueSessionResponse(sessionID, now, capacity); ok {
+-		return s.buildSessionVPNResponse(questionPacket, requestName, record, *pkt)
++	var blocked bool
++	pkt, ok := s.dequeueSessionResponse(sessionID, now, capacity, &blocked)
++	if blocked {
++		s.noteBudgetBlocked(sessionID, capacity, now)
++	}
++	if ok {
++		response := s.buildSessionVPNResponse(questionPacket, requestName, record, *pkt)
++		if len(response) > 0 {
++			s.noteBudgetDelivered(sessionID, len(pkt.Payload))
++		}
++		return response
+ 	}
+ 
+ 	payload := s.nextPongPayload()
+@@ -382,13 +389,21 @@ const (
+ 
+ // dequeueSessionResponse pops the next packet to send. capacity is the largest
+ // payload the answering record type can carry; only packets that fit are taken.
+-func (s *Server) dequeueSessionResponse(sessionID uint16, now time.Time, capacity int) (*VpnProto.Packet, bool) {
++func (s *Server) dequeueSessionResponse(sessionID uint16, now time.Time, capacity int, blocked ...*bool) (*VpnProto.Packet, bool) {
+ 	record, ok := s.sessions.Get(sessionID)
+ 	if !ok {
+ 		return nil, false
+ 	}
+ 	limited := capacity < dnsResponseUnlimited
+-	fits := func(p *serverStreamTXPacket) bool { return len(p.Payload) <= capacity }
++	fits := func(p *serverStreamTXPacket) bool {
++		if len(p.Payload) <= capacity {
++			return true
++		}
++		if len(blocked) > 0 && blocked[0] != nil {
++			*blocked[0] = true
++		}
++		return false
++	}
+ 
+ 	record.mu.Lock()
+ 	if dup := record.LastPackedControlBlock; dup == nil || len(dup.Payload) <= capacity {
+@@ -443,7 +458,9 @@ func (s *Server) dequeueSessionResponse(sessionID uint16, now time.Time, capacit
+ 		var selectedStreamID uint16
+ 
+ 		if id == -1 {
+-			p, _, popOk := record.OrphanQueue.Pop(func(p VpnProto.Packet) uint64 {
++			p, popOk := record.OrphanQueue.PopAnyIf(5, func(p VpnProto.Packet) bool {
++				return fits(&serverStreamTXPacket{Payload: p.Payload})
++			}, func(p VpnProto.Packet) uint64 {
+ 				return Enums.PacketTypeStreamKey(p.StreamID, p.PacketType)
+ 			})
+ 			if popOk {
+@@ -468,7 +485,7 @@ func (s *Server) dequeueSessionResponse(sessionID uint16, now time.Time, capacit
+ 				record.deactivateStream(uint16(id))
+ 				continue
+ 			}
+-			if limited {
++			if limited && (!fecActive || capacity < record.DownloadMTUBytes+fec.ShardHeaderSize+VpnProto.FECUnitHeaderSize+2) {
+ 				// Small carrier: take the highest-priority packet that fits
+ 				// (ACKs and control first, as usual) and bypass FEC, whose
+ 				// shards are data-sized. ARQ still covers anything left queued.
+@@ -821,6 +838,9 @@ func (s *Server) nextUnknownInvalidDropMode(packet VpnProto.Packet) uint8 {
+ }
+ 
+ func deferredSessionLaneForPacket(packet VpnProto.Packet) deferredSessionLane {
++	if packet.PacketType == Enums.PACKET_DNS_QUERY_REQ {
++		return deferredSessionLane{sessionID: packet.SessionID, streamID: packet.SequenceNum}
++	}
+ 	return deferredSessionLane{
+ 		sessionID: packet.SessionID,
+ 		streamID:  packet.StreamID,
+@@ -846,6 +866,7 @@ func (s *Server) dispatchDeferredSessionPacket(packet VpnProto.Packet, run func(
+ 	switch packet.PacketType {
+ 	case Enums.PACKET_DNS_QUERY_REQ:
+ 		processor = s.deferredDNSSession
++		run = s.deferredDNSRun(run)
+ 	case Enums.PACKET_STREAM_SYN, Enums.PACKET_SOCKS5_SYN:
+ 		processor = s.deferredConnectSession
+ 	default:
+@@ -869,7 +890,7 @@ func buildPreSessionPacketTypes() [256]bool {
+ 	return values
+ }
+ 
+-func (s *Server) handleSessionInitRequest(questionPacket []byte, decision domainMatcher.Decision, vpnPacket VpnProto.Packet) []byte {
++func (s *Server) handleSessionInitRequest(questionPacket []byte, decision domainMatcher.Decision, vpnPacket VpnProto.Packet, tcp ...bool) []byte {
+ 	if vpnPacket.SessionID != 0 || len(vpnPacket.Payload) != sessionInitDataSize {
+ 		return nil
+ 	}
+@@ -878,12 +899,20 @@ func (s *Server) handleSessionInitRequest(questionPacket []byte, decision domain
+ 	resolvedUpload := resolveCompressionType(requestedUpload, s.uploadCompressionMask)
+ 	resolvedDownload := resolveCompressionType(requestedDownload, s.downloadCompressionMask)
+ 
+-	record, reused, err := s.sessions.findOrCreate(
++	downloadLimit := 0
++	if !isTCPResponse(tcp) {
++		downloadLimit = s.responsePayloadCapacity(questionPacket, decision.BaseDomain, vpnPacket.Payload[0], vpnPacket.IngressCodec, false, true)
++		if downloadLimit < minSessionMTU {
++			return nil
++		}
++	}
++	record, reused, err := s.sessions.findOrCreateWithDownloadLimit(
+ 		vpnPacket.Payload,
+ 		resolvedUpload,
+ 		resolvedDownload,
+ 		s.cfg.MaxPacketsPerBatch,
+ 		vpnPacket.LegacySessionID,
++		downloadLimit,
+ 		vpnPacket.IngressCodec,
+ 	)
+ 	if err != nil {
+@@ -902,6 +931,13 @@ func (s *Server) handleSessionInitRequest(questionPacket []byte, decision domain
+ 	if record == nil {
+ 		return nil
+ 	}
++	policy := s.clientPolicy
++	if !isTCPResponse(tcp) {
++		capacity := min(downloadLimit, record.DownloadMTUBytes)
++		if policy.MaxDownloadMTU == 0 || policy.MaxDownloadMTU > capacity {
++			policy.MaxDownloadMTU = capacity
++		}
++	}
+ 	record.streamCleanup = s.cleanupStreamArtifacts
+ 
+ 	if !reused && s.log != nil {
+@@ -927,7 +963,7 @@ func (s *Server) handleSessionInitRequest(questionPacket []byte, decision domain
+ 		record.Cookie,
+ 		compression.PackPair(record.UploadCompression, record.DownloadCompression),
+ 		record.VerifyCode,
+-		s.clientPolicy,
++		policy,
+ 		record.LegacySessionID,
+ 	)
+ 
+diff --git a/internal/udpserver/server_tcp.go b/internal/udpserver/server_tcp.go
+index db97f8f..aebe6ad 100644
+--- a/internal/udpserver/server_tcp.go
++++ b/internal/udpserver/server_tcp.go
+@@ -191,7 +191,7 @@ func (s *Server) serveDNSOverStream(ctx context.Context, ln net.Listener, transp
+ // handleTCPConn services one TCP connection using the server's packet handler.
+ func (s *Server) handleTCPConn(ctx context.Context, conn net.Conn) {
+ 	defer conn.Close()
+-	serveTCPDNSMessagesWithOptions(ctx, conn, s.safeHandlePacket, s.tcpServerOptions())
++	serveTCPDNSMessagesWithOptions(ctx, conn, s.safeHandlePacketTCP, s.tcpServerOptions())
+ }
+ 
+ // serveTCPDNSMessages reads a sequence of RFC 1035 §4.2.2 length-prefixed DNS
+diff --git a/internal/udpserver/session.go b/internal/udpserver/session.go
+index 05de460..341195c 100644
+--- a/internal/udpserver/session.go
++++ b/internal/udpserver/session.go
+@@ -68,6 +68,8 @@ type sessionRecord struct {
+ 	reuseUntilUnixNano                  int64
+ 	lastActivityUnixNano                int64
+ 	lastDeferredCleanupActivityUnixNano int64
++	udpBudgetBlockedSince               time.Time // guarded by mu
++	udpBudgetBlockedCapacity            int       // guarded by mu
+ 
+ 	// New fields for ARQ refactor
+ 	Streams                         map[uint16]*Stream_server
+@@ -297,6 +299,10 @@ func newSessionStore(orphanQueueCap int, streamQueueCap int, options ...any) *se
+ }
+ 
+ func (s *sessionStore) findOrCreate(payload []byte, uploadCompressionType uint8, downloadCompressionType uint8, maxPacketsPerBatch int, legacy bool, codecs ...*security.Codec) (*sessionRecord, bool, error) {
++	return s.findOrCreateWithDownloadLimit(payload, uploadCompressionType, downloadCompressionType, maxPacketsPerBatch, legacy, 0, codecs...)
++}
++
++func (s *sessionStore) findOrCreateWithDownloadLimit(payload []byte, uploadCompressionType uint8, downloadCompressionType uint8, maxPacketsPerBatch int, legacy bool, downloadLimit int, codecs ...*security.Codec) (*sessionRecord, bool, error) {
+ 	if len(payload) != sessionInitDataSize || !isValidSessionResponseMode(payload[0]) {
+ 		return nil, false, nil
+ 	}
+@@ -363,12 +369,16 @@ func (s *sessionStore) findOrCreate(payload []byte, uploadCompressionType uint8,
+ 	record.setLastActivityUnixNano(nowUnixNano)
+ 	record.UploadCompression = uploadCompressionType
+ 	record.DownloadCompression = downloadCompressionType
++	maxDownload := s.maxClientDownloadMTU
++	if downloadLimit > 0 && (maxDownload <= 0 || downloadLimit < maxDownload) {
++		maxDownload = downloadLimit
++	}
+ 	record.applyMTUFromSessionInit(
+ 		binary.BigEndian.Uint16(payload[2:4]),
+ 		binary.BigEndian.Uint16(payload[4:6]),
+ 		maxPacketsPerBatch,
+ 		s.maxClientUploadMTU,
+-		s.maxClientDownloadMTU,
++		maxDownload,
+ 	)
+ 	copy(record.VerifyCode[:], payload[6:10])
+ 	record.Cookie = s.randomCookieLocked()
+diff --git a/internal/udpserver/socks5_upstream.go b/internal/udpserver/socks5_upstream.go
+index 356fc39..3f5874a 100644
+--- a/internal/udpserver/socks5_upstream.go
++++ b/internal/udpserver/socks5_upstream.go
+@@ -1,4 +1,4 @@
+-﻿// ==============================================================================
++// ==============================================================================
+ // CottenDNS
+ // Author: tajirax
+ // Github: https://github.com/TaJirax/CottenDns
+@@ -127,6 +127,9 @@ func (s *Server) dialTCPTarget(address string) (net.Conn, error) {
+ }
+ 
+ func (s *Server) dialTCPTargetContext(ctx context.Context, address string) (net.Conn, error) {
++	if ctx == nil {
++		ctx = context.Background()
++	}
+ 	dialFn := s.dialStreamUpstreamFn
+ 	timeout := s.socksConnectTimeout
+ 	if timeout <= 0 {
+@@ -139,6 +142,14 @@ func (s *Server) dialTCPTargetContext(ctx context.Context, address string) (net.
+ 		}
+ 	}
+ 	startedAt := logger.NowUnixNano()
++	if s.embeddedDialContext != nil {
++		if timeout > 0 {
++			var cancel context.CancelFunc
++			ctx, cancel = context.WithTimeout(ctx, timeout)
++			defer cancel()
++		}
++		return s.embeddedDialContext(ctx, "tcp", address)
++	}
+ 
+ 	if dialFn == nil {
+ 		dialer := net.Dialer{Timeout: timeout}
+diff --git a/internal/udpserver/stream_syn_test.go b/internal/udpserver/stream_syn_test.go
+index 089bdad..0f63a9d 100644
+--- a/internal/udpserver/stream_syn_test.go
++++ b/internal/udpserver/stream_syn_test.go
+@@ -1,4 +1,4 @@
+-﻿// ==============================================================================
++// ==============================================================================
+ // CottenDNS
+ // Author: tajirax
+ // Github: https://github.com/TaJirax/CottenDns
+@@ -586,10 +586,11 @@ func TestDeferredSessionProcessorFinalizeLaneKeepsRunningTaskAlive(t *testing.T)
+ 
+ 	lane := deferredSessionLane{sessionID: 10, streamID: 13}
+ 	taskCtx, cancel := processor.beginTaskContext(context.Background(), lane)
+-	defer cancel()
++	defer cancel.cancel()
+ 
+ 	processor.mu.Lock()
+ 	processor.laneWorker[lane] = 0
++	processor.lanePending[lane] = 1
+ 	processor.mu.Unlock()
+ 
+ 	processor.FinalizeLane(lane)
+@@ -604,8 +605,8 @@ func TestDeferredSessionProcessorFinalizeLaneKeepsRunningTaskAlive(t *testing.T)
+ 	_, laneExists := processor.laneWorker[lane]
+ 	_, runningExists := processor.running[lane]
+ 	processor.mu.Unlock()
+-	if laneExists {
+-		t.Fatal("expected finalized lane mapping to be removed")
++	if !laneExists {
++		t.Fatal("expected running finalized lane to remain assigned until its task finishes")
+ 	}
+ 	if !runningExists {
+ 		t.Fatal("expected running task cancel func to remain until finish")
+@@ -681,6 +682,7 @@ func TestDeferredSessionProcessorCompactKeepsCancelledMarkerForInFlightTask(t *t
+ 	processor.cancelled[lane] = struct{}{}
+ 	processor.laneWorker[lane] = 0
+ 	processor.sessionPending[lane.sessionID] = 1
++	processor.lanePending[lane] = 2 // One running/dequeued task and one queued duplicate.
+ 	processor.workers[0].pending.Store(1)
+ 	processor.workers[0].jobs <- duplicate
+ 	dropped := processor.compactWorkerLocked(0, func(candidate deferredSessionLane) bool {
+@@ -697,7 +699,7 @@ func TestDeferredSessionProcessorCompactKeepsCancelledMarkerForInFlightTask(t *t
+ 	}
+ 
+ 	taskCtx, cancel := processor.beginTaskContext(context.Background(), lane)
+-	defer cancel()
++	defer cancel.cancel()
+ 	select {
+ 	case <-taskCtx.Done():
+ 	default:
+diff --git a/probe/http.go b/probe/http.go
+index b130ce3..1403b42 100644
+--- a/probe/http.go
++++ b/probe/http.go
+@@ -10,10 +10,13 @@ import (
+ 	"io"
+ 	"net"
+ 	"net/http"
++	"net/http/httptrace"
+ 	"net/url"
+ 	"os"
+ 	"path/filepath"
+ 	"strings"
++	"sync"
++	"syscall"
+ 	"time"
+ 
+ 	"cottendns-go/internal/client"
+@@ -30,25 +33,112 @@ type Config struct {
+ 	TLSConfig *tls.Config `json:"-"`
+ }
+ 
++// Result preserves the furthest observed stage, including when a later HTTPS
++// operation fails. ErrorClass is bounded and never includes traffic metadata.
++type Result struct {
++	OK         bool
++	Stage      string
++	Handshake  bool
++	HTTPStatus int
++	ErrorClass string
++}
++
++type progress struct {
++	mu        sync.Mutex
++	stage     string
++	connected bool
++}
++
++func (p *progress) mark(stage string) {
++	p.mu.Lock()
++	p.stage = stage
++	p.mu.Unlock()
++}
++
++func (p *progress) connect() {
++	p.mu.Lock()
++	p.connected, p.stage = true, "socks"
++	p.mu.Unlock()
++}
++
++func (p *progress) snapshot() (string, bool) {
++	p.mu.Lock()
++	defer p.mu.Unlock()
++	return p.stage, p.connected
++}
++
++type runtimeStoppedError struct{ class string }
++
++func (e runtimeStoppedError) Error() string { return "Cotten client stopped before HTTPS completed" }
++
++func classifyError(err error) string {
++	if err == nil {
++		return ""
++	}
++	var stopped runtimeStoppedError
++	if errors.As(err, &stopped) {
++		return stopped.class
++	}
++	if errors.Is(err, context.DeadlineExceeded) {
++		return "deadline_exceeded"
++	}
++	if errors.Is(err, context.Canceled) {
++		return "cancelled"
++	}
++	if errors.Is(err, syscall.EADDRINUSE) {
++		return "address_in_use"
++	}
++	if errors.Is(err, syscall.ECONNREFUSED) {
++		return "connection_refused"
++	}
++	if errors.Is(err, syscall.ECONNRESET) {
++		return "connection_reset"
++	}
++	if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
++		return "connection_closed"
++	}
++	var certificate *tls.CertificateVerificationError
++	if errors.As(err, &certificate) {
++		return "tls_certificate_error"
++	}
++	var networkError net.Error
++	if errors.As(err, &networkError) && networkError.Timeout() {
++		return "network_timeout"
++	}
++	return "operation_failed"
++}
++
+ func CheckHTTP(parent context.Context, in Config) (int, error) {
++	result, err := CheckHTTPDetailed(parent, in)
++	return result.HTTPStatus, err
++}
++
++// CheckHTTPDetailed runs the same native-client check as CheckHTTP and retains
++// authenticated connection state on a subsequent TLS or HTTP failure.
++func CheckHTTPDetailed(parent context.Context, in Config) (result Result, returnedErr error) {
++	result.Stage = "configuration"
++	fail := func(class, message string) (Result, error) {
++		result.ErrorClass = class
++		return result, errors.New(message)
++	}
+ 	u, err := url.Parse(in.URL)
+ 	if err != nil || u.Scheme != "https" || u.Hostname() == "" || u.User != nil || u.Fragment != "" {
+-		return 0, errors.New("probe requires an HTTPS destination")
++		return fail("invalid_configuration", "probe requires an HTTPS destination")
+ 	}
+-	if len(in.Key) < 32 || len(in.Domain) < 3 || len(in.Resolvers) == 0 {
+-		return 0, errors.New("missing Cotten probe credentials or resolvers")
++	if parent == nil || len(in.Key) < 32 || len(in.Domain) < 3 || len(in.Resolvers) == 0 {
++		return fail("invalid_configuration", "missing Cotten probe credentials or resolvers")
+ 	}
+ 	if in.Transport != "udp" && in.Transport != "tcp" && in.Transport != "auto" {
+-		return 0, errors.New("invalid Cotten DNS transport")
++		return fail("invalid_configuration", "invalid Cotten DNS transport")
+ 	}
+ 	work, err := os.MkdirTemp("", "whitedns-cotten-check-")
+ 	if err != nil {
+-		return 0, err
++		return fail("local_setup_failed", "Cotten probe temporary setup failed")
+ 	}
+ 	defer os.RemoveAll(work)
+ 	listener, err := net.Listen("tcp", "127.0.0.1:0")
+ 	if err != nil {
+-		return 0, err
++		return fail("local_setup_failed", "Cotten probe listener setup failed")
+ 	}
+ 	address := listener.Addr().String()
+ 	port := listener.Addr().(*net.TCPAddr).Port
+@@ -84,34 +174,52 @@ LOG_DIR = %q
+ `, port, in.Domain, in.Key, in.Transport, work)
+ 	configPath, resolverPath := filepath.Join(work, "client.toml"), filepath.Join(work, "resolvers.txt")
+ 	if err = os.WriteFile(configPath, []byte(text), 0600); err != nil {
+-		return 0, err
++		return fail("local_setup_failed", "Cotten probe configuration could not be written")
+ 	}
+ 	if err = os.WriteFile(resolverPath, []byte(strings.Join(in.Resolvers, "\n")+"\n"), 0600); err != nil {
+-		return 0, err
++		return fail("local_setup_failed", "Cotten probe resolvers could not be written")
+ 	}
+ 	app, err := client.Bootstrap(configPath, config.ClientConfigOverrides{ResolversFilePath: &resolverPath})
+ 	if err != nil {
+-		return 0, errors.New("Cotten probe configuration failed")
++		return fail("invalid_configuration", "Cotten probe configuration failed")
+ 	}
+ 	app.Log().SwapConsoleWriter(io.Discard)
++	defer app.Log().Close()
+ 	ctx, cancel := context.WithCancel(parent)
+-	done := make(chan error, 1)
+-	go func() { done <- app.Run(ctx) }()
++	done := make(chan struct{})
++	var runtimeErr error
++	go func() {
++		defer close(done)
++		runtimeErr = app.Run(ctx)
++	}()
++	state := &progress{stage: "startup"}
++	defer func() {
++		result.Stage, result.Handshake = state.snapshot()
++		if result.OK {
++			result.Stage = "complete"
++		}
++	}()
+ 	defer func() {
+ 		cancel()
+ 		select {
+ 		case <-done:
+ 		case <-time.After(3 * time.Second):
++			if returnedErr == nil {
++				result.OK, result.ErrorClass = false, "cleanup_timeout"
++				state.mark("cleanup")
++				returnedErr = errors.New("Cotten probe shutdown timed out")
++			}
+ 		}
+ 	}()
+ 	dialer, err := proxy.SOCKS5("tcp", address, nil, &net.Dialer{Timeout: 5 * time.Second})
+ 	if err != nil {
+-		return 0, err
++		return fail("local_setup_failed", "Cotten probe proxy setup failed")
+ 	}
+ 	contextDialer := dialer.(proxy.ContextDialer)
+ 	transport := &http.Transport{TLSClientConfig: in.TLSConfig, DisableKeepAlives: true, DialContext: func(ctx context.Context, network, target string) (net.Conn, error) {
+ 		for {
+ 			if app.StatusSnapshot().Phase == "connected" {
++				state.connect()
+ 				conn, err := contextDialer.DialContext(ctx, network, target)
+ 				if err == nil {
+ 					return conn, nil
+@@ -124,26 +232,58 @@ LOG_DIR = %q
+ 			select {
+ 			case <-ctx.Done():
+ 				return nil, ctx.Err()
++			case <-done:
++				if ctx.Err() != nil {
++					return nil, ctx.Err()
++				}
++				class := classifyError(runtimeErr)
++				if class == "" {
++					class = "client_stopped"
++				}
++				return nil, runtimeStoppedError{class: class}
+ 			case <-time.After(50 * time.Millisecond):
+ 			}
+ 		}
+ 	}}
+ 	defer transport.CloseIdleConnections()
+ 	httpClient := &http.Client{Transport: transport, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+-	req, err := http.NewRequestWithContext(ctx, "GET", in.URL, nil)
++	trace := &httptrace.ClientTrace{
++		TLSHandshakeStart: func() { state.mark("tls") },
++		TLSHandshakeDone: func(_ tls.ConnectionState, err error) {
++			if err == nil {
++				state.mark("http")
++			}
++		},
++		WroteRequest: func(info httptrace.WroteRequestInfo) {
++			if info.Err == nil {
++				state.mark("http")
++			}
++		},
++	}
++	req, err := http.NewRequestWithContext(httptrace.WithClientTrace(ctx, trace), "GET", in.URL, nil)
+ 	if err != nil {
+-		return 0, err
++		return fail("invalid_configuration", "Cotten probe request configuration failed")
+ 	}
+ 	response, err := httpClient.Do(req)
+ 	if err != nil {
+-		return 0, errors.New("Cotten tunnel HTTPS test failed; check DNS transport and outbound access")
++		if ctx.Err() != nil {
++			err = ctx.Err()
++		}
++		return fail(classifyError(err), "Cotten tunnel HTTPS test failed; check DNS transport and outbound access")
+ 	}
+ 	defer response.Body.Close()
++	result.HTTPStatus = response.StatusCode
++	state.mark("body")
+ 	if _, err = io.Copy(io.Discard, io.LimitReader(response.Body, 64<<10)); err != nil {
+-		return response.StatusCode, errors.New("Cotten HTTPS response incomplete")
++		if ctx.Err() != nil {
++			err = ctx.Err()
++		}
++		return fail(classifyError(err), "Cotten HTTPS response incomplete")
+ 	}
+ 	if response.StatusCode < 200 || response.StatusCode >= 400 {
+-		return response.StatusCode, errors.New("Cotten HTTPS destination returned an unsuccessful status")
++		state.mark("http")
++		return fail("http_status", "Cotten HTTPS destination returned an unsuccessful status")
+ 	}
+-	return response.StatusCode, nil
++	result.OK = true
++	return result, nil
+ }
+diff --git a/internal/client/transport_timeout_recovery_test.go b/internal/client/transport_timeout_recovery_test.go
+new file mode 100644
+index 0000000..ff87f75
+--- /dev/null
++++ b/internal/client/transport_timeout_recovery_test.go
+@@ -0,0 +1,228 @@
++package client
++
++import (
++	"bytes"
++	"encoding/binary"
++	"errors"
++	"net"
++	"testing"
++	"time"
++)
++
++// A timeout can consume a DNS frame's length and part of its body. The next
++// MTU probe must either finish/discard that frame or reconnect; treating its
++// remaining body bytes as a fresh length poisons all subsequent probes.
++func TestTCPQueryTransportRecoversAfterPartialResponseTimeout(t *testing.T) {
++	for _, tc := range []struct {
++		name  string
++		bytes int
++	}{{"partial_length", 1}, {"partial_body", 5}} {
++		t.Run(tc.name, func(t *testing.T) {
++			testTCPQueryTransportRecoversAfterPartialResponseTimeout(t, tc.bytes)
++		})
++	}
++}
++
++func testTCPQueryTransportRecoversAfterPartialResponseTimeout(t *testing.T, partialBytes int) {
++	listener, err := net.Listen("tcp", "127.0.0.1:0")
++	if err != nil {
++		t.Fatal(err)
++	}
++	defer listener.Close()
++	query1, query2 := make([]byte, 12), make([]byte, 12)
++	binary.BigEndian.PutUint16(query1, 0x1111)
++	binary.BigEndian.PutUint16(query2, 0x2222)
++	response1, response2 := make([]byte, 24), make([]byte, 24)
++	copy(response1, query1)
++	copy(response2, query2)
++	response1[2], response1[3], response2[2], response2[3] = 0x81, 0x80, 0x81, 0x80
++	serverDone := make(chan error, 1)
++	go func() {
++		conn, err := listener.Accept()
++		if err != nil {
++			serverDone <- err
++			return
++		}
++		defer conn.Close()
++		_ = conn.SetDeadline(time.Now().Add(2 * time.Second))
++		if _, err = readTCPDNSFramed(conn); err != nil {
++			serverDone <- err
++			return
++		}
++		partial := binary.BigEndian.AppendUint16(nil, uint16(len(response1)))
++		partial = append(partial, response1...)
++		partial = partial[:partialBytes]
++		if _, err = conn.Write(partial); err != nil {
++			serverDone <- err
++			return
++		}
++		// Read the retry before completing the first reply. A repaired transport
++		// may instead close the damaged connection and dial a fresh one.
++		if _, err = readTCPDNSFramed(conn); err != nil {
++			_ = conn.Close()
++			conn, err = listener.Accept()
++			if err != nil {
++				serverDone <- err
++				return
++			}
++			defer conn.Close()
++			_ = conn.SetDeadline(time.Now().Add(2 * time.Second))
++			if _, err = readTCPDNSFramed(conn); err != nil {
++				serverDone <- err
++				return
++			}
++			serverDone <- writeTCPDNSFramed(conn, response2)
++			return
++		}
++		remaining := binary.BigEndian.AppendUint16(nil, uint16(len(response1)))
++		remaining = append(remaining, response1...)
++		remaining = append([]byte(nil), remaining[partialBytes:]...)
++		remaining = binary.BigEndian.AppendUint16(remaining, uint16(len(response2)))
++		remaining = append(remaining, response2...)
++		_, err = conn.Write(remaining)
++		serverDone <- err
++	}()
++	transport, err := newTCPQueryTransport(listener.Addr().String(), time.Second)
++	if err != nil {
++		t.Fatal(err)
++	}
++	defer transport.Close()
++	if _, err = transport.exchange(query1, 100*time.Millisecond); err == nil {
++		t.Fatal("expected first partial reply to time out")
++	}
++	response, err := transport.exchange(query2, time.Second)
++	if err != nil || !bytes.Equal(response, response2) {
++		t.Fatalf("valid next query could not recover from previous partial-frame timeout: response=%x err=%v", response, err)
++	}
++	if err = <-serverDone; err != nil {
++		t.Fatal(err)
++	}
++}
++
++func TestTCPQueryTransportReconnectSharesExchangeDeadlineAndCloseIsFinal(t *testing.T) {
++	dials := 0
++	var reconnectBudget time.Duration
++	var exchangeDeadline time.Time
++	transport, err := newStreamQueryTransport(func(timeout time.Duration) (net.Conn, error) {
++		dials++
++		conn, peer := net.Pipe()
++		if dials == 1 {
++			_ = peer.Close()
++			return conn, nil
++		}
++		reconnectBudget = timeout
++		// Spend part of this exchange's budget establishing the replacement.
++		time.Sleep(40 * time.Millisecond)
++		go func() {
++			defer peer.Close()
++			_, _ = readTCPDNSFramed(peer)
++			// Keep the socket open without a response. The read deadline must
++			// still be the original exchange deadline, not a fresh budget.
++			_, _ = peer.Read(make([]byte, 1))
++		}()
++		return &tcpQueryDeadlineConn{Conn: conn, deadline: &exchangeDeadline}, nil
++	}, time.Second)
++	if err != nil {
++		t.Fatal(err)
++	}
++	defer transport.Close()
++	query := []byte{0x12, 0x34}
++	if _, err = transport.exchange(query, time.Second); err == nil {
++		t.Fatal("expected the closed first connection to fail")
++	}
++	start := time.Now()
++	_, err = transport.exchange(query, 100*time.Millisecond)
++	var netErr net.Error
++	if !errors.As(err, &netErr) || !netErr.Timeout() {
++		t.Fatalf("expected an exchange timeout, got %v", err)
++	}
++	if reconnectBudget <= 0 || reconnectBudget > 100*time.Millisecond {
++		t.Fatalf("reconnect got a separate timeout budget: %s", reconnectBudget)
++	}
++	if budget := exchangeDeadline.Sub(start); budget <= 0 || budget > 110*time.Millisecond {
++		t.Fatalf("dial time was added to the exchange deadline: %s", budget)
++	}
++	if err = transport.Close(); err != nil {
++		t.Fatal(err)
++	}
++	if _, err = transport.exchange(query, time.Second); !errors.Is(err, net.ErrClosed) {
++		t.Fatalf("exchange after Close returned %v", err)
++	}
++	if dials != 2 {
++		t.Fatalf("closed transport redialed: %d dials", dials)
++	}
++}
++
++type tcpQueryDeadlineConn struct {
++	net.Conn
++	deadline *time.Time
++}
++
++func (c *tcpQueryDeadlineConn) SetDeadline(deadline time.Time) error {
++	*c.deadline = deadline
++	return c.Conn.SetDeadline(deadline)
++}
++
++func TestTCPQueryTransportCloseInterruptsExchange(t *testing.T) {
++	for i := 0; i < 16; i++ {
++		conn, peer := net.Pipe()
++		transport := &tcpQueryTransport{conn: conn}
++		queryRead := make(chan struct{})
++		go func() {
++			defer peer.Close()
++			_, _ = readTCPDNSFramed(peer)
++			close(queryRead)
++			_, _ = peer.Read(make([]byte, 1))
++		}()
++		done := make(chan error, 1)
++		go func() {
++			_, err := transport.exchange([]byte{0x12, 0x34}, time.Minute)
++			done <- err
++		}()
++		<-queryRead
++		if err := transport.Close(); err != nil {
++			t.Fatal(err)
++		}
++		select {
++		case err := <-done:
++			if err == nil {
++				t.Fatal("closed exchange succeeded")
++			}
++		case <-time.After(time.Second):
++			t.Fatal("Close failed to interrupt the active exchange")
++		}
++	}
++}
++
++func TestTCPQueryTransportToleratesSevenMismatchedResponseIDs(t *testing.T) {
++	conn, peer := net.Pipe()
++	transport := &tcpQueryTransport{conn: conn}
++	defer transport.Close()
++	serverDone := make(chan error, 1)
++	go func() {
++		defer peer.Close()
++		if _, err := readTCPDNSFramed(peer); err != nil {
++			serverDone <- err
++			return
++		}
++		for i := 0; i < 8; i++ {
++			id := uint16(i)
++			if i == 7 {
++				id = 0x1234
++			}
++			if err := writeTCPDNSFramed(peer, binary.BigEndian.AppendUint16(nil, id)); err != nil {
++				serverDone <- err
++				return
++			}
++		}
++		serverDone <- nil
++	}()
++	query := []byte{0x12, 0x34}
++	response, err := transport.exchange(query, time.Second)
++	if err != nil || !bytes.Equal(response, query) {
++		t.Fatalf("response ID filtering changed: response=%x err=%v", response, err)
++	}
++	if err = <-serverDone; err != nil {
++		t.Fatal(err)
++	}
++}
+diff --git a/internal/dnsparser/response_budget.go b/internal/dnsparser/response_budget.go
+new file mode 100644
+index 0000000..575b7ba
+--- /dev/null
++++ b/internal/dnsparser/response_budget.go
+@@ -0,0 +1,125 @@
++package dnsparser
++
++import (
++	"encoding/binary"
++	"sort"
++
++	baseCodec "cottendns-go/internal/basecodec"
++	Enums "cottendns-go/internal/enums"
++)
++
++// UDPResponseLimit is the requestor's advertised DNS message size. Without
++// EDNS, or with an advertisement below the DNS minimum, the limit is 512.
++func UDPResponseLimit(question []byte) int {
++	limit := 512
++	if len(question) < dnsHeaderSize {
++		return limit
++	}
++	header := parseHeader(question)
++	_, _, end := extractQuestionSection(question, header)
++	if start, size := findOPTRecordRange(question, header, end); size >= 5 && question[start] == 0 {
++		limit = max(limit, int(binary.BigEndian.Uint16(question[start+3:start+5])))
++	}
++	return limit
++}
++
++// BoundUDPResponse keeps the question and OPT, but never a partial tunnel frame,
++// when a control/probe response cannot fit. TC permits a recursive resolver to
++// retry the original question over TCP. Queued data is sized before dequeue.
++func BoundUDPResponse(question, response []byte) []byte {
++	if len(response) <= UDPResponseLimit(question) {
++		return response
++	}
++	if len(question) < dnsHeaderSize {
++		return nil
++	}
++	header := parseHeader(question)
++	questions, count, end := extractQuestionSection(question, header)
++	optStart, optLen := findOPTRecordRange(question, header, end)
++	out := make([]byte, dnsHeaderSize+len(questions)+optLen)
++	copy(out[:2], question[:2])
++	binary.BigEndian.PutUint16(out[2:4], buildResponseFlags(header.Flags, 0)|0x0200)
++	binary.BigEndian.PutUint16(out[4:6], count)
++	binary.BigEndian.PutUint16(out[10:12], uint16(getARCount(optLen)))
++	copy(out[dnsHeaderSize:], questions)
++	if optLen > 0 {
++		copy(out[dnsHeaderSize+len(questions):], question[optStart:optStart+optLen])
++	}
++	if len(out) > UDPResponseLimit(question) {
++		return nil
++	}
++	return out
++}
++
++// ResponseFrameCapacity accounts for the whole answer, including TXT chunk
++// indices, optional base64, DNS records and encryption's opaque-frame framing.
++// The caller subtracts VPN and cipher overhead from the returned frame size.
++func ResponseFrameCapacity(question []byte, domain string, allowA, allowAAAA, baseEncoded, encrypted, tcp bool, reserveQuestionHeadroom ...bool) int {
++	qtype, ok := firstQuestionQType(question)
++	if !ok || len(question) < dnsHeaderSize {
++		return 0
++	}
++	limit := UDPResponseLimit(question)
++	if tcp {
++		limit = 65535
++	}
++	header := parseHeader(question)
++	questions, _, end := extractQuestionSection(question, header)
++	_, optLen := findOPTRecordRange(question, header, end)
++	budget := limit - dnsHeaderSize - len(questions) - optLen
++	if len(reserveQuestionHeadroom) > 0 && reserveQuestionHeadroom[0] {
++		// Session init names are short. Later upload-bearing questions can use
++		// the full 255-byte QNAME plus QTYPE/QCLASS; reserve that echo overhead
++		// when negotiating a session-wide downstream packet size.
++		budget -= max(0, 255+4-len(questions))
++	}
++	if qtype == Enums.DNS_RECORD_TYPE_A || qtype == Enums.DNS_RECORD_TYPE_AAAA ||
++		(qtype != Enums.DNS_RECORD_TYPE_TXT && qtype != Enums.DNS_RECORD_TYPE_NULL && qtype != Enums.DNS_RECORD_TYPE_HTTPS && qtype != Enums.DNS_RECORD_TYPE_SVCB) {
++		// These carriers also have a DNS-name/record-count ceiling. Their
++		// builders already apply the question's UDP budget, including over TCP.
++		capacity := cnameFrameCapacity(domain, budget)
++		if qtype == Enums.DNS_RECORD_TYPE_A && allowA {
++			capacity = max(capacity, aFrameCapacity(budget))
++		}
++		if qtype == Enums.DNS_RECORD_TYPE_AAAA && allowAAAA {
++			capacity = max(capacity, aaaaFrameCapacity(budget))
++		}
++		return max(0, min(capacity, MatchingFrameCapacity(question, domain, allowA, allowAAAA)))
++	}
++	if qtype == Enums.DNS_RECORD_TYPE_NULL {
++		return max(0, min(rrChannelMaxFrame, budget-12))
++	}
++	if qtype == Enums.DNS_RECORD_TYPE_HTTPS || qtype == Enums.DNS_RECORD_TYPE_SVCB {
++		return max(0, min(rrChannelMaxFrame, budget-12-svcbHeaderLen))
++	}
++	return max(0, sort.Search(65536, func(n int) bool {
++		return txtFrameAnswerSize(n, baseEncoded, encrypted) > budget
++	})-1)
++}
++
++func txtFrameAnswerSize(size int, baseEncoded, encrypted bool) int {
++	chunk := maxTXTAnswerPayload
++	if baseEncoded {
++		chunk = maxTXTEncodedChunk
++	}
++	encodedSize := func(n int) int {
++		if baseEncoded {
++			return baseCodec.EncodedRawBase64Len(n)
++		}
++		return n
++	}
++	if !encrypted && size <= chunk {
++		return 12 + 1 + encodedSize(size)
++	}
++	total := 0
++	for first := true; size > 0; first = false {
++		prefix := 1
++		if encrypted || first {
++			prefix = 2
++		}
++		n := min(size, chunk-prefix)
++		total += 12 + 1 + encodedSize(prefix+n)
++		size -= n
++	}
++	return total
++}
+diff --git a/internal/dnsparser/response_budget_test.go b/internal/dnsparser/response_budget_test.go
+new file mode 100644
+index 0000000..2dfd9b3
+--- /dev/null
++++ b/internal/dnsparser/response_budget_test.go
+@@ -0,0 +1,79 @@
++package dnsparser
++
++import (
++	"bytes"
++	"fmt"
++	"strings"
++	"testing"
++
++	Enums "cottendns-go/internal/enums"
++	"cottendns-go/internal/security"
++	VpnProto "cottendns-go/internal/vpnproto"
++)
++
++func TestResponseFrameCapacityWireBudgets(t *testing.T) {
++	codec, err := security.NewCodec(5, "response-budget-test-key-material-000001")
++	if err != nil {
++		t.Fatal(err)
++	}
++	name := strings.Repeat("x", 63) + "." + strings.Repeat("y", 63) + "." + strings.Repeat("z", 63) + ".v.example.com"
++	for _, edns := range []uint16{0, 512, 1232, 4096} {
++		for _, typ := range []uint16{Enums.DNS_RECORD_TYPE_TXT, Enums.DNS_RECORD_TYPE_NULL, Enums.DNS_RECORD_TYPE_HTTPS, Enums.DNS_RECORD_TYPE_SVCB} {
++			for _, encrypted := range []bool{false, true} {
++				for _, base64 := range []bool{false, true} {
++					t.Run(fmt.Sprintf("edns%d/type%d/encrypted%v/base64%v", edns, typ, encrypted, base64), func(t *testing.T) {
++						query, err := BuildTXTQuestionPacket(name, typ, edns)
++						if err != nil {
++							t.Fatal(err)
++						}
++						capacity := ResponseFrameCapacity(query, "v.example.com", false, false, base64, encrypted, false) - 12
++						if encrypted {
++							capacity -= codec.CiphertextOverhead()
++						}
++						if capacity <= 0 {
++							t.Fatal("nonpositive capacity", capacity)
++						}
++						payload := make([]byte, capacity)
++						for i := range payload {
++							payload[i] = byte(i*73 + i/251)
++						}
++						packet := VpnProto.Packet{SessionID: 300, StreamID: 1, SequenceNum: 7, PacketType: Enums.PACKET_STREAM_DATA, Payload: payload}
++						var response []byte
++						if encrypted {
++							response, err = BuildEncryptedVPNResponsePacketMatchingQuery(query, name, "v.example.com", packet, base64, false, false, codec)
++						} else {
++							response, err = BuildVPNResponsePacketMatchingQuery(query, name, "v.example.com", packet, base64, false)
++						}
++						if err != nil {
++							t.Fatal(err)
++						}
++						if len(response) > UDPResponseLimit(query) {
++							t.Fatalf("response=%d budget=%d payload=%d", len(response), UDPResponseLimit(query), capacity)
++						}
++						var decoded VpnProto.Packet
++						if encrypted {
++							decoded, err = ExtractEncryptedVPNResponseMatching(response, base64, []string{"v.example.com"}, codec)
++						} else {
++							decoded, err = ExtractVPNResponseMatching(response, base64, []string{"v.example.com"})
++						}
++						if err != nil || !bytes.Equal(decoded.Payload, payload) {
++							t.Fatal("bounded frame did not round trip", err)
++						}
++					})
++				}
++			}
++		}
++	}
++}
++
++func TestBoundUDPResponseNeverReturnsPartialCiphertext(t *testing.T) {
++	query, err := BuildTXTQuestionPacket("v.example.com", Enums.DNS_RECORD_TYPE_TXT, 512)
++	if err != nil {
++		t.Fatal(err)
++	}
++	response := BoundUDPResponse(query, make([]byte, 1500))
++	parsed, err := ParsePacket(response)
++	if err != nil || parsed.Header.TC != 1 || len(parsed.Answers) != 0 || len(response) > 512 {
++		t.Fatalf("invalid truncated response: %+v %v", parsed.Header, err)
++	}
++}
+diff --git a/internal/udpserver/deferred_session_order_test.go b/internal/udpserver/deferred_session_order_test.go
+new file mode 100644
+index 0000000..c487e1a
+--- /dev/null
++++ b/internal/udpserver/deferred_session_order_test.go
+@@ -0,0 +1,136 @@
++package udpserver
++
++import (
++	"context"
++	"testing"
++	"time"
++)
++
++func TestDeferredSessionLaneRemainsSerialWithQueuedRetry(t *testing.T) {
++	p := newDeferredSessionProcessor(2, 8, nil)
++	ctx, cancel := context.WithCancel(context.Background())
++	p.Start(ctx)
++	defer func() { cancel(); p.wait() }()
++	lane := deferredSessionLane{sessionID: 100, streamID: 1}
++	firstStarted, firstRelease := make(chan struct{}), make(chan struct{})
++	secondStarted, secondRelease := make(chan struct{}), make(chan struct{})
++	thirdStarted := make(chan struct{})
++	if !p.Enqueue(lane, func(ctx context.Context) {
++		close(firstStarted)
++		select {
++		case <-firstRelease:
++		case <-ctx.Done():
++		}
++	}) {
++		t.Fatal("first task was rejected")
++	}
++	<-firstStarted
++	if !p.Enqueue(lane, func(ctx context.Context) {
++		close(secondStarted)
++		select {
++		case <-secondRelease:
++		case <-ctx.Done():
++		}
++	}) {
++		t.Fatal("second task was rejected")
++	}
++	close(firstRelease)
++	<-secondStarted
++	if !p.Enqueue(lane, func(context.Context) { close(thirdStarted) }) {
++		t.Fatal("retry was rejected")
++	}
++	select {
++	case <-thirdStarted:
++		t.Fatal("retry ran concurrently with an earlier task from the same stream")
++	case <-time.After(30 * time.Millisecond):
++	}
++	close(secondRelease)
++	select {
++	case <-thirdStarted:
++	case <-time.After(time.Second):
++		t.Fatal("retry did not run after the prior task completed")
++	}
++}
++
++func TestDeferredSessionCancellationCannotReviveDequeuedWork(t *testing.T) {
++	for _, action := range []string{"remove_lane", "remove_session", "finalize_lane"} {
++		t.Run(action, func(t *testing.T) {
++			p := newDeferredSessionProcessor(2, 8, nil)
++			lane := deferredSessionLane{sessionID: 100, streamID: 1}
++			if !p.Enqueue(lane, func(context.Context) {}) {
++				t.Fatal("initial task was rejected")
++			}
++			worker := p.laneWorker[lane]
++			// Reproduce the gap between a worker receiving a task and acquiring
++			// the scheduler lock to create that task's cancellation context.
++			old := <-p.workers[worker].jobs
++			switch action {
++			case "remove_lane":
++				p.RemoveLane(lane)
++			case "remove_session":
++				p.RemoveSession(lane.sessionID)
++			case "finalize_lane":
++				p.FinalizeLane(lane)
++			}
++			if !p.Enqueue(lane, func(context.Context) {}) {
++				t.Fatal("fresh retry was rejected")
++			}
++			if got := p.laneWorker[lane]; got != worker {
++				t.Fatal("retry moved while old lane work was still unwinding")
++			}
++			fresh := <-p.workers[worker].jobs
++			oldCtx, oldRun := p.beginTaskContext(context.Background(), old.lane, old.generation)
++			if oldCtx.Err() == nil {
++				t.Fatal("a fresh retry revived canceled dequeued work")
++			}
++			freshCtx, freshRun := p.beginTaskContext(context.Background(), fresh.lane, fresh.generation)
++			if freshCtx.Err() != nil {
++				t.Fatal("fresh retry inherited an older task's cancellation")
++			}
++			p.finishLane(lane, oldRun)
++			if freshCtx.Err() != nil {
++				t.Fatal("old task completion canceled a newer running task")
++			}
++			p.RemoveLane(lane)
++			if freshCtx.Err() == nil {
++				t.Fatal("removing the lane failed to cancel its current task")
++			}
++			p.finishLane(lane, freshRun)
++			if len(p.laneWorker) != 0 || len(p.lanePending) != 0 || len(p.laneGeneration) != 0 || len(p.running) != 0 || len(p.sessionPending) != 0 {
++				t.Fatal("completed lane retained scheduler state")
++			}
++		})
++	}
++}
++
++func TestDeferredSessionCleanupDoesNotRetainHistoricalLanes(t *testing.T) {
++	p := newDeferredSessionProcessor(2, 8, nil)
++	for stream := uint16(1); stream < 1000; stream++ {
++		lane := deferredSessionLane{sessionID: 100, streamID: stream}
++		p.RemoveLane(lane)
++		p.FinalizeLane(lane)
++	}
++	if len(p.laneWorker) != 0 || len(p.lanePending) != 0 || len(p.laneGeneration) != 0 || len(p.cancelled) != 0 {
++		t.Fatal("cleanup retained historical stream lanes without pending work")
++	}
++}
++
++func TestDeferredSessionRemoveSessionCancelsEveryRunningLane(t *testing.T) {
++	p := newDeferredSessionProcessor(2, 8, nil)
++	laneA := deferredSessionLane{sessionID: 100, streamID: 1}
++	laneB := deferredSessionLane{sessionID: 100, streamID: 2}
++	laneOther := deferredSessionLane{sessionID: 101, streamID: 1}
++	ctxA, runA := p.beginTaskContext(context.Background(), laneA)
++	ctxB, runB := p.beginTaskContext(context.Background(), laneB)
++	ctxOther, runOther := p.beginTaskContext(context.Background(), laneOther)
++	defer runA.cancel()
++	defer runB.cancel()
++	defer runOther.cancel()
++	p.RemoveSession(100)
++	if ctxA.Err() == nil || ctxB.Err() == nil {
++		t.Fatal("session removal left one of its running streams alive")
++	}
++	if ctxOther.Err() != nil {
++		t.Fatal("session removal canceled a different session")
++	}
++}
+diff --git a/internal/udpserver/embedded_connect_test.go b/internal/udpserver/embedded_connect_test.go
+new file mode 100644
+index 0000000..acb0204
+--- /dev/null
++++ b/internal/udpserver/embedded_connect_test.go
+@@ -0,0 +1,297 @@
++package udpserver
++
++import (
++	"context"
++	"encoding/binary"
++	"errors"
++	"net"
++	"sync/atomic"
++	"testing"
++	"time"
++
++	DnsParser "cottendns-go/internal/dnsparser"
++	Enums "cottendns-go/internal/enums"
++	"cottendns-go/internal/security"
++	VpnProto "cottendns-go/internal/vpnproto"
++)
++
++func embeddedConnectSession(t *testing.T, e *Embedded, codec *security.Codec, nonce byte) (uint16, uint8) {
++	t.Helper()
++	query := secureTestQuery(t, codec, Enums.DNS_RECORD_TYPE_TXT, VpnProto.BuildOptions{
++		PacketType: Enums.PACKET_SESSION_INIT,
++		Payload:    []byte{security.DownstreamEncryptedFlag, 0, 0, 100, 2, 0, 1, 2, 3, nonce},
++	})
++	packet, err := DnsParser.ExtractEncryptedVPNResponseMatching(e.HandleDNSTCP(query), false, []string{"v.example.com"}, codec)
++	if err != nil || packet.PacketType != Enums.PACKET_SESSION_ACCEPT || len(packet.Payload) < 3 {
++		t.Fatalf("session initialization: packet=%d err=%v", packet.PacketType, err)
++	}
++	return binary.BigEndian.Uint16(packet.Payload[:2]), packet.Payload[2]
++}
++
++func embeddedConnectQuery(t *testing.T, e *Embedded, codec *security.Codec, sessionID uint16, cookie uint8, streamID uint16, host string) {
++	t.Helper()
++	payload := append([]byte{3, byte(len(host))}, host...)
++	payload = append(payload, 1, 187) // TCP/443
++	query := secureTestQuery(t, codec, Enums.DNS_RECORD_TYPE_TXT, VpnProto.BuildOptions{
++		SessionID: sessionID, SessionCookie: cookie, StreamID: streamID,
++		PacketType: Enums.PACKET_SOCKS5_SYN, TotalFragments: 1, Payload: payload,
++	})
++	if response := e.HandleDNSTCP(query); len(response) < 12 {
++		t.Fatal("authenticated TCP SYN did not get a DNS response")
++	}
++}
++
++func TestEmbeddedSlowConnectsDoNotSerializeHealthySessions(t *testing.T) {
++	blocked := make(chan struct{}, 2)
++	healthy := make(chan struct{}, 1)
++	release := make(chan struct{})
++	defer close(release)
++	in := embeddedSessionLimitConfig(0)
++	in.DialContext = func(ctx context.Context, _, address string) (net.Conn, error) {
++		if address == "healthy.example:443" {
++			healthy <- struct{}{}
++			return nil, errors.New("test destination unavailable")
++		}
++		blocked <- struct{}{}
++		select {
++		case <-ctx.Done():
++		case <-release:
++		}
++		return nil, errors.New("test blocked destination")
++	}
++	e, err := NewEmbedded(context.Background(), in)
++	if err != nil {
++		t.Fatal(err)
++	}
++	defer e.Close()
++	codec, _ := security.NewCodec(5, in.Key)
++	slowID, slowCookie := embeddedConnectSession(t, e, codec, 1)
++	for stream := uint16(1); stream <= 2; stream++ {
++		embeddedConnectQuery(t, e, codec, slowID, slowCookie, stream, "slow.example")
++		select {
++		case <-blocked:
++		case <-time.After(time.Second):
++			t.Fatal("slow dial did not start")
++		}
++	}
++	healthyID, healthyCookie := embeddedConnectSession(t, e, codec, 2)
++	embeddedConnectQuery(t, e, codec, healthyID, healthyCookie, 1, "healthy.example")
++	select {
++	case <-healthy:
++	case <-time.After(250 * time.Millisecond):
++		t.Fatal("healthy session waited behind unrelated slow connection attempts")
++	}
++	_, capacity := e.s.deferredConnectSession.snapshot()
++	if queuedCapacity := capacity - len(e.s.deferredConnectSession.workers); queuedCapacity > 128 {
++		t.Fatalf("embedded connection queue grew beyond its previous 128-slot budget: %d", queuedCapacity)
++	}
++}
++
++func TestDeferredQueuedConnectExpiresWithoutStartingFreshDial(t *testing.T) {
++	for _, packetType := range []uint8{Enums.PACKET_STREAM_SYN, Enums.PACKET_SOCKS5_SYN} {
++		t.Run(Enums.PacketTypeName(packetType), func(t *testing.T) {
++			s := newTestServerForStreamSyn("TCP")
++			var dials atomic.Int32
++			s.embeddedDialContext = func(context.Context, string, string) (net.Conn, error) {
++				dials.Add(1)
++				return nil, errors.New("expired work dialed")
++			}
++			s.socksConnectTimeout = 40 * time.Millisecond
++			ctx, cancel := context.WithCancel(context.Background())
++			s.deferredConnectSession.Start(ctx)
++			defer func() { cancel(); s.deferredConnectSession.wait() }()
++			release := make(chan struct{})
++			started := make(chan struct{}, len(s.deferredConnectSession.workers))
++			for i := range s.deferredConnectSession.workers {
++				if !s.deferredConnectSession.Enqueue(deferredSessionLane{sessionID: 600, streamID: uint16(i + 1)}, func(ctx context.Context) {
++					started <- struct{}{}
++					select {
++					case <-ctx.Done():
++					case <-release:
++					}
++				}) {
++					t.Fatal("cannot occupy connection worker")
++				}
++			}
++			for range s.deferredConnectSession.workers {
++				<-started
++			}
++			record := newTestSessionRecord(800)
++			putTestSession(s.sessions, record)
++			defer record.closeAllStreams("test cleanup")
++			packet := packetWithSession(packetType, record.ID, record.Cookie, 1)
++			packet.TotalFragments = 1
++			packet.Payload = append([]byte{3, 15}, []byte("healthy.example")...)
++			packet.Payload = append(packet.Payload, 1, 187)
++			if !s.queueImmediateControlAck(record, packet) {
++				t.Fatal("SYN admission ACK was not queued")
++			}
++			if result := s.dispatchDeferredSessionPacketTracked(packet, "test", func(ctx context.Context) {
++				if packetType == Enums.PACKET_STREAM_SYN {
++					s.processDeferredStreamSyn(ctx, packet)
++				} else {
++					s.processDeferredSOCKS5Syn(ctx, packet)
++				}
++			}); result != deferredDispatchEnqueued {
++				t.Fatal("connect was not queued")
++			}
++			time.Sleep(70 * time.Millisecond)
++			close(release)
++			want := uint8(Enums.PACKET_STREAM_CONNECT_FAIL)
++			if packetType == Enums.PACKET_SOCKS5_SYN {
++				want = Enums.PACKET_SOCKS5_TTL_EXPIRED
++			}
++			deadline := time.Now().Add(time.Second)
++			for {
++				response, ok := s.dequeueSessionResponse(record.ID, time.Now(), dnsResponseUnlimited)
++				if ok && response.PacketType == want {
++					break
++				}
++				if time.Now().After(deadline) {
++					t.Fatalf("expired ACKed connect did not return explicit %s", Enums.PacketTypeName(want))
++				}
++				time.Sleep(time.Millisecond)
++			}
++			if dials.Load() != 0 {
++				t.Fatal("expired queued work received a new connection attempt")
++			}
++			for s.isDeferredPacketStillTracked(packet) {
++				if time.Now().After(deadline) {
++					t.Fatal("expired connect leaked its duplicate guard")
++				}
++				time.Sleep(time.Millisecond)
++			}
++		})
++	}
++}
++
++func TestDeferredConnectDialReceivesRemainingQueueBudget(t *testing.T) {
++	s := newTestServerForStreamSyn("TCP")
++	s.socksConnectTimeout = 300 * time.Millisecond
++	ctx, cancel := context.WithCancel(context.Background())
++	s.deferredConnectSession.Start(ctx)
++	defer func() { cancel(); s.deferredConnectSession.wait() }()
++	release := make(chan struct{})
++	started := make(chan struct{})
++	s.deferredConnectSession.Enqueue(deferredSessionLane{sessionID: 900, streamID: 1}, func(ctx context.Context) {
++		close(started)
++		select {
++		case <-ctx.Done():
++		case <-release:
++		}
++	})
++	<-started
++	remaining := make(chan time.Duration, 1)
++	s.embeddedDialContext = func(ctx context.Context, _, _ string) (net.Conn, error) {
++		deadline, ok := ctx.Deadline()
++		if !ok {
++			remaining <- -1
++		} else {
++			remaining <- time.Until(deadline)
++		}
++		return nil, errors.New("test dial failure")
++	}
++	record := newTestSessionRecord(800)
++	putTestSession(s.sessions, record)
++	defer record.closeAllStreams("test cleanup")
++	packet := packetWithSession(Enums.PACKET_STREAM_SYN, record.ID, record.Cookie, 1)
++	if result := s.dispatchDeferredSessionPacketTracked(packet, "test", func(ctx context.Context) {
++		s.processDeferredStreamSyn(ctx, packet)
++	}); result != deferredDispatchEnqueued {
++		t.Fatal("connect was not queued")
++	}
++	time.Sleep(100 * time.Millisecond)
++	close(release)
++	select {
++	case got := <-remaining:
++		if got <= 0 || got > 250*time.Millisecond {
++			t.Fatalf("dial received %s instead of the remaining enqueue budget", got)
++		}
++	case <-time.After(time.Second):
++		t.Fatal("queued dial did not run")
++	}
++}
++
++func TestDeferredConnectParentCancellationStaysQuiet(t *testing.T) {
++	s := newTestServerForStreamSyn("TCP")
++	s.socksConnectTimeout = time.Nanosecond
++	record := newTestSessionRecord(800)
++	putTestSession(s.sessions, record)
++	defer record.closeAllStreams("test cleanup")
++	packet := packetWithSession(Enums.PACKET_STREAM_SYN, record.ID, record.Cookie, 1)
++	ctx, cancel := context.WithCancel(context.Background())
++	cancel()
++	called := false
++	s.deferredConnectRun(packet, func(context.Context) { called = true })(ctx)
++	if called {
++		t.Fatal("canceled parent started connection work")
++	}
++	if response, ok := s.dequeueSessionResponse(record.ID, time.Now(), dnsResponseUnlimited); ok {
++		t.Fatalf("canceled parent emitted an extra response: %s", Enums.PacketTypeName(response.PacketType))
++	}
++}
++
++func TestEmbeddedFragmentedConnectRetriesKeepSingleUpstream(t *testing.T) {
++	var dials atomic.Int32
++	addresses := make(chan string, 2)
++	local, remote := net.Pipe()
++	defer remote.Close()
++	in := embeddedSessionLimitConfig(0)
++	in.DialContext = func(_ context.Context, _, address string) (net.Conn, error) {
++		dials.Add(1)
++		addresses <- address
++		return local, nil
++	}
++	e, err := NewEmbedded(context.Background(), in)
++	if err != nil {
++		t.Fatal(err)
++	}
++	defer e.Close()
++	codec, _ := security.NewCodec(5, in.Key)
++	sid, cookie := embeddedConnectSession(t, e, codec, 1)
++	payload := append([]byte{3, 15}, []byte("healthy.example")...)
++	payload = append(payload, 1, 187)
++	fragments := [][]byte{payload[:8], payload[8:]}
++	send := func(fragment int) {
++		t.Helper()
++		query := secureTestQuery(t, codec, Enums.DNS_RECORD_TYPE_TXT, VpnProto.BuildOptions{
++			SessionID: sid, SessionCookie: cookie, StreamID: 1, PacketType: Enums.PACKET_SOCKS5_SYN,
++			FragmentID: uint8(fragment), TotalFragments: 2, Payload: fragments[fragment],
++		})
++		if len(e.HandleDNSTCP(query)) < 12 {
++			t.Fatal("fragment did not get a DNS reply")
++		}
++	}
++	send(0)
++	send(0) // Fresh encryption, as with an ARQ retry.
++	send(1)
++	select {
++	case address := <-addresses:
++		if address != "healthy.example:443" {
++			t.Fatalf("fragmented target changed: %s", address)
++		}
++	case <-time.After(time.Second):
++		t.Fatal("fragmented connect never started")
++	}
++	waitEmpty := func() {
++		t.Helper()
++		deadline := time.Now().Add(time.Second)
++		for {
++			pending, _ := e.s.deferredConnectSession.snapshot()
++			if pending == 0 {
++				return
++			}
++			if time.Now().After(deadline) {
++				t.Fatal("fragmented connect work did not finish")
++			}
++			time.Sleep(time.Millisecond)
++		}
++	}
++	waitEmpty()
++	send(0)
++	send(1)
++	waitEmpty()
++	if dials.Load() != 1 {
++		t.Fatalf("fragment retry duplicated the upstream connection: %d dials", dials.Load())
++	}
++}
+diff --git a/internal/udpserver/embedded_dns.go b/internal/udpserver/embedded_dns.go
+new file mode 100644
+index 0000000..3ee699a
+--- /dev/null
++++ b/internal/udpserver/embedded_dns.go
+@@ -0,0 +1,180 @@
++package udpserver
++
++import (
++	"crypto/sha256"
++	"encoding/binary"
++	"time"
++
++	DnsParser "cottendns-go/internal/dnsparser"
++)
++
++// The shared cache's retention is an idle eviction interval. Embedded replies
++// additionally expire at their DNS TTL, even when repeatedly requested.
++type embeddedDNSCacheEntry struct {
++	storedAt  time.Time
++	expiresAt time.Time
++	ttlFields []int
++}
++
++func (s *Server) dnsAccountAllowed() bool {
++	return s != nil && (s.embeddedAllowed == nil || s.embeddedAllowed())
++}
++
++// Include all policy-bearing request bytes (CD, DO, EDNS options and size),
++// excluding only the transaction ID and the case of an uncompressed QNAME.
++func embeddedDNSQueryKey(query []byte, base string) string {
++	canonical := append([]byte(nil), query...)
++	if len(canonical) >= 2 {
++		canonical[0], canonical[1] = 0, 0
++	}
++	if len(canonical) < 12 || binary.BigEndian.Uint16(canonical[4:6]) != 1 {
++		hash := sha256.Sum256(canonical)
++		return base + string(hash[:])
++	}
++	for offset := 12; offset < len(canonical); {
++		n := int(canonical[offset])
++		offset++
++		if n == 0 || n > 63 || offset+n > len(canonical) {
++			break
++		}
++		for i := offset; i < offset+n; i++ {
++			if canonical[i] >= 'A' && canonical[i] <= 'Z' {
++				canonical[i] += 'a' - 'A'
++			}
++		}
++		offset += n
++	}
++	hash := sha256.Sum256(canonical)
++	return base + string(hash[:])
++}
++
++func patchEmbeddedDNSQuestion(response, query []byte) []byte {
++	r, re := DnsParser.ParsePacketLite(response)
++	q, qe := DnsParser.ParseDNSRequestLite(query)
++	if re == nil && qe == nil && r.Header.QDCount == 1 && q.Header.QDCount == 1 && r.FirstQuestion == q.FirstQuestion && r.QuestionEndOffset == q.QuestionEndOffset {
++		copy(response[12:r.QuestionEndOffset], query[12:q.QuestionEndOffset])
++	}
++	return response
++}
++
++func (s *Server) cachedDNSResponse(key string, query []byte, now time.Time) ([]byte, bool) {
++	if !s.dnsAccountAllowed() {
++		return nil, false
++	}
++	if s.embeddedDNSExchange == nil {
++		return s.dnsCache.GetReady(key, query, now)
++	}
++	s.embeddedDNSCacheMu.Lock()
++	defer s.embeddedDNSCacheMu.Unlock()
++	entry, ok := s.embeddedDNSCache[key]
++	if !ok || !now.Before(entry.expiresAt) {
++		delete(s.embeddedDNSCache, key)
++		return nil, false
++	}
++	response, ok := s.dnsCache.GetReady(key, query, now)
++	if !ok {
++		delete(s.embeddedDNSCache, key)
++		return nil, false
++	}
++	age := uint32(max(now.Sub(entry.storedAt)/time.Second, 0))
++	remaining := uint32(max(entry.expiresAt.Sub(now)/time.Second, 0))
++	for _, offset := range entry.ttlFields {
++		ttl := binary.BigEndian.Uint32(response[offset : offset+4])
++		binary.BigEndian.PutUint32(response[offset:offset+4], min(ttl-min(ttl, age), remaining))
++	}
++	return patchEmbeddedDNSQuestion(response, query), true
++}
++
++func (s *Server) cacheEmbeddedDNSResponse(key string, query, response []byte, question DnsParser.Question, now time.Time) {
++	parsed, err := DnsParser.ParsePacketLite(response)
++	if err != nil || parsed.Header.QR != 1 || parsed.Header.TC != 0 || parsed.Header.QDCount != 1 || parsed.FirstQuestion != question || (parsed.Header.RCode != 0 && parsed.Header.RCode != 3) {
++		return
++	}
++	if len(query) < 2 || len(response) < 2 || binary.BigEndian.Uint16(query[:2]) != binary.BigEndian.Uint16(response[:2]) || (s.cfg.MaxDNSResponseBytes > 0 && len(response) > s.cfg.MaxDNSResponseBytes) {
++		return
++	}
++	fields, ttl, ok := embeddedDNSTTLFields(response, parsed)
++	if !ok || ttl == 0 {
++		return
++	}
++	lifetime := time.Duration(ttl) * time.Second
++	if configured := time.Duration(s.cfg.DNSCacheTTLSeconds * float64(time.Second)); configured > 0 && configured < lifetime {
++		lifetime = configured
++	}
++	s.embeddedDNSCacheMu.Lock()
++	defer s.embeddedDNSCacheMu.Unlock()
++	if s.embeddedDNSCache == nil {
++		s.embeddedDNSCache = make(map[string]embeddedDNSCacheEntry)
++	}
++	for existingKey, entry := range s.embeddedDNSCache {
++		if !now.Before(entry.expiresAt) {
++			delete(s.embeddedDNSCache, existingKey)
++		}
++	}
++	limit := max(s.cfg.DNSCacheMaxRecords, 32)
++	if _, exists := s.embeddedDNSCache[key]; !exists && len(s.embeddedDNSCache) >= limit {
++		var oldestKey string
++		var oldest time.Time
++		for existingKey, entry := range s.embeddedDNSCache {
++			if oldestKey == "" || entry.storedAt.Before(oldest) {
++				oldestKey, oldest = existingKey, entry.storedAt
++			}
++		}
++		delete(s.embeddedDNSCache, oldestKey)
++	}
++	s.dnsCache.SetReady(key, question.Name, question.Type, question.Class, response, now)
++	s.embeddedDNSCache[key] = embeddedDNSCacheEntry{storedAt: now, expiresAt: now.Add(lifetime), ttlFields: fields}
++}
++
++func embeddedDNSNameEnd(wire []byte, offset int) (int, bool) {
++	for offset < len(wire) {
++		n := int(wire[offset])
++		offset++
++		if n == 0 {
++			return offset, true
++		}
++		if n&0xc0 == 0xc0 {
++			return offset + 1, offset < len(wire)
++		}
++		if n > 63 || offset+n > len(wire) {
++			return 0, false
++		}
++		offset += n
++	}
++	return 0, false
++}
++
++func embeddedDNSTTLFields(wire []byte, parsed DnsParser.LitePacket) ([]int, uint32, bool) {
++	var fields []int
++	ttl := ^uint32(0)
++	negative := parsed.Header.RCode == 3 || parsed.Header.ANCount == 0
++	hasSOA := false
++	offset := parsed.QuestionEndOffset
++	count := int(parsed.Header.ANCount) + int(parsed.Header.NSCount) + int(parsed.Header.ARCount)
++	for i := 0; i < count; i++ {
++		var ok bool
++		offset, ok = embeddedDNSNameEnd(wire, offset)
++		if !ok || offset+10 > len(wire) {
++			return nil, 0, false
++		}
++		kind := binary.BigEndian.Uint16(wire[offset : offset+2])
++		rdlen := int(binary.BigEndian.Uint16(wire[offset+8 : offset+10]))
++		end := offset + 10 + rdlen
++		if end > len(wire) {
++			return nil, 0, false
++		}
++		if kind != 41 { // OPT's TTL field holds EDNS flags, not an RR lifetime.
++			rrTTL := binary.BigEndian.Uint32(wire[offset+4 : offset+8])
++			fields = append(fields, offset+4)
++			ttl = min(ttl, rrTTL)
++			if kind == 6 && rdlen >= 20 { // RFC 2308 negative SOA lifetime.
++				hasSOA = true
++				if negative {
++					ttl = min(ttl, binary.BigEndian.Uint32(wire[end-4:end]))
++				}
++			}
++		}
++		offset = end
++	}
++	return fields, ttl, len(fields) != 0 && (!negative || hasSOA)
++}
+diff --git a/internal/udpserver/embedded_dns_test.go b/internal/udpserver/embedded_dns_test.go
+new file mode 100644
+index 0000000..19e1fd1
+--- /dev/null
++++ b/internal/udpserver/embedded_dns_test.go
+@@ -0,0 +1,422 @@
++package udpserver
++
++import (
++	"context"
++	"encoding/binary"
++	"errors"
++	"net"
++	"sync"
++	"sync/atomic"
++	"testing"
++	"time"
++
++	"cottendns-go/internal/config"
++	"cottendns-go/internal/dnscache"
++	DnsParser "cottendns-go/internal/dnsparser"
++	Enums "cottendns-go/internal/enums"
++	VpnProto "cottendns-go/internal/vpnproto"
++)
++
++func embeddedTestDNSQuery(t *testing.T, name string, id uint16) []byte {
++	t.Helper()
++	query, err := DnsParser.BuildTXTQuestionPacket(name, 1, 1232)
++	if err != nil {
++		t.Fatal(err)
++	}
++	binary.BigEndian.PutUint16(query[:2], id)
++	return query
++}
++
++func embeddedTestDNSResponse(t *testing.T, query []byte, ttl uint32) []byte {
++	t.Helper()
++	parsed, err := DnsParser.ParseDNSRequestLite(query)
++	if err != nil {
++		t.Fatal(err)
++	}
++	response := append([]byte(nil), query[:parsed.QuestionEndOffset]...)
++	binary.BigEndian.PutUint16(response[2:4], 0x8180)
++	binary.BigEndian.PutUint16(response[6:8], 1)
++	binary.BigEndian.PutUint16(response[8:10], 0)
++	binary.BigEndian.PutUint16(response[10:12], 0)
++	rr := []byte{0xc0, 0x0c, 0, 1, 0, 1, 0, 0, 0, 0, 0, 4, 8, 8, 8, 8}
++	binary.BigEndian.PutUint32(rr[6:10], ttl)
++	return append(response, rr...)
++}
++
++func newEmbeddedDNSFixture(t *testing.T, exchange func(context.Context, []byte) ([]byte, error), allowed func() bool) *Embedded {
++	t.Helper()
++	in := embeddedSessionLimitConfig(0)
++	in.ExchangeDNS = exchange
++	if allowed != nil {
++		in.Allowed = allowed
++	}
++	e, err := NewEmbedded(context.Background(), in)
++	if err != nil {
++		t.Fatal(err)
++	}
++	t.Cleanup(func() { e.Close() })
++	return e
++}
++
++func TestEmbeddedDNSCacheTTLAndPolicy(t *testing.T) {
++	var calls atomic.Int32
++	var allowed atomic.Bool
++	allowed.Store(true)
++	e := newEmbeddedDNSFixture(t, func(_ context.Context, query []byte) ([]byte, error) {
++		calls.Add(1)
++		return embeddedTestDNSResponse(t, query, 3), nil
++	}, allowed.Load)
++	query := embeddedTestDNSQuery(t, "Example.COM", 11)
++	if response := e.s.buildDNSQueryResponsePayload(query, 1, 1); len(response) == 0 {
++		t.Fatal("missing first response")
++	}
++	parsed, _ := DnsParser.ParseDNSRequestLite(query)
++	key := embeddedDNSQueryKey(query, dnscache.BuildKey(parsed.FirstQuestion.Name, 1, 1))
++	e.s.embeddedDNSCacheMu.Lock()
++	entry := e.s.embeddedDNSCache[key]
++	e.s.embeddedDNSCacheMu.Unlock()
++	lower := embeddedTestDNSQuery(t, "example.com", 22)
++	response, ok := e.s.cachedDNSResponse(key, lower, entry.storedAt.Add(2*time.Second))
++	if !ok || binary.BigEndian.Uint16(response[:2]) != 22 {
++		t.Fatal("cached response did not keep follower query ID")
++	}
++	r, err := DnsParser.ParsePacket(response)
++	if err != nil || len(r.Answers) != 1 || r.Answers[0].TTL != 1 {
++		t.Fatalf("cached response TTL did not age: %+v, %v", r.Answers, err)
++	}
++	if string(response[12:parsed.QuestionEndOffset]) != string(lower[12:parsed.QuestionEndOffset]) {
++		t.Fatal("cached question did not preserve caller case")
++	}
++	if _, ok := e.s.cachedDNSResponse(key, lower, entry.expiresAt); ok {
++		t.Fatal("repeated hits prolonged the authoritative TTL")
++	}
++	if response := e.s.buildDNSQueryResponsePayload(lower, 1, 2); len(response) == 0 || calls.Load() != 2 {
++		t.Fatal("expired entry was not resolved again")
++	}
++	allowed.Store(false)
++	if response := e.s.buildDNSQueryResponsePayload(lower, 1, 3); response != nil || calls.Load() != 2 {
++		t.Fatal("cached DNS bypassed account policy")
++	}
++}
++
++func TestEmbeddedDNSZeroTTLAndRequestPolicyIsolation(t *testing.T) {
++	var calls atomic.Int32
++	e := newEmbeddedDNSFixture(t, func(_ context.Context, query []byte) ([]byte, error) {
++		calls.Add(1)
++		return embeddedTestDNSResponse(t, query, 0), nil
++	}, nil)
++	q := embeddedTestDNSQuery(t, "example.com", 1)
++	e.s.buildDNSQueryResponsePayload(q, 1, 1)
++	e.s.buildDNSQueryResponsePayload(q, 1, 2)
++	if calls.Load() != 2 {
++		t.Fatal("zero TTL response was cached")
++	}
++	e.s.embeddedDNSExchange = func(_ context.Context, query []byte) ([]byte, error) {
++		calls.Add(1)
++		return embeddedTestDNSResponse(t, query, 60), nil
++	}
++	e.s.buildDNSQueryResponsePayload(q, 1, 3)
++	cd := append([]byte(nil), q...)
++	cd[3] |= 0x10
++	e.s.buildDNSQueryResponsePayload(cd, 1, 4)
++	smallEDNS := append([]byte(nil), q...)
++	binary.BigEndian.PutUint16(smallEDNS[len(smallEDNS)-8:len(smallEDNS)-6], 512)
++	e.s.buildDNSQueryResponsePayload(smallEDNS, 1, 5)
++	do := append([]byte(nil), q...)
++	do[len(do)-4] |= 0x80
++	e.s.buildDNSQueryResponsePayload(do, 1, 6)
++	if calls.Load() != 6 {
++		t.Fatalf("different CD/EDNS policies shared a cache result: calls=%d", calls.Load())
++	}
++	dnskey := append([]byte(nil), q...)
++	parsed, _ := DnsParser.ParseDNSRequestLite(q)
++	binary.BigEndian.PutUint16(dnskey[parsed.QuestionEndOffset-4:parsed.QuestionEndOffset-2], 48)
++	e.s.buildDNSQueryResponsePayload(dnskey, 1, 7)
++	if calls.Load() != 7 {
++		t.Fatal("embedded resolver hook lost support for DNSKEY queries")
++	}
++}
++
++func TestEmbeddedDNSNegativeTTLAndOPTFlags(t *testing.T) {
++	e := newEmbeddedDNSFixture(t, func(context.Context, []byte) ([]byte, error) { return nil, net.ErrClosed }, nil)
++	query := embeddedTestDNSQuery(t, "absent.example", 1)
++	parsed, _ := DnsParser.ParseDNSRequestLite(query)
++	response := append([]byte(nil), query[:parsed.QuestionEndOffset]...)
++	binary.BigEndian.PutUint16(response[2:4], 0x8183)
++	binary.BigEndian.PutUint16(response[8:10], 1)
++	binary.BigEndian.PutUint16(response[10:12], 1)
++	soa := []byte{0xc0, 0x0c, 0, 6, 0, 1, 0, 0, 0, 100, 0, 22}
++	soa = append(soa, make([]byte, 22)...)
++	binary.BigEndian.PutUint32(soa[len(soa)-4:], 3)
++	response = append(response, soa...)
++	opt := []byte{0, 0, 41, 4, 208, 0, 0, 128, 0, 0, 0}
++	response = append(response, opt...)
++	now := time.Now()
++	key := embeddedDNSQueryKey(query, dnscache.BuildKey(parsed.FirstQuestion.Name, 1, 1))
++	e.s.cacheEmbeddedDNSResponse(key, query, response, parsed.FirstQuestion, now)
++	cached, ok := e.s.cachedDNSResponse(key, query, now.Add(2*time.Second))
++	if !ok {
++		t.Fatal("valid negative response was not cached")
++	}
++	r, err := DnsParser.ParsePacket(cached)
++	if err != nil || len(r.Authorities) != 1 || r.Authorities[0].TTL != 1 || len(r.Additional) != 1 || r.Additional[0].TTL != 0x8000 {
++		t.Fatalf("negative TTL or OPT flags changed incorrectly: %+v, %v", r, err)
++	}
++	if _, ok := e.s.cachedDNSResponse(key, query, now.Add(3*time.Second)); ok {
++		t.Fatal("negative SOA minimum did not expire the response")
++	}
++}
++
++func TestEmbeddedDNSCancellationAndPolicyDuringLookup(t *testing.T) {
++	for _, revoke := range []bool{false, true} {
++		t.Run(map[bool]string{false: "caller_cancel", true: "policy_revoked"}[revoke], func(t *testing.T) {
++			var allowed atomic.Bool
++			allowed.Store(true)
++			started, release, exited := make(chan struct{}), make(chan struct{}), make(chan struct{})
++			e := newEmbeddedDNSFixture(t, func(ctx context.Context, query []byte) ([]byte, error) {
++				close(started)
++				defer close(exited)
++				select {
++				case <-release:
++					return embeddedTestDNSResponse(t, query, 60), nil
++				case <-ctx.Done():
++					return nil, ctx.Err()
++				}
++			}, allowed.Load)
++			ctx, cancel := context.WithCancel(context.Background())
++			defer cancel()
++			done := make(chan []byte, 1)
++			query := embeddedTestDNSQuery(t, "example.com", 1)
++			go func() { done <- e.s.buildDNSQueryResponsePayloadContext(ctx, query, 1, 1) }()
++			<-started
++			if revoke {
++				allowed.Store(false)
++				close(release)
++			} else {
++				cancel()
++			}
++			select {
++			case response := <-done:
++				if response != nil {
++					t.Fatal("cancelled or revoked lookup was delivered")
++				}
++			case <-time.After(time.Second):
++				t.Fatal("actual DNS lookup ignored caller cancellation")
++			}
++			<-exited
++			if len(e.s.embeddedDNSCache) != 0 {
++				t.Fatal("cancelled or revoked lookup populated cache")
++			}
++		})
++	}
++}
++
++func TestEmbeddedDNSWorkerBounds(t *testing.T) {
++	for _, workers := range []int{0, 1, 2, 8, 64} {
++		dnsWorkers, _, dnsQueue, _ := splitDeferredSessionPools(workers, 64)
++		if dnsWorkers != min(max(workers, 2), 8) || dnsQueue != 64 {
++			t.Fatalf("workers=%d: DNS workers=%d, queue=%d", workers, dnsWorkers, dnsQueue)
++		}
++	}
++}
++
++func TestEmbeddedDNSQueueAgeConsumesLookupBudget(t *testing.T) {
++	s := &Server{
++		cfg:                config.ServerConfig{DNSUpstreamTimeoutSecs: 0.06},
++		deferredDNSSession: newDeferredSessionProcessor(2, 64, nil),
++	}
++	ctx, cancel := context.WithCancel(context.Background())
++	s.deferredDNSSession.Start(ctx)
++	t.Cleanup(func() {
++		cancel()
++		s.deferredDNSSession.wait()
++	})
++	started := make(chan struct{}, 2)
++	release := make(chan struct{})
++	var queuedRan atomic.Bool
++	for sequence := uint16(1); sequence <= 2; sequence++ {
++		if !s.dispatchDeferredSessionPacket(VpnProto.Packet{SessionID: 1, SequenceNum: sequence, PacketType: Enums.PACKET_DNS_QUERY_REQ}, func(ctx context.Context) {
++			started <- struct{}{}
++			<-release
++		}) {
++			t.Fatal("blocking worker task was not admitted")
++		}
++	}
++	<-started
++	<-started
++	if !s.dispatchDeferredSessionPacket(VpnProto.Packet{SessionID: 1, SequenceNum: 3, PacketType: Enums.PACKET_DNS_QUERY_REQ}, func(context.Context) {
++		queuedRan.Store(true)
++	}) {
++		t.Fatal("queued task was not admitted")
++	}
++	time.Sleep(90 * time.Millisecond)
++	close(release)
++	deadline := time.Now().Add(time.Second)
++	for time.Now().Before(deadline) {
++		pending, _ := s.deferredDNSSession.snapshot()
++		if pending == 0 {
++			if queuedRan.Load() {
++				t.Fatal("stale queued DNS request began a fresh lookup budget")
++			}
++			return
++		}
++		time.Sleep(time.Millisecond)
++	}
++	t.Fatal("expired DNS queue did not drain")
++}
++
++func TestEmbeddedDNSInflightCoalescesIDsAndCancelsFollower(t *testing.T) {
++	var calls atomic.Int32
++	started, release := make(chan struct{}), make(chan struct{})
++	e := newEmbeddedDNSFixture(t, func(ctx context.Context, query []byte) ([]byte, error) {
++		if calls.Add(1) == 1 {
++			close(started)
++		}
++		select {
++		case <-release:
++			return embeddedTestDNSResponse(t, query, 60), nil
++		case <-ctx.Done():
++			return nil, ctx.Err()
++		}
++	}, nil)
++	leaderDone := make(chan []byte, 1)
++	go func() {
++		leaderDone <- e.s.buildDNSQueryResponsePayload(embeddedTestDNSQuery(t, "example.com", 1), 1, 1)
++	}()
++	<-started
++	ctx, cancel := context.WithCancel(context.Background())
++	followerDone := make(chan []byte, 1)
++	go func() {
++		followerDone <- e.s.buildDNSQueryResponsePayloadContext(ctx, embeddedTestDNSQuery(t, "example.com", 2), 1, 2)
++	}()
++	cancel()
++	select {
++	case response := <-followerDone:
++		if response != nil {
++			t.Fatal("cancelled follower received a response")
++		}
++	case <-time.After(time.Second):
++		t.Fatal("cancelled follower kept a DNS worker busy")
++	}
++	var wg sync.WaitGroup
++	for id := uint16(3); id < 19; id++ {
++		wg.Add(1)
++		go func(id uint16) {
++			defer wg.Done()
++			query := embeddedTestDNSQuery(t, "EXAMPLE.com", id)
++			response := e.s.buildDNSQueryResponsePayload(query, 1, id)
++			if len(response) < 2 || binary.BigEndian.Uint16(response[:2]) != id {
++				t.Errorf("follower query %d received wrong transaction ID", id)
++			}
++			parsed, _ := DnsParser.ParseDNSRequestLite(query)
++			if len(response) < parsed.QuestionEndOffset || string(response[12:parsed.QuestionEndOffset]) != string(query[12:parsed.QuestionEndOffset]) {
++				t.Errorf("follower query %d did not echo caller's question case", id)
++			}
++		}(id)
++	}
++	time.Sleep(25 * time.Millisecond)
++	close(release)
++	wg.Wait()
++	if response := <-leaderDone; len(response) == 0 || calls.Load() != 1 {
++		t.Fatalf("identical inflight queries made %d upstream requests", calls.Load())
++	}
++}
++
++func TestEmbeddedDNSBlockedLookupDoesNotSerializeSession(t *testing.T) {
++	blocked, release := make(chan struct{}), make(chan struct{})
++	e := newEmbeddedDNSFixture(t, func(ctx context.Context, query []byte) ([]byte, error) {
++		parsed, _ := DnsParser.ParseDNSRequestLite(query)
++		if parsed.FirstQuestion.Name == "blocked.example" {
++			close(blocked)
++			select {
++			case <-release:
++			case <-ctx.Done():
++				return nil, ctx.Err()
++			}
++		}
++		return embeddedTestDNSResponse(t, query, 60), nil
++	}, nil)
++	if workers := len(e.s.deferredDNSSession.workers); workers < 2 || workers > 8 {
++		t.Fatalf("DNS concurrency is not bounded at 2..8: %d", workers)
++	}
++	dispatch := func(sequence uint16, name string, done chan<- struct{}) {
++		t.Helper()
++		query := embeddedTestDNSQuery(t, name, sequence)
++		if !e.s.dispatchDeferredSessionPacket(VpnProto.Packet{SessionID: 7, SequenceNum: sequence, PacketType: Enums.PACKET_DNS_QUERY_REQ}, func(ctx context.Context) {
++			if response := e.s.buildDNSQueryResponsePayloadContext(ctx, query, 7, sequence); len(response) != 0 {
++				close(done)
++			}
++		}) {
++			t.Fatal("DNS work was not admitted")
++		}
++	}
++	first, second := make(chan struct{}), make(chan struct{})
++	dispatch(1, "blocked.example", first)
++	<-blocked
++	dispatch(2, "healthy.example", second)
++	select {
++	case <-second:
++	case <-time.After(time.Second):
++		close(release)
++		t.Fatal("one failed lookup serialized unrelated DNS in the same session")
++	}
++	close(release)
++	<-first
++}
++
++func TestEmbeddedDialPropagatesCancellationAndRequestedTimeout(t *testing.T) {
++	for _, mode := range []string{"caller_cancel", "caller_deadline", "requested_timeout", "account_close"} {
++		t.Run(mode, func(t *testing.T) {
++			started, released := make(chan struct{}), make(chan struct{})
++			in := embeddedSessionLimitConfig(0)
++			in.DialContext = func(ctx context.Context, _, _ string) (net.Conn, error) {
++				close(started)
++				<-ctx.Done()
++				close(released)
++				return nil, ctx.Err()
++			}
++			e, err := NewEmbedded(context.Background(), in)
++			if err != nil {
++				t.Fatal(err)
++			}
++			t.Cleanup(func() { e.Close() })
++			ctx, cancel := context.WithCancel(context.Background())
++			defer cancel()
++			if mode == "caller_deadline" {
++				var stop context.CancelFunc
++				ctx, stop = context.WithTimeout(ctx, 25*time.Millisecond)
++				defer stop()
++			}
++			done := make(chan error, 1)
++			go func() {
++				var err error
++				if mode == "requested_timeout" {
++					_, err = e.s.dialStreamUpstreamFn("tcp", "8.8.8.8:443", 25*time.Millisecond)
++				} else {
++					_, err = e.s.dialTCPTargetContext(ctx, "8.8.8.8:443")
++				}
++				done <- err
++			}()
++			<-started
++			if mode == "caller_cancel" {
++				cancel()
++			}
++			if mode == "account_close" {
++				e.Close()
++			}
++			select {
++			case err := <-done:
++				if !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
++					t.Fatalf("dial returned %v", err)
++				}
++			case <-time.After(time.Second):
++				t.Fatal("cancelled dial did not return")
++			}
++			select {
++			case <-released:
++			default:
++				t.Fatal("caller returned but actual outbound dial was still running")
++			}
++		})
++	}
++}
+diff --git a/internal/udpserver/response_budget.go b/internal/udpserver/response_budget.go
+new file mode 100644
+index 0000000..ee4ed5e
+--- /dev/null
++++ b/internal/udpserver/response_budget.go
+@@ -0,0 +1,97 @@
++package udpserver
++
++import (
++	"time"
++
++	DnsParser "cottendns-go/internal/dnsparser"
++	"cottendns-go/internal/security"
++)
++
++const udpBudgetStallTimeout = 30 * time.Second
++
++func isTCPResponse(tcp []bool) bool { return len(tcp) > 0 && tcp[0] }
++
++func (s *Server) responsePayloadCapacity(question []byte, domain string, mode uint8, codec *security.Codec, tcp bool, reserveQuestionHeadroom ...bool) int {
++	baseEncoded, valid := parseMTUProbeBaseEncoding(mode)
++	if !valid {
++		return 0
++	}
++	encrypted := mode&security.DownstreamEncryptedFlag != 0
++	capacity := DnsParser.ResponseFrameCapacity(question, domain, s.cfg.ARecordDataDelivery, s.cfg.AAAARecordDataDelivery, baseEncoded, encrypted, tcp, reserveQuestionHeadroom...)
++	capacity -= maxVPNFrameHeaderLen
++	if encrypted {
++		if codec == nil {
++			return 0
++		}
++		capacity -= codec.CiphertextOverhead()
++	}
++	return max(0, capacity)
++}
++
++func (s *Server) noteBudgetBlocked(sessionID uint16, capacity int, now time.Time) {
++	if record, ok := s.sessions.Get(sessionID); ok {
++		record.mu.Lock()
++		if record.udpBudgetBlockedSince.IsZero() {
++			record.udpBudgetBlockedSince = now
++			record.udpBudgetBlockedCapacity = capacity
++		}
++		record.mu.Unlock()
++	}
++}
++
++func (s *Server) noteBudgetDelivered(sessionID uint16, size int) {
++	if record, ok := s.sessions.Get(sessionID); ok {
++		record.mu.Lock()
++		if size > record.udpBudgetBlockedCapacity {
++			record.udpBudgetBlockedSince = time.Time{}
++		}
++		record.mu.Unlock()
++	}
++}
++
++// A temporary small carrier retains queued frames for a later larger UDP/TCP
++// poll. If all usable paths shrink, old ARQ sequences cannot be split without
++// changing their meaning to existing clients. Bound that stall with the existing
++// ERROR_DROP recovery signal, then release the old session. The next UDP init
++// negotiates a download MTU that fits its current wire budget.
++func (s *Server) resetBudgetStalledSession(question []byte, name string, view *sessionRuntimeView, capacity int, now time.Time, tcp bool) bool {
++	record, ok := s.sessions.Get(view.ID)
++	if !ok {
++		return false
++	}
++	record.mu.Lock()
++	if tcp || capacity >= record.DownloadMTUBytes {
++		record.udpBudgetBlockedSince = time.Time{}
++		record.mu.Unlock()
++		return false
++	}
++	since := record.udpBudgetBlockedSince
++	record.mu.Unlock()
++	if since.IsZero() || now.Sub(since) < udpBudgetStallTimeout {
++		return false
++	}
++	// Inspect without removing packets. This slow path runs only after a
++	// prolonged stall, so ACKs that already removed the blocked sequence cannot
++	// cause an unnecessary reset of an otherwise healthy session.
++	_, streams := record.activeStreamSnapshot()
++	blocked := false
++	for _, stream := range streams {
++		stream.PopAnyTXPacket(5, func(packet *serverStreamTXPacket) bool {
++			blocked = blocked || len(packet.Payload) > capacity
++			return false
++		})
++		if blocked {
++			break
++		}
++	}
++	if !blocked {
++		record.mu.Lock()
++		record.udpBudgetBlockedSince = time.Time{}
++		record.mu.Unlock()
++		return false
++	}
++	if closed, ok := s.sessions.Close(view.ID, now, s.cfg.ClosedSessionRetention()); ok {
++		s.cleanupClosedSession(view.ID, closed)
++	}
++	return true
++}
+diff --git a/internal/udpserver/response_budget_test.go b/internal/udpserver/response_budget_test.go
+new file mode 100644
+index 0000000..5e523f0
+--- /dev/null
++++ b/internal/udpserver/response_budget_test.go
+@@ -0,0 +1,196 @@
++package udpserver
++
++import (
++	"bytes"
++	"encoding/binary"
++	"testing"
++	"time"
++
++	DnsParser "cottendns-go/internal/dnsparser"
++	Enums "cottendns-go/internal/enums"
++	"cottendns-go/internal/security"
++	VpnProto "cottendns-go/internal/vpnproto"
++)
++
++func budgetTestQuery(t *testing.T, codec *security.Codec, edns uint16, packet VpnProto.BuildOptions) []byte {
++	t.Helper()
++	encoded, err := VpnProto.BuildEncoded(packet, codec)
++	if err != nil {
++		t.Fatal(err)
++	}
++	name, err := DnsParser.BuildTunnelQuestionName("v.example.com", encoded)
++	if err != nil {
++		t.Fatal(err)
++	}
++	query, err := DnsParser.BuildTXTQuestionPacket(name, Enums.DNS_RECORD_TYPE_TXT, edns)
++	if err != nil {
++		t.Fatal(err)
++	}
++	return query
++}
++
++func budgetTestSession(t *testing.T) (*Server, *sessionRecord, *security.Codec) {
++	t.Helper()
++	s, _ := newDynamicTransportTestServer(t, 5, 5)
++	codec := s.codecs[s.preferredCodec.Load()]
++	payload := []byte{security.DownstreamEncryptedFlag, 0, 0, 100, 16, 0, 1, 2, 3, 4}
++	record, _, err := s.sessions.findOrCreate(payload, 0, 0, 8, false, codec)
++	if err != nil || record == nil {
++		t.Fatal("create session", err)
++	}
++	t.Cleanup(func() {
++		if closed, ok := s.sessions.Close(record.ID, time.Now(), 0); ok {
++			s.cleanupClosedSession(record.ID, closed)
++		}
++	})
++	return s, record, codec
++}
++
++func TestResponseBudgetRetainsQueuedPayloadAcrossMixedUDPAndTCP(t *testing.T) {
++	for _, tcp := range []bool{false, true} {
++		t.Run(map[bool]string{false: "larger_udp", true: "tcp"}[tcp], func(t *testing.T) {
++			s, record, codec := budgetTestSession(t)
++			payload := make([]byte, 2800)
++			for i := range payload {
++				payload[i] = byte(i*73 + i/251)
++			}
++			if !s.queueMainSessionPacket(record.ID, VpnProto.Packet{PacketType: Enums.PACKET_DNS_QUERY_RES, SequenceNum: 7, TotalFragments: 1, Payload: payload}) {
++				t.Fatal("queue")
++			}
++			poll := func(edns uint16, tcp bool) VpnProto.Packet {
++				t.Helper()
++				query := budgetTestQuery(t, codec, edns, VpnProto.BuildOptions{SessionID: record.ID, SessionCookie: record.Cookie, PacketType: Enums.PACKET_PING})
++				var response []byte
++				if tcp {
++					response = s.safeHandlePacketTCP(query)
++				} else {
++					response = s.safeHandlePacket(query)
++					if len(response) > max(512, int(edns)) {
++						t.Fatal("UDP budget exceeded", len(response))
++					}
++				}
++				packet, err := DnsParser.ExtractEncryptedVPNResponseMatching(response, false, []string{"v.example.com"}, codec)
++				if err != nil {
++					t.Fatal(err)
++				}
++				return packet
++			}
++			for _, size := range []uint16{512, 1232, 512} {
++				if packet := poll(size, false); packet.PacketType != Enums.PACKET_PONG {
++					t.Fatal("oversized payload was removed", packet.PacketType)
++				}
++			}
++			if packet := poll(map[bool]uint16{false: 4096, true: 512}[tcp], tcp); packet.PacketType != Enums.PACKET_DNS_QUERY_RES || !bytes.Equal(packet.Payload, payload) {
++				t.Fatal("retained payload lost or changed")
++			}
++			record.mu.RLock()
++			stillBlocked := !record.udpBudgetBlockedSince.IsZero()
++			record.mu.RUnlock()
++			if stillBlocked {
++				t.Fatal("healthy larger path did not clear stall recovery timer")
++			}
++		})
++	}
++}
++
++func TestResponseBudgetSessionNegotiationPreservesTCP(t *testing.T) {
++	for _, tcp := range []bool{false, true} {
++		t.Run(map[bool]string{false: "udp", true: "tcp"}[tcp], func(t *testing.T) {
++			s, _ := newDynamicTransportTestServer(t, 5, 5)
++			codec, _ := security.NewCodec(5, "transport-matrix-shared-key")
++			init := []byte{security.DownstreamEncryptedFlag, 0, 0, 100, 16, 0, 9, 8, 7, 6}
++			query := budgetTestQuery(t, codec, 512, VpnProto.BuildOptions{PacketType: Enums.PACKET_SESSION_INIT, Payload: init})
++			var response []byte
++			if tcp {
++				response = s.safeHandlePacketTCP(query)
++			} else {
++				response = s.safeHandlePacket(query)
++			}
++			packet, err := DnsParser.ExtractEncryptedVPNResponseMatching(response, false, []string{"v.example.com"}, codec)
++			if err != nil || packet.PacketType != Enums.PACKET_SESSION_ACCEPT {
++				t.Fatal("handshake", err)
++			}
++			id := binary.BigEndian.Uint16(packet.Payload[:2])
++			record, ok := s.sessions.Get(id)
++			if !ok {
++				t.Fatal("session absent")
++			}
++			t.Cleanup(func() {
++				if closed, ok := s.sessions.Close(id, time.Now(), 0); ok {
++					s.cleanupClosedSession(id, closed)
++				}
++			})
++			if tcp && record.DownloadMTUBytes != 4096 {
++				t.Fatal("TCP session incorrectly received UDP clamp", record.DownloadMTUBytes)
++			}
++			if !tcp && (record.DownloadMTUBytes <= 0 || record.DownloadMTUBytes >= 512) {
++				t.Fatal("UDP session did not negotiate safe MTU", record.DownloadMTUBytes)
++			}
++			if s.clientPolicy.MaxDownloadMTU != 0 || s.cfg.MaxAllowedClientDownloadMTU != 0 {
++				t.Fatal("negotiation changed server settings")
++			}
++		})
++	}
++}
++
++func TestResponseBudgetPersistentShrinkExplicitlyResetsAndRenegotiates(t *testing.T) {
++	s, record, codec := budgetTestSession(t)
++	if !s.queueMainSessionPacket(record.ID, VpnProto.Packet{PacketType: Enums.PACKET_DNS_QUERY_RES, SequenceNum: 7, TotalFragments: 1, Payload: make([]byte, 2800)}) {
++		t.Fatal("queue")
++	}
++	poll := func() VpnProto.Packet {
++		query := budgetTestQuery(t, codec, 512, VpnProto.BuildOptions{SessionID: record.ID, SessionCookie: record.Cookie, PacketType: Enums.PACKET_PING})
++		packet, err := DnsParser.ExtractEncryptedVPNResponseMatching(s.safeHandlePacket(query), false, []string{"v.example.com"}, codec)
++		if err != nil {
++			t.Fatal(err)
++		}
++		return packet
++	}
++	if poll().PacketType != Enums.PACKET_PONG {
++		t.Fatal("first small poll must retain")
++	}
++	record.mu.Lock()
++	record.udpBudgetBlockedSince = time.Now().Add(-udpBudgetStallTimeout - time.Second)
++	record.mu.Unlock()
++	if poll().PacketType != Enums.PACKET_ERROR_DROP {
++		t.Fatal("persistent small path did not request explicit recovery")
++	}
++	if s.sessions.HasActive(record.ID) {
++		t.Fatal("unusable session retained after reset")
++	}
++	init := []byte{security.DownstreamEncryptedFlag, 0, 0, 100, 16, 0, 9, 8, 7, 6}
++	query := budgetTestQuery(t, codec, 512, VpnProto.BuildOptions{PacketType: Enums.PACKET_SESSION_INIT, Payload: init})
++	accepted, err := DnsParser.ExtractEncryptedVPNResponseMatching(s.safeHandlePacket(query), false, []string{"v.example.com"}, codec)
++	if err != nil || accepted.PacketType != Enums.PACKET_SESSION_ACCEPT {
++		t.Fatal("recovery handshake", err)
++	}
++	policy, ok := VpnProto.DecodeSessionAcceptPolicy(accepted.Payload, false)
++	if !ok || policy.MaxDownloadMTU <= 0 || policy.MaxDownloadMTU >= 512 {
++		t.Fatal("recovery lacks usable MTU ceiling", policy.MaxDownloadMTU)
++	}
++	id := binary.BigEndian.Uint16(accepted.Payload[:2])
++	next, ok := s.sessions.Get(id)
++	if !ok || next.DownloadMTUBytes != policy.MaxDownloadMTU {
++		t.Fatal("server and existing client policy disagree")
++	}
++	t.Cleanup(func() {
++		if closed, ok := s.sessions.Close(id, time.Now(), 0); ok {
++			s.cleanupClosedSession(id, closed)
++		}
++	})
++}
++
++func TestResponseBudgetMTUProbeUDPAndTCP(t *testing.T) {
++	s, _ := newDynamicTransportTestServer(t, 5, 5)
++	codec, _ := security.NewCodec(5, "transport-matrix-shared-key")
++	payload := []byte{security.DownstreamEncryptedFlag, 1, 2, 3, 4, 5, 220} // 1500 bytes
++	query := budgetTestQuery(t, codec, 512, VpnProto.BuildOptions{SessionID: 255, PacketType: Enums.PACKET_MTU_DOWN_REQ, Payload: payload})
++	response := s.safeHandlePacket(query)
++	if len(response) > 512 || len(response) < 12 || response[2]&2 == 0 {
++		t.Fatal("UDP MTU probe did not honor limit")
++	}
++	packet, err := DnsParser.ExtractEncryptedVPNResponseMatching(s.safeHandlePacketTCP(query), false, []string{"v.example.com"}, codec)
++	if err != nil || packet.PacketType != Enums.PACKET_MTU_DOWN_RES || len(packet.Payload) != 1500 {
++		t.Fatal("TCP retry lost full probe", err, len(packet.Payload))
++	}
++}
+diff --git a/probe/http_test.go b/probe/http_test.go
+new file mode 100644
+index 0000000..001a2ef
+--- /dev/null
++++ b/probe/http_test.go
+@@ -0,0 +1,194 @@
++package probe
++
++import (
++	"context"
++	"crypto/tls"
++	"crypto/x509"
++	"encoding/binary"
++	"errors"
++	"io"
++	"log"
++	"net"
++	"net/http"
++	"net/http/httptest"
++	"os"
++	"strings"
++	"sync"
++	"testing"
++	"time"
++
++	cottenserver "cottendns-go/server"
++)
++
++const testKey = "test-only-probe-account-key-0000000001"
++
++// Exercise the real encrypted client, framed TCP DNS transport, SOCKS proxy and
++// embedded server. Only outbound origin dialing is redirected to a local test.
++func testTunnel(t *testing.T, origin string) Config {
++	t.Helper()
++	ctx, cancel := context.WithCancel(context.Background())
++	engine, err := cottenserver.New(ctx, cottenserver.Config{
++		Domain: "tunnel.example", Key: testKey,
++		Allowed: func() bool { return true },
++		DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
++			return (&net.Dialer{}).DialContext(ctx, "tcp", origin)
++		},
++		ExchangeDNS: func(context.Context, []byte) ([]byte, error) { return nil, errors.New("unused DNS egress") },
++	})
++	if err != nil {
++		cancel()
++		t.Fatal(err)
++	}
++	listener, err := net.Listen("tcp", "127.0.0.1:0")
++	if err != nil {
++		cancel()
++		engine.Close()
++		t.Fatal(err)
++	}
++	var mu sync.Mutex
++	connections := make(map[net.Conn]struct{})
++	var workers sync.WaitGroup
++	workers.Add(1)
++	go func() {
++		defer workers.Done()
++		for {
++			conn, err := listener.Accept()
++			if err != nil {
++				return
++			}
++			mu.Lock()
++			if ctx.Err() != nil {
++				mu.Unlock()
++				conn.Close()
++				return
++			}
++			connections[conn] = struct{}{}
++			mu.Unlock()
++			workers.Add(1)
++			go func() {
++				defer workers.Done()
++				defer func() { conn.Close(); mu.Lock(); delete(connections, conn); mu.Unlock() }()
++				for {
++					var size [2]byte
++					if _, err := io.ReadFull(conn, size[:]); err != nil {
++						return
++					}
++					packet := make([]byte, int(binary.BigEndian.Uint16(size[:])))
++					if _, err := io.ReadFull(conn, packet); err != nil {
++						return
++					}
++					response := engine.HandleDNSTCP(packet)
++					if len(response) == 0 {
++						return
++					}
++					frame := binary.BigEndian.AppendUint16(nil, uint16(len(response)))
++					if _, err := conn.Write(append(frame, response...)); err != nil {
++						return
++					}
++				}
++			}()
++		}
++	}()
++	t.Cleanup(func() {
++		cancel()
++		listener.Close()
++		mu.Lock()
++		for conn := range connections {
++			conn.Close()
++		}
++		mu.Unlock()
++		workers.Wait()
++		engine.Close()
++	})
++	return Config{Domain: "tunnel.example", Key: testKey, Resolvers: []string{listener.Addr().String()}, Transport: "tcp", URL: "https://example.com/"}
++}
++
++func TestDetailedStartupTimeoutDoesNotClaimHandshake(t *testing.T) {
++	work := t.TempDir()
++	t.Setenv("TMPDIR", work)
++	listener, err := net.Listen("tcp", "127.0.0.1:0")
++	if err != nil {
++		t.Fatal(err)
++	}
++	listener.Close()
++	ctx, cancel := context.WithTimeout(context.Background(), 150*time.Millisecond)
++	defer cancel()
++	r, err := CheckHTTPDetailed(ctx, Config{Domain: "tunnel.example", Key: testKey, Resolvers: []string{listener.Addr().String()}, Transport: "tcp", URL: "https://example.com/"})
++	if err == nil || r.OK || r.Handshake || r.Stage != "startup" || r.ErrorClass != "deadline_exceeded" {
++		t.Fatalf("startup failure misreported: %+v, %v", r, err)
++	}
++	if strings.Contains(err.Error(), testKey) || strings.Contains(err.Error(), "tunnel.example") || strings.Contains(err.Error(), listener.Addr().String()) {
++		t.Fatal("error exposed credentials or traffic metadata")
++	}
++	if entries, err := os.ReadDir(work); err != nil || len(entries) != 0 {
++		t.Fatalf("private probe configuration was retained: %d entries, %v", len(entries), err)
++	}
++}
++
++func TestDetailedSuccessfulHTTPS(t *testing.T) {
++	origin := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { io.WriteString(w, "complete test body") }))
++	defer origin.Close()
++	in := testTunnel(t, origin.Listener.Addr().String())
++	roots := x509.NewCertPool()
++	roots.AddCert(origin.Certificate())
++	in.TLSConfig = &tls.Config{RootCAs: roots}
++	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
++	defer cancel()
++	r, err := CheckHTTPDetailed(ctx, in)
++	if err != nil || !r.OK || !r.Handshake || r.Stage != "complete" || r.HTTPStatus != http.StatusOK || r.ErrorClass != "" {
++		t.Fatalf("successful check misreported: %+v, %v", r, err)
++	}
++}
++
++func TestDetailedTLSFailureRetainsAuthenticatedHandshake(t *testing.T) {
++	origin := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { io.WriteString(w, "ok") }))
++	origin.Config.ErrorLog = log.New(io.Discard, "", 0)
++	origin.StartTLS()
++	defer origin.Close()
++	in := testTunnel(t, origin.Listener.Addr().String())
++	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
++	defer cancel()
++	r, err := CheckHTTPDetailed(ctx, in)
++	if err == nil || r.OK || !r.Handshake || r.Stage != "tls" || r.ErrorClass != "tls_certificate_error" {
++		t.Fatalf("authenticated TLS failure misreported: %+v, %v", r, err)
++	}
++}
++
++func TestDetailedHTTPTimeoutRetainsAuthenticatedHandshake(t *testing.T) {
++	started := make(chan struct{})
++	origin := httptest.NewTLSServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
++		close(started)
++		<-r.Context().Done()
++	}))
++	defer origin.Close()
++	in := testTunnel(t, origin.Listener.Addr().String())
++	roots := x509.NewCertPool()
++	roots.AddCert(origin.Certificate())
++	in.TLSConfig = &tls.Config{RootCAs: roots}
++	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
++	defer cancel()
++	r, err := CheckHTTPDetailed(ctx, in)
++	select {
++	case <-started:
++	default:
++		t.Fatal("request never reached delayed HTTP origin")
++	}
++	if err == nil || r.OK || !r.Handshake || r.Stage != "http" || r.ErrorClass != "deadline_exceeded" {
++		t.Fatalf("authenticated HTTP timeout misreported: %+v, %v", r, err)
++	}
++}
++
++func TestCheckHTTPCompatibilityWrapper(t *testing.T) {
++	origin := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusServiceUnavailable) }))
++	defer origin.Close()
++	in := testTunnel(t, origin.Listener.Addr().String())
++	roots := x509.NewCertPool()
++	roots.AddCert(origin.Certificate())
++	in.TLSConfig = &tls.Config{RootCAs: roots}
++	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
++	defer cancel()
++	status, err := CheckHTTP(ctx, in)
++	if status != http.StatusServiceUnavailable || err == nil {
++		t.Fatalf("compatibility wrapper lost HTTP status: %d, %v", status, err)
++	}
++}

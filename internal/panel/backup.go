@@ -57,112 +57,119 @@ func InspectBackupFile(path string) (summary BackupSummary, err error) {
 	}
 	defer db.Close()
 	err = db.View(func(tx *bolt.Tx) error {
-		for e := range tx.Check() {
-			if e != nil {
-				return errors.New("backup database integrity check failed")
-			}
-		}
-		for _, name := range [][]byte{meta, clients, seeds, events} {
-			if tx.Bucket(name) == nil {
-				return errors.New("backup is missing panel tables")
-			}
-		}
-		if err := tx.ForEach(func(name []byte, _ *bolt.Bucket) error {
-			if !bytes.Equal(name, meta) && !bytes.Equal(name, clients) && !bytes.Equal(name, seeds) && !bytes.Equal(name, events) && !bytes.Equal(name, subscriptions) && !bytes.Equal(name, subscriptionIndex) {
-				return errors.New("unsupported backup database version")
-			}
-			return nil
-		}); err != nil {
-			return err
-		}
-		var cfg Settings
-		if err := json.Unmarshal(tx.Bucket(meta).Get([]byte("settings")), &cfg); err != nil {
-			return err
-		}
-		if err := cfg.Validate(); err != nil {
-			return err
-		}
-		summary.BaseZone = cfg.BaseZone
-		var admin Admin
-		if err := json.Unmarshal(tx.Bucket(meta).Get([]byte("admin")), &admin); err != nil {
-			return err
-		}
-		cost, e := bcrypt.Cost(admin.Hash)
-		if e != nil || cost < 10 || cost > 14 || admin.Name == "" || len(admin.Name) > 64 {
-			return errors.New("invalid backup administrator")
-		}
-		zones := map[string]bool{}
-		if err := tx.Bucket(clients).ForEach(func(k, v []byte) error {
-			if v == nil || len(v) > 8192 || !identityPattern.Match(k) {
-				return errors.New("invalid backup account record")
-			}
-			var c Client
-			if e := json.Unmarshal(v, &c); e != nil {
-				return e
-			}
-			if c.ID != string(k) || c.Revision == 0 || c.UsageEpoch == 0 || c.UploadBytes < 0 || c.DownloadBytes < 0 || c.UploadBytes > 1<<60 || c.DownloadBytes > 1<<60 {
-				return errors.New("invalid backup account counters")
-			}
-			in := ClientInput{Engines: c.Engines, Name: c.Name, Note: c.Note, Enabled: c.Enabled, QuotaBytes: c.QuotaBytes, ExpiresAt: c.ExpiresAt, RateBytes: c.RateBytes, StreamLimit: c.StreamLimit}
-			if e := in.validate(); e != nil {
-				return e
-			}
-			label := strings.TrimSuffix(c.Zone, "."+cfg.BaseZone)
-			if label == c.Zone || len(label) < 1 || len(label) > 63 || strings.Contains(label, ".") || zones[c.Zone] {
-				return errors.New("invalid or duplicate backup account zone")
-			}
-			for _, r := range label {
-				if !(r >= 'a' && r <= 'z' || r >= '0' && r <= '9' || r == '-') {
-					return errors.New("invalid backup account zone")
-				}
-			}
-			zones[c.Zone] = true
-			seed := tx.Bucket(seeds).Get(k)
-			if len(seed) != ed25519.SeedSize || base64.StdEncoding.EncodeToString(ed25519.NewKeyFromSeed(seed).Public().(ed25519.PublicKey)) != c.PublicKey {
-				return errors.New("backup account key mismatch")
-			}
-			summary.Accounts++
-			if summary.Accounts > MaxClients {
-				return errors.New("backup has too many accounts")
-			}
-			return nil
-		}); err != nil {
-			return err
-		}
-		if tx.Bucket(seeds).Stats().KeyN != summary.Accounts {
-			return errors.New("backup key table mismatch")
-		}
-		// Older backups legitimately omit subscription tables. New backups must
-		// contain a complete, account-bound token/index pair.
-		subs, index := tx.Bucket(subscriptions), tx.Bucket(subscriptionIndex)
-		if (subs == nil) != (index == nil) {
-			return errors.New("backup subscription table mismatch")
-		}
-		if subs != nil {
-			if subs.Stats().KeyN > summary.Accounts || index.Stats().KeyN != subs.Stats().KeyN {
-				return errors.New("backup subscription index mismatch")
-			}
-			if err := subs.ForEach(func(k, v []byte) error {
-				if !identityPattern.Match(k) || tx.Bucket(clients).Get(k) == nil || len(v) != 32 || !bytes.Equal(index.Get(subscriptionDigest(v)), k) {
-					return errors.New("invalid backup subscription")
-				}
-				return nil
-			}); err != nil {
-				return err
-			}
-		}
-		if tx.Bucket(events).Stats().KeyN > 2000 {
-			return errors.New("backup has too many audit events")
-		}
-		return tx.Bucket(events).ForEach(func(k, v []byte) error {
-			if v == nil || len(k) > 32 || len(v) > 4096 {
-				return errors.New("invalid backup audit record")
-			}
-			var ev Event
-			return json.Unmarshal(v, &ev)
-		})
+		return inspectBackupTransaction(tx, &summary)
 	})
 	return summary, err
+}
+
+func inspectBackupTransaction(tx *bolt.Tx, summary *BackupSummary) error {
+	for e := range tx.Check() {
+		if e != nil {
+			return errors.New("backup database integrity check failed")
+		}
+	}
+	for _, name := range [][]byte{meta, clients, seeds, events} {
+		if tx.Bucket(name) == nil {
+			return errors.New("backup is missing panel tables")
+		}
+	}
+	if err := tx.ForEach(func(name []byte, _ *bolt.Bucket) error {
+		if !bytes.Equal(name, meta) && !bytes.Equal(name, clients) && !bytes.Equal(name, seeds) && !bytes.Equal(name, events) && !bytes.Equal(name, subscriptions) && !bytes.Equal(name, subscriptionIndex) {
+			return errors.New("unsupported backup database version")
+		}
+		return nil
+	}); err != nil {
+		return err
+	}
+	var cfg Settings
+	if err := json.Unmarshal(tx.Bucket(meta).Get([]byte("settings")), &cfg); err != nil {
+		return err
+	}
+	if err := cfg.Validate(); err != nil {
+		return err
+	}
+	summary.BaseZone = cfg.BaseZone
+	var admin Admin
+	if err := json.Unmarshal(tx.Bucket(meta).Get([]byte("admin")), &admin); err != nil {
+		return err
+	}
+	cost, e := bcrypt.Cost(admin.Hash)
+	if e != nil || cost < 10 || cost > 14 || admin.Name == "" || len(admin.Name) > 64 {
+		return errors.New("invalid backup administrator")
+	}
+	zones := map[string]bool{}
+	if err := tx.Bucket(clients).ForEach(func(k, v []byte) error {
+		if v == nil || len(v) > 8192 || !identityPattern.Match(k) {
+			return errors.New("invalid backup account record")
+		}
+		var c Client
+		if e := json.Unmarshal(v, &c); e != nil {
+			return e
+		}
+		if e := c.normalizeSessionLimits(); e != nil {
+			return e
+		}
+		if c.ID != string(k) || c.Revision == 0 || c.UsageEpoch == 0 || c.UploadBytes < 0 || c.DownloadBytes < 0 || c.UploadBytes > 1<<60 || c.DownloadBytes > 1<<60 {
+			return errors.New("invalid backup account counters")
+		}
+		in := ClientInput{Engines: c.Engines, Name: c.Name, Note: c.Note, Enabled: c.Enabled, QuotaBytes: c.QuotaBytes, ExpiresAt: c.ExpiresAt, RateBytes: c.RateBytes, StreamLimit: c.StreamLimit}
+		if e := in.validate(); e != nil {
+			return e
+		}
+		label := strings.TrimSuffix(c.Zone, "."+cfg.BaseZone)
+		if label == c.Zone || len(label) < 1 || len(label) > 63 || strings.Contains(label, ".") || zones[c.Zone] {
+			return errors.New("invalid or duplicate backup account zone")
+		}
+		for _, r := range label {
+			if !(r >= 'a' && r <= 'z' || r >= '0' && r <= '9' || r == '-') {
+				return errors.New("invalid backup account zone")
+			}
+		}
+		zones[c.Zone] = true
+		seed := tx.Bucket(seeds).Get(k)
+		if len(seed) != ed25519.SeedSize || base64.StdEncoding.EncodeToString(ed25519.NewKeyFromSeed(seed).Public().(ed25519.PublicKey)) != c.PublicKey {
+			return errors.New("backup account key mismatch")
+		}
+		summary.Accounts++
+		if summary.Accounts > MaxClients {
+			return errors.New("backup has too many accounts")
+		}
+		return nil
+	}); err != nil {
+		return err
+	}
+	if tx.Bucket(seeds).Stats().KeyN != summary.Accounts {
+		return errors.New("backup key table mismatch")
+	}
+	// Older backups legitimately omit subscription tables. New backups must
+	// contain a complete, account-bound token/index pair.
+	subs, index := tx.Bucket(subscriptions), tx.Bucket(subscriptionIndex)
+	if (subs == nil) != (index == nil) {
+		return errors.New("backup subscription table mismatch")
+	}
+	if subs != nil {
+		if subs.Stats().KeyN > summary.Accounts || index.Stats().KeyN != subs.Stats().KeyN {
+			return errors.New("backup subscription index mismatch")
+		}
+		if err := subs.ForEach(func(k, v []byte) error {
+			if !identityPattern.Match(k) || tx.Bucket(clients).Get(k) == nil || len(v) != 32 || !bytes.Equal(index.Get(subscriptionDigest(v)), k) {
+				return errors.New("invalid backup subscription")
+			}
+			return nil
+		}); err != nil {
+			return err
+		}
+	}
+	if tx.Bucket(events).Stats().KeyN > 2000 {
+		return errors.New("backup has too many audit events")
+	}
+	return tx.Bucket(events).ForEach(func(k, v []byte) error {
+		if v == nil || len(k) > 32 || len(v) > 4096 {
+			return errors.New("invalid backup audit record")
+		}
+		var ev Event
+		return json.Unmarshal(v, &ev)
+	})
 }
 
 // Keep current administrator credentials when applying a full account restore.

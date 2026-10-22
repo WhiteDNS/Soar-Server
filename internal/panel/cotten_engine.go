@@ -12,6 +12,7 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	cotten "cottendns-go/server"
@@ -22,6 +23,7 @@ type cottenJob struct {
 	rt    *accountRuntime
 	query []byte
 	reply func([]byte)
+	tcp   bool
 }
 
 func (m *Manager) runAccount(rt *accountRuntime, seed []byte) {
@@ -35,9 +37,21 @@ func (m *Manager) runAccount(rt *accountRuntime, seed []byte) {
 			go func() {
 				defer servers.Done()
 				defer rt.cancel()
-				_ = soar.Serve(rt.ctx, pc, soar.ServerConfig{Zone: zone, PrivateKey: ed25519.NewKeyFromSeed(seed), Dial: func(ctx context.Context, network, address string) (net.Conn, error) {
-					return m.dial(rt, ctx, network, address)
-				}, MaxSessions: 8, MaxTotalStreams: 128, MaxStreams: 128, Logger: slog.New(slog.NewTextHandler(io.Discard, nil))})
+				totalStreams, sessionStreams := soarStreamLimits(rt.client.StreamLimit)
+				m.diagnostics.soarStarts.Add(1)
+				m.diagnostics.soarRunning.Add(1)
+				err := soar.Serve(rt.ctx, pc, soar.ServerConfig{Zone: zone, PrivateKey: ed25519.NewKeyFromSeed(seed), Dial: func(ctx context.Context, network, address string) (net.Conn, error) {
+					return m.dialForEngine(rt, ctx, network, address, upstreamSoar)
+				}, MaxSessions: rt.client.SoarSessionLimit, MaxTotalStreams: totalStreams, MaxStreams: sessionStreams, Logger: slog.New(engineDiagnosticHandler{&m.diagnostics})})
+				m.diagnostics.soarRunning.Add(-1)
+				m.diagnostics.soarExits.Add(1)
+				if rt.ctx.Err() == nil {
+					m.diagnostics.soarUnexpectedExits.Add(1)
+					m.diagnostics.lastEngineIssueUnixMS.Store(time.Now().UnixMilli())
+					if err != nil {
+						m.diagnostics.soarServeErrors.Add(1)
+					}
+				}
 			}()
 		}
 		go func() { servers.Wait(); close(soarDone) }()
@@ -50,7 +64,11 @@ func (m *Manager) runAccount(rt *accountRuntime, seed []byte) {
 	engine := rt.cotten
 	rt.cottenMu.Unlock()
 	if engine != nil {
-		_ = engine.Close()
+		if err := engine.Close(); err != nil {
+			m.diagnostics.cottenCloseErrors.Add(1)
+			m.diagnostics.lastEngineIssueUnixMS.Store(time.Now().UnixMilli())
+		}
+		m.diagnostics.cottenRunning.Add(-1)
 	}
 	<-soarDone
 }
@@ -72,21 +90,39 @@ func (m *Manager) cottenFor(rt *accountRuntime) (*cotten.Server, error) {
 	for i, zone := range rt.zones {
 		domains[i] = "cot." + zone
 	}
-	engine, err := cotten.New(rt.ctx, cotten.Config{Domain: domains[0], Domains: domains, Key: cottenKey(seed),
+	engine, err := cotten.New(rt.ctx, cotten.Config{Domain: domains[0], Domains: domains, Key: cottenKey(seed), MaxActiveSessions: rt.client.CottenSessionLimit, MaxStreamsPerSession: cottenStreamLimit(rt.client.StreamLimit),
 		Allowed: func() bool {
 			c, err := m.store.Get(rt.client.ID)
 			return err == nil && c.Status(time.Now()) == "active" && c.hasEngine("cotten") && c.UsageEpoch == rt.client.UsageEpoch && c.PublicKey == rt.client.PublicKey
 		},
 		DialContext: func(ctx context.Context, network, address string) (net.Conn, error) {
-			return m.dial(rt, ctx, network, address)
+			return m.dialForEngine(rt, ctx, network, address, upstreamCotten)
 		},
 		ExchangeDNS: func(ctx context.Context, query []byte) ([]byte, error) { return m.cottenDNS(rt, ctx, query) },
 	})
 	if err != nil {
+		m.diagnostics.cottenStartErrors.Add(1)
+		m.diagnostics.lastEngineIssueUnixMS.Store(time.Now().UnixMilli())
 		return nil, err
 	}
+	m.diagnostics.cottenStarts.Add(1)
+	m.diagnostics.cottenRunning.Add(1)
 	rt.cotten = engine
 	return engine, nil
+}
+
+func soarStreamLimits(accountLimit int) (total, perSession int) {
+	if accountLimit == 0 {
+		return MaxStreamLimit, 256
+	}
+	return accountLimit, min(accountLimit, 256)
+}
+
+func cottenStreamLimit(accountLimit int) int {
+	if accountLimit == 0 {
+		return 65535
+	}
+	return min(accountLimit, 65535)
 }
 
 func (m *Manager) startCottenWorkers() {
@@ -101,7 +137,11 @@ func (m *Manager) startCottenWorkers() {
 				case job := <-m.cottenJobs:
 					var response []byte
 					if engine, err := m.cottenFor(job.rt); err == nil {
-						response = engine.HandleDNS(job.query)
+						if job.tcp {
+							response = engine.HandleDNSTCP(job.query)
+						} else {
+							response = engine.HandleDNS(job.query)
+						}
 					}
 					job.reply(response)
 				}
@@ -148,11 +188,12 @@ func (m *Manager) routeDNS(query []byte, remote net.Addr, tcp bool, reply func([
 		cottenZone := "cot." + zone
 		cottenQuery := name == cottenZone || strings.HasSuffix(name, "."+cottenZone)
 		if cottenQuery && rt.client.hasEngine("cotten") {
-			job := cottenJob{rt: rt, query: append([]byte(nil), query...), reply: reply}
+			job := cottenJob{rt: rt, query: append([]byte(nil), query...), reply: reply, tcp: tcp}
 			select {
 			case m.cottenJobs <- job:
 				return
 			default:
+				m.diagnostics.cottenQueueDrops.Add(1)
 			}
 		} else if !cottenQuery && !tcp && rt.client.hasEngine("soar") {
 			q := packet{append([]byte(nil), query...), remote}
@@ -160,6 +201,7 @@ func (m *Manager) routeDNS(query []byte, remote net.Addr, tcp bool, reply func([
 			case rt.soarPCs[zone].input <- q:
 			case <-rt.soarPCs[zone].done:
 			default:
+				m.diagnostics.soarQueueDrops.Add(1)
 			}
 			return
 		}
@@ -187,14 +229,32 @@ func (m *Manager) ServeTCP(listener net.Listener) error {
 		mu.Unlock()
 	}()
 	defer func() { close(done); wg.Wait() }()
+	var acceptDelay time.Duration
 	for {
 		c, err := listener.Accept()
 		if err != nil {
 			if m.ctx.Err() != nil || errors.Is(err, net.ErrClosed) {
 				return nil
 			}
+			if recoverableAcceptError(err) {
+				m.diagnostics.tcpAcceptRetries.Add(1)
+				if acceptDelay == 0 {
+					acceptDelay = 5 * time.Millisecond
+				} else {
+					acceptDelay = min(acceptDelay*2, time.Second)
+				}
+				timer := time.NewTimer(acceptDelay)
+				select {
+				case <-m.ctx.Done():
+					timer.Stop()
+					return nil
+				case <-timer.C:
+				}
+				continue
+			}
 			return err
 		}
+		acceptDelay = 0
 		mu.Lock()
 		if m.ctx.Err() != nil || len(open) >= 128 {
 			mu.Unlock()
@@ -245,6 +305,14 @@ func (m *Manager) ServeTCP(listener net.Listener) error {
 	}
 }
 
+func recoverableAcceptError(err error) bool {
+	if errors.Is(err, syscall.EMFILE) || errors.Is(err, syscall.ENFILE) {
+		return true
+	}
+	var temporary interface{ Temporary() bool }
+	return errors.As(err, &temporary) && temporary.Temporary()
+}
+
 func (m *Manager) cottenDNS(rt *accountRuntime, parent context.Context, query []byte) ([]byte, error) {
 	if _, _, _, ok := dnsQuestion(query); !ok || len(query) > 4096 {
 		return nil, errors.New("invalid tunneled DNS query")
@@ -254,17 +322,25 @@ func (m *Manager) cottenDNS(rt *accountRuntime, parent context.Context, query []
 	m.mu.RUnlock()
 	ctx, cancel := context.WithTimeout(parent, 6*time.Second)
 	defer cancel()
-	for i, resolver := range resolvers {
-		endpoint := resolverEndpoint(resolver)
+	candidates := rt.orderedResolvers(resolvers, time.Now())
+	for i, candidate := range candidates {
+		endpoint := candidate.endpoint
 		deadline, _ := ctx.Deadline()
-		budget := min(2*time.Second, time.Until(deadline)/time.Duration(len(resolvers)-i))
+		budget := min(2*time.Second, time.Until(deadline)/time.Duration(len(candidates)-i))
+		if candidate.probe {
+			budget = min(budget, 250*time.Millisecond)
+		}
 		if budget <= 0 {
 			break
 		}
 		attempt, stop := context.WithTimeout(ctx, budget)
+		started := time.Now()
 		response, err := m.exchangeCottenDNS(rt, attempt, "udp", endpoint, query)
 		if err != nil {
 			stop()
+			if parent.Err() == nil && resolverFailure(err, rt) {
+				rt.resolverResult(endpoint, time.Since(started), false)
+			}
 			continue
 		}
 		if len(response) >= 4 && response[2]&2 != 0 {
@@ -273,12 +349,21 @@ func (m *Manager) cottenDNS(rt *accountRuntime, parent context.Context, query []
 		stop()
 		if err == nil && len(response) >= 12 && response[0] == query[0] && response[1] == query[1] && response[2]&0x80 != 0 {
 			if code := response[3] & 15; code == 2 || code == 5 {
+				rt.resolverResult(endpoint, time.Since(started), false)
 				continue
 			}
+			rt.resolverResult(endpoint, time.Since(started), true)
 			return response, nil
+		}
+		if parent.Err() == nil && resolverFailure(err, rt) {
+			rt.resolverResult(endpoint, time.Since(started), false)
 		}
 	}
 	return nil, errors.New("DNS resolver unavailable")
+}
+
+func resolverFailure(err error, rt *accountRuntime) bool {
+	return rt.ctx.Err() == nil && !errors.Is(err, ErrDenied) && !errors.Is(err, context.Canceled) && !errors.Is(err, errPacingDeadline) && !errors.Is(err, errAccountStreamLimit) && !errors.Is(err, errServerStreamCapacity) && !errors.Is(err, errDestinationPort)
 }
 
 func resolverEndpoint(resolver string) string {

@@ -190,6 +190,10 @@ const panelUI = (() => {
   text('dns-send-total',size(down));text('dns-receive-total',size(up));text('dns-traffic',size(up+down));
   text('uptime',fmt.format(Math.floor(d.uptime_seconds/3600))+panelText(" ساعت و ")+fmt.format(Math.floor(d.uptime_seconds/60)%60)+panelText(" دقیقه"));
   text('platform',h.platform);text('panel-version',d.version);text('footer-version',d.version);
+  const diagnostics=d.diagnostics||{},accounting=d.accounting||{},metric=n=>Number.isFinite(n)?fmt.format(n):'—',ratio=(used,limit)=>metric(used)+' / '+metric(limit);
+  text('diag-udp-errors',metric(diagnostics.udp_write_errors));text('diag-queue-drops',metric((diagnostics.soar_queue_drops||0)+(diagnostics.cotten_queue_drops||0)));
+  text('diag-dial-failures',metric(diagnostics.dial_failures));text('diag-dial-time',diagnostics.dial_attempts?((diagnostics.dial_latency_microseconds||0)/diagnostics.dial_attempts/1000).toFixed(1)+' ms':'—');
+  text('diag-fds',ratio(h.file_descriptors_used,h.file_descriptors_limit));text('diag-conntrack',ratio(h.conntrack_used,h.conntrack_limit));text('diag-accounting',ratio(accounting.requests,accounting.commits));text('diag-accept-retries',metric(diagnostics.tcp_accept_retries));
   text('stat-accounts',fmt.format(d.accounts));text('stat-active',fmt.format(d.states.active)+panelText(" حساب فعال"));text('stat-up',size(d.upload_bytes));text('stat-down',size(d.download_bytes));
   const states={active:panelText("فعال"),disabled:panelText("غیرفعال"),expired:panelText("منقضی"),exhausted:panelText("حجم تمام‌شده")};
   get('status-breakdown').replaceChildren(...Object.entries(states).map(([key,label])=>{const row=document.createElement('div'),badge=document.createElement('span'),value=document.createElement('strong');badge.className='badge '+key;badge.textContent=label;value.textContent=fmt.format(d.states[key]);row.append(badge,value);return row;}));

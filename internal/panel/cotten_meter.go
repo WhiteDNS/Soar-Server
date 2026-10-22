@@ -16,7 +16,7 @@ func (c *meterConn) readDatagram(p []byte) (int, error) {
 	if n == 0 {
 		return n, err
 	}
-	if e := c.pace(n, info.RateBytes); e != nil {
+	if e := c.pace(n, info.RateBytes, true); e != nil {
 		return 0, e
 	}
 	if c.rt.ctx.Err() != nil {
@@ -40,7 +40,7 @@ func (c *meterConn) writeDatagram(p []byte) (int, error) {
 	if err != nil || info.Status(time.Now()) != "active" || c.rt.ctx.Err() != nil {
 		return 0, ErrDenied
 	}
-	if err = c.pace(len(p), info.RateBytes); err != nil {
+	if err = c.pace(len(p), info.RateBytes, false); err != nil {
 		return 0, err
 	}
 	if c.rt.ctx.Err() != nil {

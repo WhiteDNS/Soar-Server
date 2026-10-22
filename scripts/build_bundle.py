@@ -8,6 +8,7 @@ import os
 from pathlib import Path
 import shutil
 import subprocess
+import sys
 import tarfile
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -27,6 +28,8 @@ def main() -> None:
     binaries.mkdir(parents=True, exist_ok=True)
     env = os.environ.copy()
     env.update(GOOS="linux", GOARCH="amd64", CGO_ENABLED="0")
+    cotten = Path(run("go", "list", "-m", "-f", "{{.Dir}}", "cottendns-go"))
+    subprocess.run([sys.executable, str(ROOT / "scripts/prepare_cotten_engine.py"), "--source", str(cotten), "--check"], cwd=ROOT, check=True)
     for program, package in (
         ("soar-server", "github.com/getlantern/soar/cmd/soar-server"),
         ("soar-check", "./cmd/soar-check"),
