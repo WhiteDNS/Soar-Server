@@ -4,7 +4,7 @@ set -Eeuo pipefail
 export LC_ALL=C
 umask 077
 ROOT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
-PANEL_VERSION=0.5.0
+PANEL_VERSION=0.6.0
 DB=/var/lib/soar-panel/panel.db
 SERVICE=/etc/systemd/system/soar-panel.service
 BIN="$ROOT_DIR/bin/linux-amd64/soar-panel"
@@ -265,7 +265,7 @@ printf 'Verify the phone opens websites and its public IP matches this server.\n
 printf 'If it does not connect, check NS/A records, UDP/53, TCP/53 and client resolver reachability.\n'
 printf 'Service: systemctl status soar-panel\nLogs: journalctl -u soar-panel -n 40 --no-pager\n'
 printf 'Private rollback backup: %s\n' "$backup"
-printf 'Guide: https://github.com/WhiteDNS/Soar-Server/blob/panel-v0.5.0/docs/PANEL.fa.md\n'
+printf 'Guide: https://github.com/WhiteDNS/Soar-Server/blob/panel-v0.6.0/docs/PANEL.fa.md\n'
 printf '\nConfigure a domain, automatic HTTPS and a random login path now or later.\n'
 read -r -p 'Open the optional domain/HTTPS setup now? [y/N]: ' secure_now || secure_now=n
 if [[ $secure_now == y || $secure_now == Y ]];then

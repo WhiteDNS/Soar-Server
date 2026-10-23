@@ -12,6 +12,10 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
+      - name: Check release version consistency
+        run: |
+          python3 scripts/build_panel_bundle.py --print-version
+          python3 -m unittest discover -s tests -p 'panel_release_test.py'
       - name: Check out the exact Cotten engine source
         uses: actions/checkout@v4
         with:
@@ -46,9 +50,13 @@ jobs:
           bash tests/panel_installer_test.sh
           bash tests/panel_bootstrap_test.sh
       - name: Build offline Linux bundle
+        id: bundle
         run: |
+          version=$(python3 scripts/build_panel_bundle.py --print-version)
           python3 scripts/build_panel_bundle.py
-          bash dist/soar-panel-0.5.0-linux-amd64/panel-install.sh --check-bundle
+          directory="dist/soar-panel-$version-linux-amd64"
+          bash "$directory/panel-install.sh" --check-bundle
+          echo "directory=$directory" >> "$GITHUB_OUTPUT"
       - uses: actions/setup-node@v4
         with:
           node-version: '24'
@@ -58,7 +66,7 @@ jobs:
           node "$RUNNER_TEMP/panel-tools/node_modules/playwright/cli.js" install --with-deps chromium
       - name: Test browser workflows and responsive layout
         env:
-          PANEL_BINARY: ${{ github.workspace }}/dist/soar-panel-0.5.0-linux-amd64/bin/linux-amd64/soar-panel
+          PANEL_BINARY: ${{ github.workspace }}/${{ steps.bundle.outputs.directory }}/bin/linux-amd64/soar-panel
           PANEL_PLAYWRIGHT: ${{ runner.temp }}/panel-tools/node_modules/playwright
           PANEL_SCREENSHOTS: ${{ runner.temp }}/panel-screenshots
         run: |
@@ -71,3 +79,35 @@ jobs:
             dist/soar-panel-*.tar.gz*
             ${{ runner.temp }}/panel-screenshots/*.png
           if-no-files-found: error
+  release:
+    if: startsWith(github.ref, 'refs/tags/panel-v')
+    needs: verify
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    concurrency:
+      group: panel-release-${{ github.ref }}
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: soar-panel-linux-amd64
+          path: release-artifacts
+      - name: Publish verified panel assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version=$(python3 scripts/build_panel_bundle.py --print-version)
+          asset="soar-panel-$version-linux-amd64.tar.gz"
+          mapfile -t archives < <(find release-artifacts -type f -name "$asset")
+          test "${#archives[@]}" -eq 1
+          archive="${archives[0]}"
+          checksum="$archive.sha256"
+          (cd "$(dirname "$archive")" && sha256sum --check "$asset.sha256")
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" "$archive" "$checksum"
+          else
+            gh release create "$GITHUB_REF_NAME" "$archive" "$checksum" --verify-tag \
+              --title "WhiteDNS Panel $version" --notes-file "docs/RELEASE-panel-$version.md"
+          fi
