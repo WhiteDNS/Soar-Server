@@ -94,11 +94,19 @@ bash <(curl -fsSL https://raw.githubusercontent.com/WhiteDNS/Soar-Server/main/se
 Go 1.26.1، Python 3 و Bash در محیط توسعه لازم‌اند:
 
 ```bash
+python3 scripts/prepare_cotten_engine.py --workspace .engine-source/patched.go.work
+export GOWORK="$PWD/.engine-source/patched.go.work"
+go build -o .engine-source/cotten-client ./.engine-source/CottenDNS/cmd/client
 bash tests/panel_installer_test.sh
 bash tests/panel_bootstrap_test.sh
-go test ./... -count=1 -timeout 90s
+PANEL_COTTEN_CLIENT="$PWD/.engine-source/cotten-client" go test ./... -count=1 -timeout 240s
 go test -race ./internal/panel ./internal/panelops -count=1 -timeout 300s
 go vet ./...
 python3 scripts/build_panel_bundle.py
 bash dist/soar-panel-0.5.0-linux-amd64/panel-install.sh --check-bundle
 ```
+
+نسخهٔ پایه، پچ و هش تمام فایل‌های موتور Cotten در `patches/cotten-engine.json`
+ثبت شده‌اند. ابزار آماده‌سازی، پچ را روی همان commit اعمال و نتیجه را بررسی می‌کند؛
+ساخت بسته نیز سورس متفاوت یا فایل کد اضافه را رد می‌کند. این مرحله تنظیمات،
+کاربران یا پایگاه دادهٔ سرویس در حال اجرا را تغییر نمی‌دهد.

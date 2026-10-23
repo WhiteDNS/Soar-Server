@@ -11,6 +11,23 @@ import (
 )
 
 func (s *hostSampler) platform(v map[string]any) {
+	if entries, err := os.ReadDir("/proc/self/fd"); err == nil {
+		v["file_descriptors_used"] = len(entries)
+	}
+	var limit unix.Rlimit
+	if err := unix.Getrlimit(unix.RLIMIT_NOFILE, &limit); err == nil {
+		v["file_descriptors_limit"] = limit.Cur
+	}
+	for name, path := range map[string]string{
+		"conntrack_used":  "/proc/sys/net/netfilter/nf_conntrack_count",
+		"conntrack_limit": "/proc/sys/net/netfilter/nf_conntrack_max",
+	} {
+		if raw, err := os.ReadFile(path); err == nil {
+			if n, err := strconv.ParseUint(strings.TrimSpace(string(raw)), 10, 64); err == nil {
+				v[name] = n
+			}
+		}
+	}
 	if raw, e := os.ReadFile("/proc/stat"); e == nil {
 		line := strings.SplitN(string(raw), "\n", 2)[0]
 		fields := strings.Fields(line)

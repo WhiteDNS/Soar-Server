@@ -23,13 +23,13 @@ jobs:
         with:
           go-version: '1.26.1'
           cache-dependency-path: go.sum
-      - name: Verify the public module build and prepare the engine workspace
+      - name: Prepare the verified patched engine workspace
         run: |
           GOWORK=off go mod download
-          GOWORK=off go build -mod=readonly ./cmd/soar-panel ./cmd/soar-panel-ops ./cmd/soar-check
-          # Cotten's upstream module name has no domain. A workspace allows
-          # go mod verify to handle it while preserving upstream imports.
-          go work init . ./.engine-source/CottenDNS
+          python3 scripts/prepare_cotten_engine.py --source .engine-source/CottenDNS --workspace .engine-source/patched.go.work
+          echo "GOWORK=$GITHUB_WORKSPACE/.engine-source/patched.go.work" >> "$GITHUB_ENV"
+      - name: Verify the release binaries
+        run: go build -mod=readonly ./cmd/soar-panel ./cmd/soar-panel-ops ./cmd/soar-check
       - name: Build the pinned native Cotten test client
         run: |
           COTTEN_SOURCE=$(go list -m -f '{{.Dir}}' cottendns-go)
@@ -41,6 +41,7 @@ jobs:
           go test ./... -count=1 -timeout 180s
           go test -race ./internal/panel ./internal/panelops -count=1 -timeout 900s
           go vet ./...
+          (cd .engine-source/CottenDNS && go test ./... -count=1 -timeout 240s && go vet ./...)
           bash tests/installer_test.sh
           bash tests/panel_installer_test.sh
           bash tests/panel_bootstrap_test.sh
@@ -60,7 +61,9 @@ jobs:
           PANEL_BINARY: ${{ github.workspace }}/dist/soar-panel-0.5.0-linux-amd64/bin/linux-amd64/soar-panel
           PANEL_PLAYWRIGHT: ${{ runner.temp }}/panel-tools/node_modules/playwright
           PANEL_SCREENSHOTS: ${{ runner.temp }}/panel-screenshots
-        run: node tests/panel-ui.cjs
+        run: |
+          node tests/panel-ui.cjs
+          node tests/panel-limits-ui.cjs
       - uses: actions/upload-artifact@v4
         with:
           name: soar-panel-linux-amd64

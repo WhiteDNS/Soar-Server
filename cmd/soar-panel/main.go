@@ -58,6 +58,8 @@ func execute(args []string) error {
 	randomPath := f.Bool("random-path", false, "Generate a new private access path")
 	probeID := f.String("probe-id", "", "Temporary installation account to remove (offline installer only)")
 	updateResolvers := f.Bool("update-resolvers", false, "Save selected bootstrap resolvers when finishing a fresh installation")
+	restoreFrom := f.String("restore-from", "", "Restore only stream-limit fields from this backup (offline migrate-stream-limits only)")
+	restoreUnmatched := f.Int("restore-unmatched-limit", 0, "Explicit fallback stream limit for accounts absent from the rollback backup")
 	if err := f.Parse(args[1:]); err != nil {
 		return err
 	}
@@ -66,6 +68,19 @@ func execute(args []string) error {
 	}
 	if *accessFile == "" {
 		*accessFile = filepath.Join(filepath.Dir(*db), "access.json")
+	}
+	if args[0] == "migrate-stream-limits" {
+		var unmatched *int
+		f.Visit(func(option *flag.Flag) {
+			if option.Name == "restore-unmatched-limit" {
+				unmatched = restoreUnmatched
+			}
+		})
+		result, err := panel.MigrateStreamLimits(*db, *restoreFrom, unmatched)
+		if err != nil {
+			return err
+		}
+		return json.NewEncoder(os.Stdout).Encode(result)
 	}
 	if args[0] == "inspect-backup" {
 		v, e := panel.InspectBackupFile(*input)
