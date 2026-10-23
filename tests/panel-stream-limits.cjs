@@ -18,7 +18,7 @@ module.exports=async function testStreamLimits({page,url,out,assert}){
  };
  let fixture;
  try{
-  await page.locator('#page-clients .new-client').click();assert.equal(await streams.inputValue(),'0');await validate(streams);
+  await page.locator('#page-clients .new-client').click();await page.locator('#client-engines').selectOption('both',{force:true});assert.equal(await streams.inputValue(),'0');await validate(streams);
   await form.locator('[name=name]').fill('Stream limits regression');await form.locator('[name=quota]').fill('5');await form.locator('[name=rate]').fill('96');await form.locator('[name=note]').fill('Preserve stream account');await streams.fill('256');await saveAccount();
   fixture=await readClient();assert.equal(fixture.stream_limit,256);unchanged(fixture);
   const row=page.locator('#clients-body tr').filter({hasText:'Stream limits regression'});

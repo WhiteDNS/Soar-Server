@@ -66,6 +66,8 @@ type accountRuntime struct {
 	zones          []string
 	cottenMu       sync.Mutex
 	cotten         *cotten.Server
+	additionalMu   sync.Mutex
+	additional     map[string]dnsEngine
 	client         Client
 	ctx            context.Context
 	cancel         context.CancelFunc

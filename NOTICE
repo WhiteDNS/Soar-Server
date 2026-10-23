@@ -42,3 +42,10 @@ The panel bundle includes licenses/Vazirmatn-OFL.txt.
 The panel's optional automatic HTTPS support uses golang.org/x/crypto/acme/autocert,
 golang.org/x/net and golang.org/x/text (BSD-style licenses). Their original license
 texts are included in the panel bundle's licenses/ directory.
+
+The management panel also embeds the StormDNS and MasterDnsVPN engines (MIT).
+StormDNS: NullRoute1970, https://github.com/nullroute1970/StormDNS
+MasterDnsVPN: Amin Mahmoudi (MasterkinG32), https://github.com/masterking32/MasterDnsVPN
+Pinned revisions and embedded API additions are recorded in
+third_party/{StormDNS,MasterDnsVPN}/UPSTREAM.json. Original license texts
+are included in licenses/StormDNS-LICENSE.txt and licenses/MasterDnsVPN-LICENSE.txt.

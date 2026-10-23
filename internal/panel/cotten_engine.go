@@ -20,10 +20,11 @@ import (
 )
 
 type cottenJob struct {
-	rt    *accountRuntime
-	query []byte
-	reply func([]byte)
-	tcp   bool
+	engine string
+	rt     *accountRuntime
+	query  []byte
+	reply  func([]byte)
+	tcp    bool
 }
 
 func (m *Manager) runAccount(rt *accountRuntime, seed []byte) {
@@ -60,6 +61,7 @@ func (m *Manager) runAccount(rt *accountRuntime, seed []byte) {
 	}
 	<-rt.ctx.Done()
 	rt.stop()
+	m.closeAdditional(rt)
 	rt.cottenMu.Lock()
 	engine := rt.cotten
 	rt.cottenMu.Unlock()
@@ -136,7 +138,11 @@ func (m *Manager) startCottenWorkers() {
 					return
 				case job := <-m.cottenJobs:
 					var response []byte
-					if engine, err := m.cottenFor(job.rt); err == nil {
+					if job.engine == "stormdns" || job.engine == "masterdns" {
+						if engine, err := m.additionalFor(job.rt, job.engine); err == nil {
+							response = engine.HandleDNS(job.query)
+						}
+					} else if engine, err := m.cottenFor(job.rt); err == nil {
 						if job.tcp {
 							response = engine.HandleDNSTCP(job.query)
 						} else {
@@ -150,8 +156,8 @@ func (m *Manager) startCottenWorkers() {
 	}
 }
 
-// Both engines live beneath the existing delegation. "cot" is an internal
-// engine label; the operator never needs another DNS record or another key.
+// All engines live beneath the existing delegation. Engine prefixes route
+// requests without requiring additional DNS records.
 func (m *Manager) routeDNS(query []byte, remote net.Addr, tcp bool, reply func([]byte)) {
 	name, end, typ, ok := dnsQuestion(query)
 	if !ok {
@@ -169,13 +175,6 @@ func (m *Manager) routeDNS(query []byte, remote net.Addr, tcp bool, reply func([
 		reply(response)
 		return
 	}
-	// Recursive resolvers may minimise QNAMEs at either account or engine
-	// labels. Answer authoritative NS/SOA control queries before tunnel routing.
-	if typ == 2 || typ == 6 {
-		m.mu.RUnlock()
-		reply(dnsControl(query, end, name, typ, base, nameserver))
-		return
-	}
 	var rt *accountRuntime
 	zone := ""
 	if strings.HasSuffix(name, "."+base) {
@@ -184,18 +183,38 @@ func (m *Manager) routeDNS(query []byte, remote net.Addr, tcp bool, reply func([
 		rt = m.zones[zone]
 	}
 	m.mu.RUnlock()
+	selected := "soar"
+	payload := false
 	if rt != nil {
-		cottenZone := "cot." + zone
-		cottenQuery := name == cottenZone || strings.HasSuffix(name, "."+cottenZone)
-		if cottenQuery && rt.client.hasEngine("cotten") {
-			job := cottenJob{rt: rt, query: append([]byte(nil), query...), reply: reply, tcp: tcp}
+		for _, engine := range engineOrder[1:] {
+			engineZone := enginePrefix(engine) + zone
+			if name == engineZone || strings.HasSuffix(name, "."+engineZone) {
+				selected = engine
+				payload = name != engineZone
+				break
+			}
+		}
+	}
+	// NS can carry StormDNS tunnel data. Only control names (including
+	// QNAME minimisation at the engine apex) receive authoritative answers.
+	if typ == 6 || typ == 2 && !(payload && (selected == "stormdns" || selected == "masterdns")) {
+		reply(dnsControl(query, end, name, typ, base, nameserver))
+		return
+	}
+	if rt != nil {
+		if selected != "soar" && rt.client.hasEngine(selected) {
+			job := cottenJob{engine: selected, rt: rt, query: append([]byte(nil), query...), reply: reply, tcp: tcp}
 			select {
 			case m.cottenJobs <- job:
 				return
 			default:
-				m.diagnostics.cottenQueueDrops.Add(1)
+				if selected == "cotten" {
+					m.diagnostics.cottenQueueDrops.Add(1)
+				} else {
+					m.diagnostics.forAdditional(selected).queueDrops.Add(1)
+				}
 			}
-		} else if !cottenQuery && !tcp && rt.client.hasEngine("soar") {
+		} else if selected == "soar" && !tcp && rt.client.hasEngine("soar") {
 			q := packet{append([]byte(nil), query...), remote}
 			select {
 			case rt.soarPCs[zone].input <- q:
@@ -314,6 +333,10 @@ func recoverableAcceptError(err error) bool {
 }
 
 func (m *Manager) cottenDNS(rt *accountRuntime, parent context.Context, query []byte) ([]byte, error) {
+	return m.exchangeEngineDNS(rt, parent, query, upstreamCotten)
+}
+
+func (m *Manager) exchangeEngineDNS(rt *accountRuntime, parent context.Context, query []byte, engine upstreamEngine) ([]byte, error) {
 	if _, _, _, ok := dnsQuestion(query); !ok || len(query) > 4096 {
 		return nil, errors.New("invalid tunneled DNS query")
 	}
@@ -335,7 +358,7 @@ func (m *Manager) cottenDNS(rt *accountRuntime, parent context.Context, query []
 		}
 		attempt, stop := context.WithTimeout(ctx, budget)
 		started := time.Now()
-		response, err := m.exchangeCottenDNS(rt, attempt, "udp", endpoint, query)
+		response, err := m.exchangeDNSForEngine(rt, attempt, "udp", endpoint, query, engine)
 		if err != nil {
 			stop()
 			if parent.Err() == nil && resolverFailure(err, rt) {
@@ -344,7 +367,7 @@ func (m *Manager) cottenDNS(rt *accountRuntime, parent context.Context, query []
 			continue
 		}
 		if len(response) >= 4 && response[2]&2 != 0 {
-			response, err = m.exchangeCottenDNS(rt, attempt, "tcp", endpoint, query)
+			response, err = m.exchangeDNSForEngine(rt, attempt, "tcp", endpoint, query, engine)
 		}
 		stop()
 		if err == nil && len(response) >= 12 && response[0] == query[0] && response[1] == query[1] && response[2]&0x80 != 0 {
@@ -392,7 +415,11 @@ func (s Settings) cottenResolvers() []string {
 }
 
 func (m *Manager) exchangeCottenDNS(rt *accountRuntime, ctx context.Context, network, address string, query []byte) ([]byte, error) {
-	c, err := m.dialEgress(rt, ctx, network, address, true)
+	return m.exchangeDNSForEngine(rt, ctx, network, address, query, upstreamCotten)
+}
+
+func (m *Manager) exchangeDNSForEngine(rt *accountRuntime, ctx context.Context, network, address string, query []byte, engine upstreamEngine) ([]byte, error) {
+	c, err := m.dialEgressFor(rt, ctx, network, address, true, engine)
 	if err != nil {
 		return nil, err
 	}

@@ -37,8 +37,8 @@ source "$ROOT_DIR/lib/panel-installer.sh"
 panel_dependencies
 exec 9>/run/lock/soar-panel-install.lock
 flock -n 9 || die 'Another panel installation is running. Wait for it to finish.'
-printf '\nWhiteDNS Soar Panel %s - STABLE\n' "$PANEL_VERSION"
-printf 'Direct profiles require a Soar-enabled WhiteDNS app; subscriptions require WhiteDNS 1.6.8+.\n'
+printf '\nWhiteDNS Soar Panel %s - MULTI-ENGINE BUILD\n' "$PANEL_VERSION"
+printf 'Engines: Soar, CottenDNS, StormDNS and MasterDnsVPN. Use a client supporting the selected engines.\n'
 printf 'The Soar tunneling engine is developed by Lantern: https://soar.lantern.io/\n'
 printf 'Use a test server first. This wizard will explain every change before activation.\n'
 printf '\n[1/7] Check server and existing services\n'

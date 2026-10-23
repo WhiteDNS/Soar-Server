@@ -1,0 +1,5 @@
+{
+  "repository": "https://github.com/masterking32/MasterDnsVPN",
+  "commit": "acbf1c61f90786f41b975d2e2f616afbce292b29",
+  "integration": "Added embedded server API in server/ and internal/udpserver/whitedns.go; config defaults exported in internal/config/whitedns.go. Upstream protocol unchanged."
+}

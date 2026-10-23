@@ -23,42 +23,44 @@ func (m *Manager) writeDNSUDP(packet []byte, remote net.Addr) (int, error) {
 // RuntimeDiagnostics contains bounded aggregate counters only. Engine messages,
 // DNS names, remote addresses, account names and credentials are never retained.
 type RuntimeDiagnostics struct {
-	SoarQueueDrops        uint64    `json:"soar_queue_drops"`
-	CottenQueueDrops      uint64    `json:"cotten_queue_drops"`
-	UDPWriteErrors        uint64    `json:"udp_write_errors"`
-	TCPAcceptRetries      uint64    `json:"tcp_accept_retries"`
-	DialAttempts          uint64    `json:"dial_attempts"`
-	DialFailures          uint64    `json:"dial_failures"`
-	DialLatencyMicros     uint64    `json:"dial_latency_microseconds"`
-	DialLatencyMaxMicros  uint64    `json:"dial_latency_max_microseconds"`
-	DialLatencyBuckets    [5]uint64 `json:"dial_latency_buckets_10ms_100ms_1s_5s_over5s"`
-	RejectedAccountLimit  uint64    `json:"rejected_account_limit"`
-	RejectedServerLimit   uint64    `json:"rejected_server_limit"`
-	RejectedPolicy        uint64    `json:"rejected_policy"`
-	RejectedInactive      uint64    `json:"rejected_inactive"`
-	SoarStarts            uint64    `json:"soar_starts"`
-	SoarRunning           int64     `json:"soar_running"`
-	SoarExits             uint64    `json:"soar_exits"`
-	SoarUnexpectedExits   uint64    `json:"soar_unexpected_exits"`
-	SoarServeErrors       uint64    `json:"soar_serve_errors"`
-	SoarWarnings          uint64    `json:"soar_warnings"`
-	SoarLogErrors         uint64    `json:"soar_log_errors"`
-	CottenStarts          uint64    `json:"cotten_starts"`
-	CottenRunning         int64     `json:"cotten_running"`
-	CottenStartErrors     uint64    `json:"cotten_start_errors"`
-	CottenCloseErrors     uint64    `json:"cotten_close_errors"`
-	LastEngineIssueUnixMS int64     `json:"last_engine_issue_unix_ms"`
-	CottenSessions        int       `json:"cotten_sessions"`
-	SoarActiveStreams     int64     `json:"soar_active_streams"`
-	CottenActiveStreams   int64     `json:"cotten_active_streams"`
-	SoarOpenedStreams     uint64    `json:"soar_opened_streams"`
-	CottenOpenedStreams   uint64    `json:"cotten_opened_streams"`
-	SoarClosedStreams     uint64    `json:"soar_closed_streams"`
-	CottenClosedStreams   uint64    `json:"cotten_closed_streams"`
-	UpstreamCloseErrors   uint64    `json:"upstream_close_errors"`
+	AdditionalEngines     map[string]EngineDiagnostics `json:"additional_engines"`
+	SoarQueueDrops        uint64                       `json:"soar_queue_drops"`
+	CottenQueueDrops      uint64                       `json:"cotten_queue_drops"`
+	UDPWriteErrors        uint64                       `json:"udp_write_errors"`
+	TCPAcceptRetries      uint64                       `json:"tcp_accept_retries"`
+	DialAttempts          uint64                       `json:"dial_attempts"`
+	DialFailures          uint64                       `json:"dial_failures"`
+	DialLatencyMicros     uint64                       `json:"dial_latency_microseconds"`
+	DialLatencyMaxMicros  uint64                       `json:"dial_latency_max_microseconds"`
+	DialLatencyBuckets    [5]uint64                    `json:"dial_latency_buckets_10ms_100ms_1s_5s_over5s"`
+	RejectedAccountLimit  uint64                       `json:"rejected_account_limit"`
+	RejectedServerLimit   uint64                       `json:"rejected_server_limit"`
+	RejectedPolicy        uint64                       `json:"rejected_policy"`
+	RejectedInactive      uint64                       `json:"rejected_inactive"`
+	SoarStarts            uint64                       `json:"soar_starts"`
+	SoarRunning           int64                        `json:"soar_running"`
+	SoarExits             uint64                       `json:"soar_exits"`
+	SoarUnexpectedExits   uint64                       `json:"soar_unexpected_exits"`
+	SoarServeErrors       uint64                       `json:"soar_serve_errors"`
+	SoarWarnings          uint64                       `json:"soar_warnings"`
+	SoarLogErrors         uint64                       `json:"soar_log_errors"`
+	CottenStarts          uint64                       `json:"cotten_starts"`
+	CottenRunning         int64                        `json:"cotten_running"`
+	CottenStartErrors     uint64                       `json:"cotten_start_errors"`
+	CottenCloseErrors     uint64                       `json:"cotten_close_errors"`
+	LastEngineIssueUnixMS int64                        `json:"last_engine_issue_unix_ms"`
+	CottenSessions        int                          `json:"cotten_sessions"`
+	SoarActiveStreams     int64                        `json:"soar_active_streams"`
+	CottenActiveStreams   int64                        `json:"cotten_active_streams"`
+	SoarOpenedStreams     uint64                       `json:"soar_opened_streams"`
+	CottenOpenedStreams   uint64                       `json:"cotten_opened_streams"`
+	SoarClosedStreams     uint64                       `json:"soar_closed_streams"`
+	CottenClosedStreams   uint64                       `json:"cotten_closed_streams"`
+	UpstreamCloseErrors   uint64                       `json:"upstream_close_errors"`
 }
 
 type runtimeCounters struct {
+	additional                                                                                          [2]engineCounters
 	soarQueueDrops, cottenQueueDrops, udpWriteErrors, tcpAcceptRetries                                  atomic.Uint64
 	dialAttempts, dialFailures, dialLatencyMicros, dialLatencyMaxMicros                                 atomic.Uint64
 	dialLatencyBuckets                                                                                  [5]atomic.Uint64
@@ -86,6 +88,11 @@ func (m *Manager) Diagnostics() RuntimeDiagnostics {
 	d.SoarOpenedStreams, d.CottenOpenedStreams = c.soarOpenedStreams.Load(), c.cottenOpenedStreams.Load()
 	d.SoarClosedStreams, d.CottenClosedStreams = c.soarClosedStreams.Load(), c.cottenClosedStreams.Load()
 	d.UpstreamCloseErrors = c.upstreamCloseErrors.Load()
+	d.AdditionalEngines = make(map[string]EngineDiagnostics, 2)
+	for i, name := range []string{"stormdns", "masterdns"} {
+		e := &c.additional[i]
+		d.AdditionalEngines[name] = EngineDiagnostics{Starts: e.starts.Load(), Running: e.running.Load(), StartErrors: e.startErrors.Load(), QueueDrops: e.queueDrops.Load(), ActiveStreams: e.active.Load(), OpenedStreams: e.opened.Load(), ClosedStreams: e.closed.Load()}
+	}
 	m.mu.RLock()
 	runtimes := make([]*accountRuntime, 0, len(m.accounts))
 	for _, rt := range m.accounts {
@@ -109,6 +116,8 @@ const (
 	upstreamUnknown upstreamEngine = iota
 	upstreamSoar
 	upstreamCotten
+	upstreamStorm
+	upstreamMaster
 )
 
 func (c *runtimeCounters) upstreamOpened(engine upstreamEngine) {
@@ -119,6 +128,10 @@ func (c *runtimeCounters) upstreamOpened(engine upstreamEngine) {
 	case upstreamCotten:
 		c.cottenActiveStreams.Add(1)
 		c.cottenOpenedStreams.Add(1)
+	case upstreamStorm, upstreamMaster:
+		e := &c.additional[int(engine-upstreamStorm)]
+		e.active.Add(1)
+		e.opened.Add(1)
 	}
 }
 func (c *runtimeCounters) upstreamClosed(engine upstreamEngine, err error) {
@@ -129,6 +142,10 @@ func (c *runtimeCounters) upstreamClosed(engine upstreamEngine, err error) {
 	case upstreamCotten:
 		c.cottenActiveStreams.Add(-1)
 		c.cottenClosedStreams.Add(1)
+	case upstreamStorm, upstreamMaster:
+		e := &c.additional[int(engine-upstreamStorm)]
+		e.active.Add(-1)
+		e.closed.Add(1)
 	}
 	if err != nil && !errors.Is(err, net.ErrClosed) {
 		c.upstreamCloseErrors.Add(1)

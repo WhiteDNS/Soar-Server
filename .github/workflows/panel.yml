@@ -39,6 +39,12 @@ jobs:
           COTTEN_SOURCE=$(go list -m -f '{{.Dir}}' cottendns-go)
           (cd "$COTTEN_SOURCE" && go build -mod=readonly -o "$RUNNER_TEMP/cotten-client" ./cmd/client)
           echo "PANEL_COTTEN_CLIENT=$RUNNER_TEMP/cotten-client" >> "$GITHUB_ENV"
+      - name: Build the pinned StormDNS and MasterDnsVPN test clients
+        run: |
+          go build -mod=readonly -o "$RUNNER_TEMP/storm-client" stormdns-go/cmd/client
+          go build -mod=readonly -o "$RUNNER_TEMP/master-client" masterdnsvpn-go/cmd/client
+          echo "PANEL_STORM_CLIENT=$RUNNER_TEMP/storm-client" >> "$GITHUB_ENV"
+          echo "PANEL_MASTER_CLIENT=$RUNNER_TEMP/master-client" >> "$GITHUB_ENV"
       - name: Verify modules and behavior
         run: |
           go mod verify

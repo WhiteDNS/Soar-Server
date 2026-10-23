@@ -10,14 +10,6 @@ import (
 	"strings"
 )
 
-func (c Client) hasEngine(engine string) bool {
-	selected := c.Engines
-	if selected == "" {
-		selected = "soar"
-	}
-	return selected == engine || selected == "both"
-}
-
 func (c Client) cottenZone() string { return "cot." + c.Zone }
 
 // Derivation keeps keys distinct without a second secret table. Existing full
@@ -65,6 +57,30 @@ func (s *Store) profilesAt(c Client, cfg Settings, base string) (map[string]stri
 		}
 		links["cotten"] = "cottendns://" + base64.RawURLEncoding.EncodeToString(raw)
 	}
+	for _, engine := range []string{"stormdns", "masterdns"} {
+		if !c.hasEngine(engine) {
+			continue
+		}
+		id, _, _ := strings.Cut(c.ID, ":")
+		seed, err := s.Seed(id)
+		if err != nil {
+			return nil, err
+		}
+		label := "StormDNS"
+		if engine == "masterdns" {
+			label = "MasterDNS"
+		}
+		body := map[string]any{"schema": "whitedns.profile", "version": 1, "profile": map[string]any{
+			"id": c.ID + ":" + engine, "name": c.Name + " · " + label, "engine": engine,
+			"server":    map[string]any{"domain": enginePrefix(engine) + c.Zone, "encryption_key": additionalKey(seed, engine), "encryption_method": 5},
+			"resolvers": cfg.Resolvers,
+		}}
+		raw, err := json.Marshal(body)
+		if err != nil {
+			return nil, err
+		}
+		links[engine] = engine + "://" + base64.RawURLEncoding.EncodeToString(raw)
+	}
 	return links, nil
 }
 
@@ -82,9 +98,11 @@ func (s *Store) Profiles(id string) (map[string]string, error) {
 
 func selectedProfile(links map[string]string, engine string) (string, error) {
 	if engine == "" {
-		engine = "soar"
-		if links[engine] == "" {
-			engine = "cotten"
+		for _, name := range engineOrder {
+			if links[name] != "" {
+				engine = name
+				break
+			}
 		}
 	}
 	if link := links[engine]; link != "" {

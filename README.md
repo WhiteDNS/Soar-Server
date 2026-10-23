@@ -1,5 +1,10 @@
 # WhiteDNS Soar Panel
 
+Development upgrade: [four-engine integration](docs/MULTI-ENGINE.md) adds
+StormDNS and MasterDnsVPN alongside Soar and Cotten, with shared account
+limits and subscriptions. Build this checkout to use it; upstream release
+installation commands below still install the published upstream release.
+
 [English installation guide](docs/PANEL.en.md) · [راهنمای فارسی](docs/PANEL.fa.md)
 
 [دامنه‌های جایگزین تونل و پنل](docs/DOMAINS.fa.md): حداکثر ۸ دامنه برای هر بخش، بدون ساخت دوبارهٔ حساب‌ها یا تغییر سهمیه. نصب اولیه همچنان فقط یک دامنه می‌خواهد.

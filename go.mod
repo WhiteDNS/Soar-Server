@@ -10,9 +10,15 @@ require (
 	golang.org/x/crypto v0.52.0
 	golang.org/x/net v0.54.0
 	golang.org/x/sys v0.45.0
+	masterdnsvpn-go v0.0.0
+	stormdns-go v0.0.0
 )
 
 replace cottendns-go => github.com/WhiteDNS/CottenDNS v0.0.0-20261019083927-48b52018a0c2
+
+replace stormdns-go => ./third_party/StormDNS
+
+replace masterdnsvpn-go => ./third_party/MasterDnsVPN
 
 require (
 	github.com/BurntSushi/toml v1.4.0 // indirect

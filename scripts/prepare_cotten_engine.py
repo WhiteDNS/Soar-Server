@@ -71,7 +71,8 @@ def main() -> None:
         workspace = args.workspace.resolve()
         workspace.parent.mkdir(parents=True, exist_ok=True)
         # JSON quoting is also valid for Go quoted paths, including spaces.
-        workspace.write_text("go 1.26.1\n\nuse (\n\t" + json.dumps(str(ROOT)) + "\n\t" + json.dumps(str(source)) + "\n)\n")
+        modules = [ROOT, source, ROOT / "third_party/StormDNS", ROOT / "third_party/MasterDnsVPN"]
+        workspace.write_text("go 1.26.1\n\nuse (\n" + "".join("\t" + json.dumps(str(path)) + "\n" for path in modules) + ")\n")
     print(json.dumps({"source": str(source), "base_commit": manifest["base_commit"], "patch_sha256": manifest["patch_sha256"], "verified": True}))
 
 

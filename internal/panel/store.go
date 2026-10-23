@@ -153,8 +153,8 @@ func (c Client) Status(now time.Time) string {
 	return "active"
 }
 func (c ClientInput) validate() error {
-	if c.Engines != "" && c.Engines != "soar" && c.Engines != "cotten" && c.Engines != "both" {
-		return errors.New("choose Soar, Cotten or both")
+	if _, err := enabledEngines(c.Engines); err != nil {
+		return err
 	}
 	if strings.TrimSpace(c.Name) == "" || len(c.Name) > 160 || len(c.Note) > 2048 {
 		return errors.New("name required (max 160 bytes); note max 2048 bytes")
