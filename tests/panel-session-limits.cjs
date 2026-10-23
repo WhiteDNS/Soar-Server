@@ -15,7 +15,7 @@ module.exports=async function testSessionLimits({page,out,assert}){
  try{
   const defaultAccount=await page.evaluate(async()=>{const response=await fetch('/api/clients');return (await response.json()).clients.find(c=>c.name==='کاربر آزمایشی ایران');});
   checkAccount(defaultAccount,{soar_session_limit:32768,cotten_session_limit:65535,stream_limit:0});
-  await page.locator('#page-clients .new-client').click();await limits(32768,65535);
+  await page.locator('#page-clients .new-client').click();await page.locator('#client-engines').selectOption('both',{force:true});await limits(32768,65535);
   for(const [input,max] of [[soar,32768],[cotten,65535]]){
    assert.equal(await input.getAttribute('min'),'1');assert.equal(await input.getAttribute('max'),String(max));
    for(const invalid of ['0',String(max+1),'1.5','']){

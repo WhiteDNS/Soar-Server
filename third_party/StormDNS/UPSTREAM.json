@@ -1,0 +1,5 @@
+{
+  "repository": "https://github.com/nullroute1970/StormDNS",
+  "commit": "ca2eb481fddd4a80d26b3a1a7c714b5aecacecfc",
+  "integration": "Added embedded server API in server/ and internal/udpserver/whitedns.go; config defaults exported in internal/config/whitedns.go. Upstream protocol unchanged."
+}

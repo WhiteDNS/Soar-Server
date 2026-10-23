@@ -9,7 +9,7 @@ module.exports=async function testDomains({page,url,out,assert}){
  const cardGap=await page.locator('#page-security').evaluate(el=>{const cards=el.querySelectorAll('.maintenance-card');return cards[1].getBoundingClientRect().top-cards[0].getBoundingClientRect().bottom;});assert.ok(cardGap>=20,'tunnel and panel domain cards need separate spacing');
  assert.equal(await page.locator('[data-tunnel-nameserver="t.example.net"]').inputValue(),'ns1.example.net');
  assert.match(await page.locator('.domain-record').nth(1).textContent(),/NS\s+t\.example\.net\s+→\s+ns1\.example\.net/);
- const data=await (await page.request.get(url+'/api/clients')).json();const client=data.clients.find(c=>c.engines==='both'&&!c.enabled);assert.ok(client);assert.match(client.connect_zone,/\.t\.example\.net$/);
+ const data=await (await page.request.get(url+'/api/clients')).json();const client=data.clients.find(c=>c.engines==='all'&&!c.enabled);assert.ok(client);assert.match(client.connect_zone,/\.t\.example\.net$/);
  const links=await (await page.request.get(url+'/api/clients/'+client.id+'/link')).json();
  const profile=JSON.parse(Buffer.from(links.links.soar.split('://')[1],'base64url'));assert.match(profile.profile.server.domain,/\.t\.example\.net$/);
  const sub=await (await page.request.get(url+'/api/clients/'+client.id+'/subscription')).json();const subscription=await page.request.get(sub.url+'?format=plain');assert.equal(subscription.status(),403,'changing domains must not reactivate disabled accounts');

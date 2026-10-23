@@ -48,7 +48,7 @@ def main():
     subprocess.run([sys.executable,str(ROOT/"scripts/prepare_cotten_engine.py"),"--source",str(cotten),"--check"],cwd=ROOT,check=True)
     for name,package in [("soar-panel","./cmd/soar-panel"),("soar-panel-ops","./cmd/soar-panel-ops"),("soar-check","./cmd/soar-check")]:
         subprocess.run(["go","build","-mod=readonly","-trimpath","-buildvcs=false","-ldflags=-s -w","-o",str(binary/name),package],cwd=ROOT,env=env,check=True)
-    for name in ["panel-install.sh","panel-security.sh","LICENSE","NOTICE","docs/PANEL.fa.md","docs/PANEL.en.md","docs/LOCAL-COTTEN.fa.md","docs/DOMAINS.fa.md","docs/SUBSCRIPTIONS.md","docs/PANEL-DESIGN.md","docs/PANEL-TUNING-2026-10-17.fa.md","docs/SOAR-WEB-RELIABILITY-2026-10-18.fa.md"]:
+    for name in ["panel-install.sh","panel-security.sh","LICENSE","NOTICE","docs/PANEL.fa.md","docs/PANEL.en.md","docs/LOCAL-COTTEN.fa.md","docs/DOMAINS.fa.md","docs/SUBSCRIPTIONS.md","docs/MULTI-ENGINE.md","docs/PANEL-DESIGN.md","docs/PANEL-TUNING-2026-10-17.fa.md","docs/SOAR-WEB-RELIABILITY-2026-10-18.fa.md"]:
         target=bundle/name;target.parent.mkdir(parents=True,exist_ok=True)
         target.write_bytes((ROOT/name).read_text(encoding="utf8").replace("\r\n","\n").encode("utf8"))
     (bundle/"lib").mkdir(exist_ok=True)
@@ -59,18 +59,26 @@ def main():
     shutil.copytree(ROOT/"patches",bundle/"patches",dirs_exist_ok=True)
     licenses=bundle/"licenses";licenses.mkdir(exist_ok=True)
     shutil.copyfile(ROOT/"internal/panel/web/fonts/OFL.txt",licenses/"Vazirmatn-OFL.txt")
-    for mod,label in [("cottendns-go","CottenDNS"),("github.com/BurntSushi/toml","BurntSushi-toml"),("github.com/klauspost/compress","compress"),("github.com/klauspost/cpuid/v2","cpuid"),("github.com/klauspost/reedsolomon","reedsolomon"),("github.com/pierrec/lz4/v4","lz4"),("github.com/getlantern/soar","Soar"),("go.etcd.io/bbolt","bbolt"),("github.com/skip2/go-qrcode","go-qrcode"),("golang.org/x/crypto","x-crypto"),("golang.org/x/sys","x-sys"),("golang.org/x/net","x-net"),("golang.org/x/text","x-text")]:
+    for mod,label in [("cottendns-go","CottenDNS"),("stormdns-go","StormDNS"),("masterdnsvpn-go","MasterDnsVPN"),("github.com/BurntSushi/toml","BurntSushi-toml"),("github.com/klauspost/compress","compress"),("github.com/klauspost/cpuid/v2","cpuid"),("github.com/klauspost/reedsolomon","reedsolomon"),("github.com/pierrec/lz4/v4","lz4"),("github.com/getlantern/soar","Soar"),("go.etcd.io/bbolt","bbolt"),("github.com/skip2/go-qrcode","go-qrcode"),("golang.org/x/crypto","x-crypto"),("golang.org/x/sys","x-sys"),("golang.org/x/net","x-net"),("golang.org/x/text","x-text")]:
         module=Path(run("go","list","-m","-f","{{.Dir}}",mod))
         original=next((module/name for name in ("LICENSE","COPYING","LICENSE.txt") if (module/name).is_file()),None)
         if original is None:raise RuntimeError(f"Missing original license for {mod}")
         shutil.copyfile(original,licenses/(label+"-LICENSE.txt"))
     soar=Path(run("go","list","-m","-f","{{.Dir}}","github.com/getlantern/soar"))
     shutil.copyfile(soar/"data/THIRD_PARTY.md",licenses/"Soar-data-THIRD-PARTY.md")
-    shutil.copyfile(Path(run("go","env","GOROOT"))/"LICENSE",licenses/"Go-LICENSE.txt")
+    goroot=Path(run("go","env","GOROOT"))
+    # Homebrew installs the unmodified Go license next to libexec/GOROOT.
+    go_license=next((p for p in (goroot/"LICENSE",goroot.parent/"LICENSE") if p.is_file()),None)
+    if go_license is None:raise RuntimeError("Missing original Go license")
+    shutil.copyfile(go_license,licenses/"Go-LICENSE.txt")
     cotten=Path(run("go","list","-m","-f","{{.Dir}}","cottendns-go"))
     cotten_revision=run("git","-C",str(cotten),"rev-parse","HEAD") if (cotten/".git").exists() else run("go","list","-m","-f","{{.Replace.Version}}","cottendns-go")
+    additional_versions=""
+    for name in ("StormDNS","MasterDnsVPN"):
+        upstream=json.loads((ROOT/"third_party"/name/"UPSTREAM.json").read_text())
+        additional_versions += f"{name}: {upstream['commit']} ({upstream['repository']})\n"
     patch_manifest=json.loads((ROOT/"patches/cotten-engine.json").read_text())
-    (bundle/"SOURCE-VERSIONS.txt").write_text(f"WhiteDNS Soar Panel: {VERSION}\nPanel source commit: {run('git','rev-parse','HEAD')}\nLantern Soar: v0.2.2\nCottenDNS source revision: {cotten_revision}\nCottenDNS patch SHA256: {patch_manifest['patch_sha256']}\nToolchain: {run('go','version')}\nTarget: linux/amd64; CGO_ENABLED=0\n\n{run('go','list','-m','all')}\n",encoding="ascii")
+    (bundle/"SOURCE-VERSIONS.txt").write_text(f"WhiteDNS Soar Panel: {VERSION}\nPanel source commit: {run('git','rev-parse','HEAD')}\nLantern Soar: v0.2.2\nCottenDNS source revision: {cotten_revision}\nCottenDNS patch SHA256: {patch_manifest['patch_sha256']}\n{additional_versions}Toolchain: {run('go','version')}\nTarget: linux/amd64; CGO_ENABLED=0\n\n{run('go','list','-m','all')}\n",encoding="ascii")
     sums="".join(f"{hashlib.sha256(f.read_bytes()).hexdigest()}  {f.relative_to(bundle).as_posix()}\n" for f in sorted(bundle.rglob("*")) if f.is_file() and f.name!="SHA256SUMS")
     (bundle/"SHA256SUMS").write_bytes(sums.encode("ascii"))
     archive=args.output/(NAME+".tar.gz")

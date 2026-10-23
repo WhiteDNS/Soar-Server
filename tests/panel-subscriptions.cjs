@@ -12,11 +12,13 @@ module.exports = async ({page, context, out, assert}) => {
  assert.match(decoded, /^soar:\/\//);
  const originalProfile = await page.locator('#share-profile-mode').click().then(() => page.locator('#share-link').inputValue());
  const profiles=decoded.trim().split('\n');
- assert.equal(profiles.length,2);
+ assert.equal(profiles.length,4);
  assert.equal(profiles[0], originalProfile);
  assert.match(profiles[1],/^cottendns:\/\//);
+ assert.match(profiles[2],/^stormdns:\/\//);
+ assert.match(profiles[3],/^masterdns:\/\//);
  const identities=profiles.map(link=>JSON.parse(Buffer.from(link.split('://')[1],'base64url')).profile.id);
- assert.equal(new Set(identities).size,2,'subscription engine identities must be unique');
+ assert.equal(new Set(identities).size,4,'subscription engine identities must be unique');
  await page.locator('#share-sub-mode').click();
  await page.locator('#share-qr').evaluate(img => img.decode());
  assert.match(await page.locator('#share-qr').getAttribute('src'), /subscription-qr\.png$/);
