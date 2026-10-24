@@ -25,16 +25,23 @@ window.panelAntiFlood=(()=>{
   ['server_upload_kib','آپلود کل سرور',32,524288,'KiB/s؛ جهش دوثانیه‌ای مجاز است. دانلود حساب نمی‌شود'],
   ['resolver_qps','درخواست DNS حساب',1,10000,'درخواست DNS خروجی Cotten و MasterDNS در ثانیه؛ سقف سرور چهار برابر است'],
  ];
+ const groups={account_rate:'نرخ و جهش اتصال',account_streams:'ظرفیت و مقصدها',failure_threshold:'تشخیص و قرنطینه',account_upload_kib:'آپلود و DNS'};
+ let group;
  for(const [key,label,min,max,help] of fields){
+  if(groups[key]){const section=node('details',null,'flood-group');section.open=true;section.append(node('summary',tr(groups[key])));group=node('div',null,'settings-grid');section.append(group);$('flood-fields').append(section);}
   const wrap=node('div',null,'setting-field'),head=node('div',null,'field-label'),caption=node('label',tr(label)),input=node('input');
   caption.htmlFor='flood-'+key;head.append(caption);input.id=caption.htmlFor;input.name=key;input.type='number';input.min=min;input.max=max;input.step='1';input.required=true;input.dir='ltr';
   const description=node('small',tr(help),'setting-range');description.id=input.id+'-help';input.setAttribute('aria-describedby',description.id);
-  wrap.append(head,input,description);$('flood-fields').append(wrap);
+  wrap.append(head,input,description);group.append(wrap);
  }
- function policyForm(policy){$('flood-mode').value=policy.mode;for(const [key] of fields)$('flood-'+key).value=policy[key];panelUI.syncSelects();}
+ let savedPolicy=null;
+ function dirtyState(){if(!savedPolicy)return;const dirty=$('flood-mode').value!==savedPolicy.mode||fields.some(([key])=>Number($('flood-'+key).value)!==savedPolicy[key]||!$('flood-'+key).validity.valid);$('flood-dirty').hidden=!dirty;if(dirty)$('flood-feedback').textContent='';}
+ $('flood-form').addEventListener('input',dirtyState);$('flood-form').addEventListener('change',dirtyState);
+ function policyForm(policy){savedPolicy={...policy};$('flood-mode').value=policy.mode;for(const [key] of fields)$('flood-'+key).value=policy[key];$('flood-dirty').hidden=true;panelUI.syncSelects();}
  function accountName(id){return clients.find(c=>c.id===id)?.name||id;}
  function render(data){
-  $('flood-summary').textContent=tr('ردشده')+': '+number(data.denied)+' · '+tr('مشاهده‌شده')+': '+number(data.observed)+' · '+tr('قرنطینه‌ها')+': '+number(data.quarantines)+' · '+tr('جریان باز')+': '+number(data.active);
+  $('flood-summary').replaceChildren(...[['ردشده',data.denied],['مشاهده‌شده',data.observed],['قرنطینه‌ها',data.quarantines],['جریان باز',data.active]].map(([label,value])=>{const metric=node('div',null,'flood-metric');metric.append(node('span',tr(label)),node('strong',number(value)));return metric;}));
+  $('flood-runtime-mode').dataset.mode=data.policy.mode;
   $('flood-storage-error').hidden=!data.persistence_errors;
   const active=data.accounts.filter(a=>a.block.until>Date.now());
   $('flood-blocks').replaceChildren(...active.map(a=>{
@@ -44,11 +51,11 @@ window.panelAntiFlood=(()=>{
     render(await api('/antiflood/release','POST',{client_id:a.client_id}));toast(tr('قرنطینه آزاد شد.'));
    });row.append(content,button);return row;
   }));
-  if(!active.length)$('flood-blocks').append(node('li',tr('حسابی در قرنطینه نیست.')));
+  if(!active.length){const empty=node('li',null,'list-empty');empty.append(panelUI.icon('check'),node('span',tr('حسابی در قرنطینه نیست.')));$('flood-blocks').append(empty);}
   $('flood-events').replaceChildren(...data.events.map(ev=>{
    const row=node('li'),content=node('div',(actions[ev.action]||ev.action)+' · '+(reasons[ev.reason]||ev.reason));content.append(node('small',accountName(ev.client_id)));const stamp=node('time',date(ev.at));stamp.dateTime=new Date(ev.at).toISOString();row.append(content,stamp);return row;
   }));
-  if(!data.events.length)$('flood-events').append(node('li',tr('هنوز رویدادی ثبت نشده است.')));
+  if(!data.events.length){const empty=node('li',null,'list-empty');empty.append(panelUI.icon('activity'),node('span',tr('هنوز رویدادی ثبت نشده است.')));$('flood-events').append(empty);}
   $('flood-reasons').replaceChildren(...Object.entries(data.reasons).map(([reason,count])=>node('li',(reasons[reason]||reason)+' · '+number(count))));
   $('flood-runtime-mode').textContent={off:tr('خاموش'),monitor:tr('فقط مشاهده'),enforce:tr('فعال؛ محدودسازی و قرنطینه')}[data.policy.mode];
  }

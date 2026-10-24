@@ -13,7 +13,7 @@
  </form>
 </section>
 <div id="app" hidden>
- <aside class="sidebar">
+ <aside class="sidebar" id="panel-sidebar">
   <a class="brand" href="#dashboard"><span class="brandmark" aria-hidden="true">W</span><span><b dir="ltr">WhiteDNS</b><small>مدیریت سرور</small></span></a><button id="rail-close" class="icon-button mobile-only rail-close" aria-label="بستن منو" type="button"><span data-icon="close"></span></button>
   <span class="nav-caption">مدیریت سرور</span><nav aria-label="صفحات پنل">
    <a href="#dashboard" data-page="dashboard"><span data-icon="dashboard"></span>نمای کلی</a>
@@ -28,8 +28,10 @@
  </aside>
  <button id="nav-backdrop" class="nav-backdrop" aria-label="بستن منوی کناری" tabindex="-1" type="button"></button>
  <div class="workspace"><header class="topbar">
-  <button id="menu-toggle" class="icon-button mobile-only" aria-label="باز کردن منو" aria-expanded="false"><span data-icon="menu"></span></button>
+  <div class="toolbar-location">
+  <button id="menu-toggle" class="icon-button" type="button" aria-label="باز کردن منو" aria-controls="panel-sidebar" aria-expanded="false"><span data-icon="menu"></span></button>
   <div class="breadcrumb"><span class="parent-crumb">WhiteDNS</span><span>/</span><b id="page-title">نمای کلی</b></div>
+  </div>
   <div class="top-actions"><button class="language-toggle quiet" type="button" aria-label="Change language">English</button><span id="service-chip" class="service-chip" data-live="false">بررسی ارتباط</span><span id="sync-state" class="sync">در حال دریافت…</span><button id="refresh" class="quiet" aria-label="به‌روزرسانی"><span data-icon="refresh"></span><span class="button-label">به‌روزرسانی</span></button><button id="theme-toggle" class="icon-button" aria-label="تغییر تم"></button><button id="logout" class="quiet" aria-label="خروج"><span data-icon="logout"></span><span class="button-label">خروج</span></button></div>
  </header>
  <main id="main"><div id="page-error" class="banner error" role="alert" hidden></div>
@@ -54,13 +56,15 @@
  <section id="page-events" class="page" hidden><div class="page-heading"><div><p class="eyebrow">ردیابی تغییرات</p><h1>رویدادهای مدیریت</h1><p class="muted">۲۰۰ رویداد اخیر؛ آدرس سایت‌ها و محتوای ترافیک ثبت نمی‌شوند.</p></div></div><article class="card"><ol id="events-list" class="events-list"></ol></article></section>
  <section id="page-antiflood" class="page" hidden>
   <div class="page-heading"><div><p class="eyebrow">حفاظت از سرور</p><h1>ضدفلاد و کنترل سوءاستفاده</h1><p class="muted">کنترل ترافیک خروجی برای کاهش فلاد و اسکن؛ جلوگیری قطعی از ساسپند میزبان تضمین نمی‌شود.</p></div><button id="flood-refresh" class="secondary" type="button">تازه‌سازی گزارش</button></div>
-  <article class="card maintenance-card"><h2 id="flood-runtime-mode"></h2><p id="flood-summary" class="hint" role="status"></p><p class="hint">شمارنده‌ها و ۲۰۰ رویداد اخیر از شروع سرویس هستند. قرنطینه‌ها پس از راه‌اندازی مجدد حفظ می‌شوند. آدرس مقصد و محتوای ترافیک ثبت نمی‌شوند.</p><p id="flood-storage-error" class="error" role="alert" hidden>ذخیرهٔ برخی قرنطینه‌ها روی دیسک ناموفق بوده است؛ وضعیت دیسک و گزارش سرویس را بررسی کنید.</p><ul id="flood-reasons" class="events-list"></ul></article>
-  <article class="card maintenance-card"><h2>حساب‌های قرنطینه‌شده</h2><p class="hint">حالت خاموش و فقط مشاهده، قرنطینه را اعمال نمی‌کنند. با فعال‌سازی دوباره، قرنطینهٔ منقضی‌نشده اعمال می‌شود.</p><ul id="flood-blocks" class="events-list"></ul></article>
+  <div class="flood-overview">
+   <article class="card flood-status-card"><div class="section-heading"><span class="section-icon" data-icon="lock"></span><h2 id="flood-runtime-mode"></h2></div><div id="flood-summary" class="flood-metrics" role="status"></div><p class="hint">شمارنده‌ها و ۲۰۰ رویداد اخیر از شروع سرویس هستند. قرنطینه‌ها پس از راه‌اندازی مجدد حفظ می‌شوند. آدرس مقصد و محتوای ترافیک ثبت نمی‌شوند.</p><p id="flood-storage-error" class="error" role="alert" hidden>ذخیرهٔ برخی قرنطینه‌ها روی دیسک ناموفق بوده است؛ وضعیت دیسک و گزارش سرویس را بررسی کنید.</p><ul id="flood-reasons" class="events-list"></ul></article>
+   <article class="card flood-quarantine-card"><div class="section-heading"><span class="section-icon" data-icon="users"></span><h2>حساب‌های قرنطینه‌شده</h2></div><p class="hint">حالت خاموش و فقط مشاهده، قرنطینه را اعمال نمی‌کنند. با فعال‌سازی دوباره، قرنطینهٔ منقضی‌نشده اعمال می‌شود.</p><ul id="flood-blocks" class="events-list"></ul></article>
+  </div>
   <form id="flood-form" class="card settings-card"><h2>سیاست ضدفلاد</h2><p class="banner">محدودیت‌ها بین هر سه موتور و تمام دامنه‌ها مشترک‌اند. سقف مقصد برای همهٔ حساب‌ها مشترک است؛ مقادیر کم می‌توانند اتصال سالم به سرویس‌های اشتراکی را محدود کنند. IP ریزالورهای ورودی خودکار مسدود نمی‌شود.</p>
-   <label for="flood-mode">حالت حفاظت</label><select id="flood-mode"><option value="enforce">فعال؛ محدودسازی و قرنطینه</option><option value="monitor">فقط مشاهده</option><option value="off">خاموش</option></select>
-   <fieldset class="settings-section"><legend>حدود اتصال و ترافیک</legend><div id="flood-fields" class="settings-grid"></div></fieldset>
+   <div class="flood-mode-field"><label for="flood-mode">حالت حفاظت</label><select id="flood-mode"><option value="enforce">فعال؛ محدودسازی و قرنطینه</option><option value="monitor">فقط مشاهده</option><option value="off">خاموش</option></select></div>
+   <fieldset class="settings-section"><legend>حدود اتصال و ترافیک</legend><div id="flood-fields" class="flood-sections"></div></fieldset>
    <p class="hint">سقف آپلود روی اتصال‌های باز هم اعمال می‌شود؛ عبور از سقف، جریان را می‌بندد. این قابلیت محتوای HTTPS را بررسی نمی‌کند و نرخ درخواست داخل یک اتصال رمزگذاری‌شده را تشخیص نمی‌دهد.</p>
-   <div class="settings-actions"><button type="submit" class="primary">ذخیرهٔ سیاست ضدفلاد</button><p id="flood-feedback" class="hint" role="status"></p></div>
+   <div class="settings-actions"><button type="submit" class="primary">ذخیرهٔ سیاست ضدفلاد</button><span id="flood-dirty" class="unsaved-state" role="status" hidden>تغییرات ذخیره‌نشده</span><p id="flood-feedback" class="hint" role="status"></p></div>
   </form>
   <article class="card maintenance-card"><h2>رویدادهای ضدفلاد</h2><ol id="flood-events" class="events-list"></ol></article>
  </section>
@@ -84,7 +88,7 @@
    <p class="hint">اتصال HTTPS خروجی به تلگرام لازم است. گزارش روزانه مصرف فعلی را نشان می‌دهد. هنگام توقف کامل پنل، ربات تا بازگشت سرویس در دسترس نیست.</p>
   </form>
   <form id="settings-form" class="card settings-card">
-   <fieldset class="settings-section"><legend>سقف جریان‌های سرور</legend><div class="settings-grid"><div class="setting-field"><div class="field-label"><label for="server-stream-limit">سقف جریان TCP سرور</label></div><input id="server-stream-limit" name="server_stream_limit" type="number" min="0" max="2147483647" step="1" value="0" dir="ltr" required><small class="setting-range">۰ = نامحدود؛ بین همهٔ حساب‌ها و هر دو موتور مشترک</small></div></div></fieldset>
+   <fieldset class="settings-section"><legend>سقف جریان‌های سرور</legend><div class="settings-grid"><div class="setting-field"><div class="field-label"><label for="server-stream-limit">سقف جریان TCP سرور</label></div><input id="server-stream-limit" name="server_stream_limit" type="number" min="0" max="2147483647" step="1" value="0" dir="ltr" required><small class="setting-range">۰ = نامحدود؛ بین همهٔ حساب‌ها و هر سه موتور مشترک</small></div></div></fieldset>
    <p class="banner">این تنظیمات مخصوص پروفایل Soar است. Cotten با تنظیمات آمادهٔ اتصال صادر می‌شود. حجم، انقضا، سرعت و سقف اتصال حساب روی موتورهای انتخاب‌شده اعمال می‌شوند. پس از تغییر، ساب را تازه‌سازی کنید.</p>
    <fieldset class="settings-section"><legend>دامنه و دسترسی</legend><p class="hint section-intro">برای دیدن توضیح، نشانگر را روی علامت ؟ نگه دارید یا آن را لمس کنید.</p><div class="settings-grid">
     <div class="setting-field"><div class="field-label"><label for="base-zone">دامنهٔ واگذارشده</label></div><input id="base-zone" dir="ltr" readonly><small class="setting-range">دامنه‌های جایگزین در «دامنه و امنیت»</small></div>

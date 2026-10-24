@@ -10,7 +10,10 @@ window.panelMaintenance=(()=>{
  async function load(page){
   const state=await api('/maintenance');available=state.available;$('update-current').textContent=state.version;showJob(state.job);
   $('restore-apply').disabled=!available;$('update-install').disabled=!available||!updateVersion;
-  if(!available&&page==='backup')info('restore-feedback',panelText("برای فعال‌شدن بازیابی، نصب‌کنندهٔ همین نسخه باید سرویس نگهداری را نصب کرده باشد. ")+(state.error||''),true);
+  if(!available&&page==='backup'){
+   const detail=state.error&&!state.error.startsWith('maintenance service unavailable')?message({message:state.error}):'';
+   info('restore-feedback',panelText("برای فعال‌شدن بازیابی، نصب‌کنندهٔ همین نسخه باید سرویس نگهداری را نصب کرده باشد. ")+detail,true);
+  }
   if(!available&&page==='updates')info('update-feedback',panelText("سرویس نگهداری در دسترس نیست. نصب‌کنندهٔ همین نسخه را اجرا کنید؛ بررسی نسخه همچنان ممکن است."),true);
   if(page==='security'){
    await loadTunnelDomains();

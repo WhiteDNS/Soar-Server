@@ -25,6 +25,7 @@ const panelUI = (() => {
   user:'M12 3a4 4 0 1 0 0 8 4 4 0 0 0 0-8 M4 21v-2a8 8 0 0 1 16 0v2',
   lock:'M5 10h14v11H5z M8 10V7a4 4 0 0 1 8 0v3 M12 14v3',
   menu:'M4 6h16 M4 12h16 M4 18h16',
+  rail:'M3 4h18v16H3z M9 4v16 M13 9l3 3-3 3',
   close:'M6 6l12 12 M18 6 6 18',
   arrow:'M19 12H5 m6-6-6 6 6 6',
   more:'M5 12h.01 M12 12h.01 M19 12h.01',
@@ -150,9 +151,53 @@ const panelUI = (() => {
  let theme='dark';try{theme=localStorage.getItem('soar-theme')==='light'?'light':'dark';}catch{}setTheme(theme);
  get('login-theme').onclick=()=>setTheme(document.documentElement.dataset.theme==='dark'?'light':'dark');
  get('password-toggle').onclick=()=>{const input=get('login-password'),shown=input.type==='password';input.type=shown?'text':'password';get('password-toggle').setAttribute('aria-pressed',String(shown));get('password-toggle').setAttribute('aria-label',shown?panelText("پنهان کردن رمز عبور"):panelText("نمایش رمز عبور"));};
- function syncDrawer(){if(innerWidth>800){document.body.classList.remove('menu-open');get('menu-toggle').setAttribute('aria-expanded','false');}const closed=innerWidth<=800&&!document.body.classList.contains('menu-open'),rail=document.querySelector('.sidebar');rail.inert=closed;if(closed)rail.setAttribute('aria-hidden','true');else rail.removeAttribute('aria-hidden');}
- function closeMenu(){const opened=document.body.classList.contains('menu-open');document.body.classList.remove('menu-open');get('menu-toggle').setAttribute('aria-expanded','false');if(opened)get('menu-toggle').focus();syncDrawer();}
- function toggleMenu(){const open=document.body.classList.toggle('menu-open');get('menu-toggle').setAttribute('aria-expanded',String(open));syncDrawer();if(open)document.querySelector('nav a[aria-current=page]').focus();}
+ // Desktop keeps an icon rail; mobile uses a modal drawer. The saved desktop
+ // preference never hides labels or changes the drawer's behavior on a phone.
+ let railCollapsed=false;
+ try{railCollapsed=localStorage.getItem('whitedns-panel-sidebar')==='compact';}catch{}
+ document.body.classList.toggle('sidebar-collapsed',railCollapsed);
+ const railFoot=document.querySelector('.sidebar-foot');railFoot.dataset.version='v'+railFoot.querySelector('[data-panel-version]').textContent.trim();
+ for(const link of document.querySelectorAll('nav a[data-page]')){
+  const label=document.createElement('span');label.className='nav-label';
+  for(const child of [...link.childNodes])if(child.nodeType===Node.TEXT_NODE)label.append(child);
+  link.querySelector('[data-icon]').after(label);
+  link.setAttribute('aria-label',label.textContent.trim());
+ }
+ const railHint=document.createElement('div');railHint.id='rail-tooltip';railHint.className='rail-tooltip';railHint.setAttribute('role','tooltip');railHint.hidden=true;document.body.append(railHint);
+ let hintLink=null,hintTimer;
+ function hideRailHint(){clearTimeout(hintTimer);if(hintLink)hintLink.removeAttribute('aria-describedby');hintLink=null;railHint.hidden=true;}
+ function showRailHint(link){
+  hideRailHint();if(innerWidth<=800||!railCollapsed)return;
+  hintLink=link;railHint.textContent=link.getAttribute('aria-label');railHint.hidden=false;link.setAttribute('aria-describedby',railHint.id);
+  const r=link.getBoundingClientRect(),m=railHint.getBoundingClientRect(),left=document.documentElement.dir==='ltr'?r.right+12:r.left-m.width-12;
+  railHint.style.left=Math.max(12,Math.min(innerWidth-m.width-12,left))+'px';railHint.style.top=Math.max(12,Math.min(innerHeight-m.height-12,r.y+(r.height-m.height)/2))+'px';
+ }
+ for(const link of document.querySelectorAll('nav a[data-page]')){
+  link.addEventListener('pointerenter',()=>{hintTimer=setTimeout(()=>showRailHint(link),800);});
+  link.addEventListener('pointerleave',()=>{clearTimeout(hintTimer);if(document.activeElement!==link)hideRailHint();});
+  link.addEventListener('focus',()=>showRailHint(link));link.addEventListener('blur',hideRailHint);
+ }
+ document.addEventListener('keydown',e=>{if(e.key==='Escape')hideRailHint();});
+ const skip=document.createElement('a');skip.className='skip-link';skip.href='#main';skip.textContent=panelText('پرش به محتوای اصلی');
+ skip.onclick=e=>{e.preventDefault();get('main').focus();};get('app').prepend(skip);get('main').tabIndex=-1;
+ function syncDrawer(){
+  hideRailHint();
+  const mobile=innerWidth<=800;if(!mobile)document.body.classList.remove('menu-open');
+  const opened=mobile&&document.body.classList.contains('menu-open'),closed=mobile&&!opened,rail=document.querySelector('.sidebar'),toggle=get('menu-toggle');
+  rail.inert=closed;document.querySelector('.workspace').inert=opened;
+  if(closed)rail.setAttribute('aria-hidden','true');else rail.removeAttribute('aria-hidden');
+  if(opened){rail.setAttribute('role','dialog');rail.setAttribute('aria-modal','true');rail.setAttribute('aria-label',panelText('صفحات پنل'));}
+  else{rail.removeAttribute('role');rail.removeAttribute('aria-modal');rail.removeAttribute('aria-label');}
+  toggle.setAttribute('aria-expanded',String(mobile?opened:!railCollapsed));
+  const label=mobile?panelText('باز کردن منو'):railCollapsed?panelText('گسترش منو'):panelText('جمع کردن منو');
+  toggle.setAttribute('aria-label',label);toggle.title=label;toggle.replaceChildren(icon(mobile?'menu':'rail'));
+ }
+ function closeMenu(){const opened=document.body.classList.contains('menu-open');document.body.classList.remove('menu-open');syncDrawer();if(opened)get('menu-toggle').focus({preventScroll:true});}
+ function toggleMenu(){
+  closeSelectMenu();closeActionMenu(false);
+  if(innerWidth>800){railCollapsed=!railCollapsed;document.body.classList.toggle('sidebar-collapsed',railCollapsed);try{localStorage.setItem('whitedns-panel-sidebar',railCollapsed?'compact':'expanded');}catch{}syncDrawer();return;}
+  const open=document.body.classList.toggle('menu-open');syncDrawer();if(open)(document.querySelector('nav a[aria-current=page]')||get('rail-close')).focus({preventScroll:true});
+ }
  window.addEventListener('resize',syncDrawer);syncDrawer();
  get('nav-backdrop').onclick=closeMenu;get('rail-close').onclick=closeMenu;
  document.querySelectorAll('.sidebar a[href^="#"]').forEach(link=>link.addEventListener('click',closeMenu));

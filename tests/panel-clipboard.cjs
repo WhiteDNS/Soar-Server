@@ -18,8 +18,11 @@ module.exports=async function testClipboard({browser,context,page,url,password,o
  }
  async function readable(source){
   assert.ok(await source.locator('#toast').evaluate(el=>{
-   const css=getComputedStyle(el),rgb=s=>s.match(/[\d.]+/g).slice(0,3).map(Number);
-   const lum=s=>rgb(s).map(v=>{v/=255;return v<=.04045?v/12.92:((v+.055)/1.055)**2.4;}).reduce((s,v,i)=>s+v*[.2126,.7152,.0722][i],0);
+   // Computed colors may be OKLCH as well as rgb(). Let the browser convert
+   // them to sRGB pixels before applying the WCAG luminance formula.
+   const css=getComputedStyle(el),canvas=document.createElement('canvas');canvas.width=canvas.height=1;
+   const ctx=canvas.getContext('2d',{willReadFrequently:true});
+   const lum=color=>{ctx.clearRect(0,0,1,1);ctx.fillStyle=color;ctx.fillRect(0,0,1,1);return [...ctx.getImageData(0,0,1,1).data].slice(0,3).map(v=>{v/=255;return v<=.04045?v/12.92:((v+.055)/1.055)**2.4;}).reduce((s,v,i)=>s+v*[.2126,.7152,.0722][i],0);};
    const a=lum(css.color),b=lum(css.backgroundColor),rect=el.getBoundingClientRect();
    return (Math.max(a,b)+.05)/(Math.min(a,b)+.05)>=4.5&&el.contains(document.elementFromPoint(rect.x+rect.width/2,rect.y+rect.height/2));
   }),'feedback must be readable and unobscured');

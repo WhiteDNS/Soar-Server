@@ -5,10 +5,24 @@ on:
     branches: [main, feature/soar-panel, feature/subscriptions-i18n]
     tags: ['panel-v*']
   workflow_dispatch:
+    inputs:
+      finish_release:
+        description: Wait for the specified PR, merge it, and publish its verified panel release
+        type: boolean
+        default: false
+      release_pr:
+        description: Same-repository PR number to release (only with finish_release)
+        type: string
+        default: ''
+      release_base:
+        description: Expected main commit before merging (full SHA)
+        type: string
+        default: ''
 permissions:
   contents: read
 jobs:
   verify:
+    if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.finish_release) }}
     strategy:
       fail-fast: false
       matrix:
@@ -23,7 +37,7 @@ jobs:
       - name: Check release version consistency
         run: |
           python3 scripts/build_panel_bundle.py --print-version
-          python3 -m unittest discover -s tests -p 'panel_release_test.py'
+          python3 -m unittest discover -s tests -p 'panel_release*_test.py'
       - name: Check out the exact Cotten engine source
         uses: actions/checkout@v4
         with:
@@ -132,3 +146,30 @@ jobs:
             gh release create "$GITHUB_REF_NAME" "${assets[@]}" --verify-tag \
               --title "WhiteDNS Server Management $version" --notes-file "docs/RELEASE-panel-$version.md"
           fi
+  finish-release:
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.finish_release }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    permissions:
+      contents: write
+      pull-requests: write
+      actions: write
+    concurrency:
+      group: finish-panel-release-${{ inputs.release_pr }}
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Complete the authorized PR and panel release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_PR: ${{ inputs.release_pr }}
+          RELEASE_BASE_SHA: ${{ inputs.release_base }}
+        run: python3 scripts/finish_panel_release.py
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: panel-release-verification-${{ inputs.release_pr }}
+          path: release-verification.json
+          if-no-files-found: ignore
