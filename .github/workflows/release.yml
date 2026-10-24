@@ -26,7 +26,7 @@ jobs:
       - name: Prepare the verified patched engine workspace
         run: |
           GOWORK=off go mod download
-          python3 scripts/prepare_cotten_engine.py --source .engine-source/CottenDNS --workspace .engine-source/patched.go.work
+          python3 scripts/prepare_panel_engines.py --workspace .engine-source/patched.go.work
           echo "GOWORK=$GITHUB_WORKSPACE/.engine-source/patched.go.work" >> "$GITHUB_ENV"
       - name: Verify installer, bootstrap and diagnostics
         run: |

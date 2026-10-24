@@ -21,6 +21,7 @@ import (
 
 	cottenprobe "cottendns-go/probe"
 	"github.com/getlantern/soar"
+	masterprobe "masterdnsvpn-go/probe"
 )
 
 const version = "0.1.0"
@@ -126,6 +127,7 @@ func run(args []string, output io.Writer) int {
 	fs.SetOutput(output)
 	zone := fs.String("zone", "", "delegated tunnel domain")
 	pubkey := fs.String("pubkey", "", "base64 server public key (never the private key)")
+	masterFile := fs.String("masterdns-profile-file", "", "Private installer-only MasterDNS credentials; never put keys in argv")
 	cottenFile := fs.String("cotten-profile-file", "", "Private installer-only Cotten probe credentials; never put a shared key in argv")
 	resolvers := fs.String("resolver", "", "comma-separated resolver IPs or IP:port values")
 	target := fs.String("url", "https://example.com/", "HTTPS destination for the tunnel test")
@@ -144,8 +146,12 @@ func run(args []string, output io.Writer) int {
 		return 0
 	}
 	key, err := base64.StdEncoding.DecodeString(*pubkey)
-	if (*cottenFile == "" && (err != nil || len(key) != ed25519.PublicKeySize || *zone == "")) || fs.NArg() != 0 {
+	if (*cottenFile == "" && *masterFile == "" && (err != nil || len(key) != ed25519.PublicKeySize || *zone == "")) || fs.NArg() != 0 {
 		fmt.Fprintln(output, "[ERROR] Supply -zone, -pubkey and -resolver. Use -help for examples.")
+		return 2
+	}
+	if *cottenFile != "" && *masterFile != "" {
+		fmt.Fprintln(output, "[ERROR] Choose exactly one engine probe file.")
 		return 2
 	}
 	if *tcp != "auto" && *tcp != "on" && *tcp != "only" && *tcp != "off" {
@@ -164,7 +170,30 @@ func run(args []string, output io.Writer) int {
 	ctx, cancel := context.WithTimeout(context.Background(), *timeout)
 	defer cancel()
 	var r result
-	if *cottenFile != "" {
+	if *masterFile != "" {
+		r = result{Stage: "masterdns tunnel"}
+		info, e := os.Stat(*masterFile)
+		if e != nil || !info.Mode().IsRegular() || info.Size() > 4096 || os.PathSeparator != '\\' && info.Mode().Perm()&0077 != 0 {
+			r.Error = "MasterDNS probe file must be private (0600)"
+		} else {
+			raw, e := os.ReadFile(*masterFile)
+			var cfg masterprobe.Config
+			if e != nil || json.Unmarshal(raw, &cfg) != nil {
+				r.Error = "invalid MasterDNS probe file"
+			} else if *tcp == "only" {
+				r.Error = "MasterDNS native client uses UDP DNS; use -tcp off"
+			} else {
+				cfg.Resolvers, cfg.URL, cfg.Transport = list, *target, "udp"
+				detailed, e := masterprobe.CheckHTTPDetailed(ctx, cfg)
+				r.HTTP, r.Handshake, r.Stage, r.ErrorClass = detailed.HTTPStatus, detailed.Handshake, detailed.Stage, detailed.ErrorClass
+				if e != nil {
+					r.Error = e.Error()
+				} else {
+					r.OK, r.Stage = detailed.OK, "complete"
+				}
+			}
+		}
+	} else if *cottenFile != "" {
 		r = result{Stage: "cotten tunnel"}
 		info, e := os.Stat(*cottenFile)
 		if e != nil || !info.Mode().IsRegular() || info.Size() > 4096 || os.PathSeparator != '\\' && info.Mode().Perm()&0077 != 0 {

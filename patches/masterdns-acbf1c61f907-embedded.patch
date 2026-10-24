@@ -1,0 +1,814 @@
+diff --git a/go.mod b/go.mod
+index 49b867a..ca0c9f8 100644
+--- a/go.mod
++++ b/go.mod
+@@ -13,6 +13,7 @@ require (
+ 	github.com/BurntSushi/toml v1.4.0
+ 	github.com/klauspost/compress v1.18.5
+ 	github.com/pierrec/lz4/v4 v4.1.26
+-	golang.org/x/crypto v0.49.0
+-	golang.org/x/sys v0.42.0
++	golang.org/x/crypto v0.51.0
++	golang.org/x/net v0.54.0
++	golang.org/x/sys v0.44.0
+ )
+diff --git a/go.sum b/go.sum
+index a129ea6..b79fbc2 100644
+--- a/go.sum
++++ b/go.sum
+@@ -4,7 +4,9 @@ github.com/klauspost/compress v1.18.5 h1:/h1gH5Ce+VWNLSWqPzOVn6XBO+vJbCNGvjoaGBF
+ github.com/klauspost/compress v1.18.5/go.mod h1:cwPg85FWrGar70rWktvGQj8/hthj3wpl0PGDogxkrSQ=
+ github.com/pierrec/lz4/v4 v4.1.26 h1:GrpZw1gZttORinvzBdXPUXATeqlJjqUG/D87TKMnhjY=
+ github.com/pierrec/lz4/v4 v4.1.26/go.mod h1:EoQMVJgeeEOMsCqCzqFm2O0cJvljX2nGZjcRIPL34O4=
+-golang.org/x/crypto v0.49.0 h1:+Ng2ULVvLHnJ/ZFEq4KdcDd/cfjrrjjNSXNzxg0Y4U4=
+-golang.org/x/crypto v0.49.0/go.mod h1:ErX4dUh2UM+CFYiXZRTcMpEcN8b/1gxEuv3nODoYtCA=
+-golang.org/x/sys v0.42.0 h1:omrd2nAlyT5ESRdCLYdm3+fMfNFE/+Rf4bDIQImRJeo=
+-golang.org/x/sys v0.42.0/go.mod h1:4GL1E5IUh+htKOUEOaiffhrAeqysfVGipDYzABqnCmw=
++golang.org/x/crypto v0.51.0 h1:IBPXwPfKxY7cWQZ38ZCIRPI50YLeevDLlLnyC5wRGTI=
++golang.org/x/crypto v0.51.0/go.mod h1:8AdwkbraGNABw2kOX6YFPs3WM22XqI4EXEd8g+x7Oc8=
++golang.org/x/net v0.54.0 h1:2zJIZAxAHV/OHCDTCOHAYehQzLfSXuf/5SoL/Dv6w/w=
++golang.org/x/net v0.54.0/go.mod h1:Sj4oj8jK6XmHpBZU/zWHw3BV3abl4Kvi+Ut7cQcY+cQ=
++golang.org/x/sys v0.44.0 h1:ildZl3J4uzeKP07r2F++Op7E9B29JRUy+a27EibtBTQ=
++golang.org/x/sys v0.44.0/go.mod h1:4GL1E5IUh+htKOUEOaiffhrAeqysfVGipDYzABqnCmw=
+diff --git a/internal/client/async_runtime.go b/internal/client/async_runtime.go
+index e27fbf1..aa71ec1 100644
+--- a/internal/client/async_runtime.go
++++ b/internal/client/async_runtime.go
+@@ -243,7 +243,7 @@ func (c *Client) resetSessionState(resetSessionCookie bool) {
+ 	if resetSessionCookie {
+ 		c.sessionCookie = 0
+ 	}
+-	c.responseMode = 0
++	c.setResponseMode(0)
+ 	c.clearSessionInitBusyUntil()
+ 	c.resetSessionInitState()
+ }
+@@ -879,7 +879,7 @@ func (c *Client) handleInboundPacket(data []byte, addr *net.UDPAddr, localAddr s
+ 	// c.log.Debugf("Inbound packet from %v (%d bytes)", addr, len(data))
+ 
+ 	// 1. Extract VPN Packet from DNS Response
+-	vpnPacket, err := DnsParser.ExtractVPNResponse(data, c.responseMode == mtuProbeBase64Reply)
++	vpnPacket, err := DnsParser.ExtractVPNResponse(data, c.ResponseMode() == mtuProbeBase64Reply)
+ 	if err != nil {
+ 		if errors.Is(err, DnsParser.ErrTXTAnswerMissing) {
+ 			receivedAt := time.Now()
+diff --git a/internal/client/client.go b/internal/client/client.go
+index 803ca81..f7a6ed0 100644
+--- a/internal/client/client.go
++++ b/internal/client/client.go
+@@ -33,10 +33,12 @@ const (
+ )
+ 
+ type Client struct {
+-	cfg      config.ClientConfig
+-	log      *logger.Logger
+-	codec    *security.Codec
+-	balancer *Balancer
++	responseModeMu                sync.RWMutex
++	resolverUDPConnectionPoolSize int
++	cfg                           config.ClientConfig
++	log                           *logger.Logger
++	codec                         *security.Codec
++	balancer                      *Balancer
+ 
+ 	successMTUChecks  bool
+ 	udpBufferPool     sync.Pool
+@@ -215,6 +217,23 @@ func Bootstrap(configPath string, logPath string, overrides config.ClientConfigO
+ 	return BootstrapLoadedConfig(cfg, logPath)
+ }
+ 
++// BootstrapSilent is used by the panel's private native connectivity probe.
++func BootstrapSilent(path string, overrides config.ClientConfigOverrides) (*Client, error) {
++	cfg, err := config.LoadClientConfigWithOverrides(path, overrides)
++	if err != nil {
++		return nil, err
++	}
++	codec, err := security.NewCodec(cfg.DataEncryptionMethod, cfg.EncryptionKey)
++	if err != nil {
++		return nil, err
++	}
++	c := New(cfg, logger.NewDiscard("MasterDNS probe", "ERROR"), codec)
++	if err = c.BuildConnectionMap(); err != nil {
++		return nil, err
++	}
++	return c, nil
++}
++
+ func BootstrapLoadedConfig(cfg config.ClientConfig, logPath string) (*Client, error) {
+ 	var log *logger.Logger
+ 	if logPath != "" {
+@@ -245,15 +264,16 @@ func New(cfg config.ClientConfig, log *logger.Logger, codec *security.Codec) *Cl
+ 	}
+ 
+ 	c := &Client{
+-		cfg:                 cfg,
+-		log:                 log,
+-		codec:               codec,
+-		balancer:            NewBalancer(cfg.ResolverBalancingStrategy, log),
+-		uploadCompression:   uint8(cfg.UploadCompressionType),
+-		downloadCompression: uint8(cfg.DownloadCompressionType),
+-		mtuCryptoOverhead:   mtuCryptoOverhead(cfg.DataEncryptionMethod),
+-		maxPackedBlocks:     1,
+-		responseMode:        responseMode,
++		resolverUDPConnectionPoolSize: cfg.EffectiveResolverUDPConnectionPoolSize(),
++		cfg:                           cfg,
++		log:                           log,
++		codec:                         codec,
++		balancer:                      NewBalancer(cfg.ResolverBalancingStrategy, log),
++		uploadCompression:             uint8(cfg.UploadCompressionType),
++		downloadCompression:           uint8(cfg.DownloadCompressionType),
++		mtuCryptoOverhead:             mtuCryptoOverhead(cfg.DataEncryptionMethod),
++		maxPackedBlocks:               1,
++		responseMode:                  responseMode,
+ 		udpBufferPool: sync.Pool{
+ 			New: func() any {
+ 				return make([]byte, RuntimeUDPReadBufferSize)
+diff --git a/internal/client/client_utils.go b/internal/client/client_utils.go
+index 1f848e3..3ad2968 100644
+--- a/internal/client/client_utils.go
++++ b/internal/client/client_utils.go
+@@ -177,9 +177,17 @@ func (c *Client) IsSessionReady() bool {
+ }
+ 
+ func (c *Client) ResponseMode() uint8 {
++	c.responseModeMu.RLock()
++	defer c.responseModeMu.RUnlock()
+ 	return c.responseMode
+ }
+ 
++func (c *Client) setResponseMode(mode uint8) {
++	c.responseModeMu.Lock()
++	c.responseMode = mode
++	c.responseModeMu.Unlock()
++}
++
+ func (c *Client) NotifyPacket(packetType uint8, isInbound bool) {
+ 	if c.pingManager != nil {
+ 		c.pingManager.NotifyPacket(packetType, isInbound)
+diff --git a/internal/client/session.go b/internal/client/session.go
+index bf87cc2..4f939db 100644
+--- a/internal/client/session.go
++++ b/internal/client/session.go
+@@ -163,7 +163,7 @@ func (c *Client) applySessionInitPacket(packet VpnProto.Packet, initPayload []by
+ 
+ 		c.sessionID = sessionAccept.SessionID
+ 		c.sessionCookie = sessionAccept.SessionCookie
+-		c.responseMode = initPayload[0]
++		c.setResponseMode(initPayload[0])
+ 		c.uploadCompression, c.downloadCompression = compression.SplitPair(sessionAccept.CompressionPair)
+ 		if sessionAccept.HasClientPolicySync {
+ 			c.applySessionClientPolicy(sessionAccept.ClientPolicy)
+diff --git a/internal/client/tunnel_runtime.go b/internal/client/tunnel_runtime.go
+index f194734..ee277be 100644
+--- a/internal/client/tunnel_runtime.go
++++ b/internal/client/tunnel_runtime.go
+@@ -140,7 +140,7 @@ func (c *Client) getUDPConn(resolverLabel string) (*net.UDPConn, error) {
+ 	c.resolverConnsMu.Lock()
+ 	pool, ok := c.resolverConns[resolverLabel]
+ 	if !ok {
+-		pool = make(chan pooledUDPConn, c.cfg.EffectiveResolverUDPConnectionPoolSize())
++		pool = make(chan pooledUDPConn, max(1, c.resolverUDPConnectionPoolSize))
+ 		c.resolverConns[resolverLabel] = pool
+ 	}
+ 	c.resolverConnsMu.Unlock()
+@@ -293,7 +293,7 @@ func (c *Client) exchangeDNSOverConnection(conn Connection, query []byte, timeou
+ 
+ 	c.putUDPConn(conn.ResolverLabel, udpConn)
+ 
+-	packet, err := dnsparser.ExtractVPNResponse(response, c.responseMode == mtuProbeBase64Reply)
++	packet, err := dnsparser.ExtractVPNResponse(response, c.ResponseMode() == mtuProbeBase64Reply)
+ 	if err != nil {
+ 		return VpnProto.Packet{}, err
+ 	}
+diff --git a/internal/config/server.go b/internal/config/server.go
+index 6f46a31..e8ae839 100644
+--- a/internal/config/server.go
++++ b/internal/config/server.go
+@@ -113,6 +113,9 @@ type ServerConfigFlagBinder struct {
+ 	flagToField map[string]string
+ }
+ 
++// DefaultServerConfig returns fresh defaults for the embedding adapter.
++func DefaultServerConfig() ServerConfig { return defaultServerConfig() }
++
+ func defaultServerConfig() ServerConfig {
+ 	return ServerConfig{
+ 		ProtocolType:                      "SOCKS5",
+diff --git a/internal/logger/logger.go b/internal/logger/logger.go
+index a24d43c..0b319c6 100644
+--- a/internal/logger/logger.go
++++ b/internal/logger/logger.go
+@@ -70,6 +70,13 @@ var coloredLevelTexts = [...]string{
+ 	levelError: "\x1b[31m[ERROR]\x1b[0m",
+ }
+ 
++// NewDiscard disables account logs; embeddings never retain destinations or credentials.
++func NewDiscard(name, rawLevel string) *Logger {
++	l := New(name, rawLevel)
++	l.consoleWriter = io.Discard
++	return l
++}
++
+ func New(name, rawLevel string) *Logger {
+ 	return NewWithFile(name, rawLevel, "")
+ }
+diff --git a/internal/udpserver/deferred_session.go b/internal/udpserver/deferred_session.go
+index 1502d71..6fe81fb 100644
+--- a/internal/udpserver/deferred_session.go
++++ b/internal/udpserver/deferred_session.go
+@@ -33,6 +33,7 @@ type deferredSessionWorker struct {
+ }
+ 
+ type deferredSessionProcessor struct {
++	wg                 sync.WaitGroup
+ 	log                *logger.Logger
+ 	workers            []deferredSessionWorker
+ 	mu                 sync.Mutex
+@@ -113,7 +114,8 @@ func (p *deferredSessionProcessor) Start(ctx context.Context) {
+ 	}
+ 
+ 	for idx := range p.workers {
+-		go p.runDeferredWorker(ctx, idx)
++		p.wg.Add(1)
++		go func(index int) { defer p.wg.Done(); p.runDeferredWorker(ctx, index) }(idx)
+ 	}
+ }
+ 
+diff --git a/internal/udpserver/embedded.go b/internal/udpserver/embedded.go
+new file mode 100644
+index 0000000..956e031
+--- /dev/null
++++ b/internal/udpserver/embedded.go
+@@ -0,0 +1,145 @@
++// WhiteDNS embedding adapter. The MasterDnsVPN wire protocol is unchanged.
++package udpserver
++
++import (
++	"context"
++	"errors"
++	"net"
++	"strings"
++	"sync"
++	"time"
++
++	"masterdnsvpn-go/internal/config"
++	"masterdnsvpn-go/internal/logger"
++	"masterdnsvpn-go/internal/security"
++)
++
++// EmbeddedConfig describes one account behind a caller-owned DNS listener.
++// Every egress operation requires caller policy; no direct-dial fallback exists.
++type EmbeddedConfig struct {
++	Domain               string
++	Domains              []string
++	Key                  string
++	MaxActiveSessions    int
++	MaxStreamsPerSession int
++	DialContext          func(context.Context, string, string) (net.Conn, error)
++	ExchangeDNS          func(context.Context, []byte) ([]byte, error)
++	Allowed              func() bool
++}
++
++type Embedded struct {
++	s       *Server
++	ctx     context.Context
++	cancel  context.CancelFunc
++	allowed func() bool
++	mu      sync.RWMutex
++	once    sync.Once
++	wg      sync.WaitGroup
++}
++
++func NewEmbedded(parent context.Context, in EmbeddedConfig) (*Embedded, error) {
++	if parent == nil || in.Domain == "" || len(in.Key) < 32 || in.Allowed == nil || in.DialContext == nil || in.ExchangeDNS == nil {
++		return nil, errors.New("embedded MasterDNS requires domain, key and all account-policy hooks")
++	}
++	if in.MaxActiveSessions < 0 || in.MaxActiveSessions > 255 || in.MaxStreamsPerSession < 0 || in.MaxStreamsPerSession > 65535 {
++		return nil, errors.New("invalid MasterDNS session or stream limit")
++	}
++	domains := in.Domains
++	if len(domains) == 0 {
++		domains = []string{in.Domain}
++	}
++	if len(domains) > 8 {
++		return nil, errors.New("at most eight MasterDNS domains")
++	}
++	for _, domain := range domains {
++		if domain == "" || len(domain) > 128 || strings.ContainsAny(domain, " /\\\t\r\n") {
++			return nil, errors.New("invalid MasterDNS domain")
++		}
++	}
++	cfg := config.DefaultServerConfig()
++	cfg.Domain = append([]string(nil), domains...)
++	cfg.DataEncryptionMethod = 5
++	cfg.MinVPNLabelLength = 1
++	cfg.MaxAllowedClientActiveSessions = 8
++	cfg.MaxAllowedClientActiveStreams = 128
++	if in.MaxActiveSessions > 0 {
++		cfg.MaxAllowedClientActiveSessions = in.MaxActiveSessions
++	}
++	if in.MaxStreamsPerSession > 0 {
++		cfg.MaxAllowedClientActiveStreams = in.MaxStreamsPerSession
++	}
++	cfg.DeferredSessionWorkers, cfg.DeferredSessionQueueLimit = 2, 32
++	cfg.DNSCacheMaxRecords, cfg.RecentlyClosedStreamCap = 16, 128
++	cfg.ARQWindowSize = 256
++	cfg.SessionCleanupIntervalSecs = 5
++	codec, err := security.NewCodec(5, in.Key)
++	if err != nil {
++		return nil, err
++	}
++	ctx, cancel := context.WithCancel(parent)
++	s := New(cfg, logger.NewDiscard("MasterDNS account", "ERROR"), codec)
++	// Keep connection attempts independent; a slow host must not block all streams.
++	s.deferredConnectSession = newDeferredSessionProcessor(4, 16, s.log)
++	s.embeddedDialContext = func(caller context.Context, network, address string) (net.Conn, error) {
++		if ctx.Err() != nil || !in.Allowed() {
++			return nil, net.ErrClosed
++		}
++		if caller == nil {
++			caller = context.Background()
++		}
++		dialCtx, stopDial := context.WithTimeout(caller, 15*time.Second)
++		defer stopDial()
++		stop := context.AfterFunc(ctx, stopDial)
++		defer stop()
++		return in.DialContext(dialCtx, network, address)
++	}
++	s.resolveDNSQueryFn = func(raw []byte) ([]byte, error) {
++		if ctx.Err() != nil || !in.Allowed() {
++			return nil, net.ErrClosed
++		}
++		lookupCtx, stop := context.WithTimeout(ctx, 4*time.Second)
++		defer stop()
++		return in.ExchangeDNS(lookupCtx, raw)
++	}
++	e := &Embedded{s: s, ctx: ctx, cancel: cancel, allowed: in.Allowed}
++	s.deferredDNSSession.Start(ctx)
++	s.deferredConnectSession.Start(ctx)
++	e.wg.Add(1)
++	go func() { defer e.wg.Done(); s.sessionCleanupLoop(ctx) }()
++	return e, nil
++}
++
++func (e *Embedded) HandleDNS(query []byte) []byte {
++	e.mu.RLock()
++	defer e.mu.RUnlock()
++	if e.ctx.Err() != nil || len(query) > 65535 || !e.allowed() {
++		return nil
++	}
++	return e.s.safeHandlePacket(query)
++}
++
++// TCP framing belongs to the caller. MasterDNS retains its DNS response budget.
++func (e *Embedded) HandleDNSTCP(query []byte) []byte { return e.HandleDNS(query) }
++
++func (e *Embedded) SessionCount() int {
++	e.s.sessions.mu.RLock()
++	defer e.s.sessions.mu.RUnlock()
++	return int(e.s.sessions.activeCount)
++}
++
++func (e *Embedded) Close() error {
++	e.once.Do(func() {
++		e.cancel()
++		e.mu.Lock()
++		defer e.mu.Unlock()
++		e.s.deferredDNSSession.wg.Wait()
++		e.s.deferredConnectSession.wg.Wait()
++		e.wg.Wait()
++		for id := 1; id <= maxServerSessionID; id++ {
++			if record, ok := e.s.sessions.Close(uint8(id), time.Now(), 0); ok {
++				e.s.cleanupClosedSession(uint8(id), record)
++			}
++		}
++	})
++	return nil
++}
+diff --git a/internal/udpserver/embedded_test.go b/internal/udpserver/embedded_test.go
+new file mode 100644
+index 0000000..9f0292c
+--- /dev/null
++++ b/internal/udpserver/embedded_test.go
+@@ -0,0 +1,98 @@
++package udpserver
++
++import (
++	"context"
++	"errors"
++	"net"
++	"sync/atomic"
++	"testing"
++	"time"
++)
++
++func embeddedPolicyConfig(allowed *atomic.Bool) EmbeddedConfig {
++	return EmbeddedConfig{Domain: "md.account.example.com", Key: "test-only-MasterDNS-key-material-00001", Allowed: allowed.Load,
++		DialContext: func(context.Context, string, string) (net.Conn, error) {
++			return nil, errors.New("account policy denied")
++		},
++		ExchangeDNS: func(context.Context, []byte) ([]byte, error) { return nil, errors.New("account policy denied") }}
++}
++
++func TestEmbeddedRequiresPolicyAndNativeSessionBounds(t *testing.T) {
++	var allowed atomic.Bool
++	allowed.Store(true)
++	cfg := embeddedPolicyConfig(&allowed)
++	for _, limit := range []int{-1, 256} {
++		cfg.MaxActiveSessions = limit
++		if e, err := NewEmbedded(context.Background(), cfg); err == nil {
++			e.Close()
++			t.Fatal("invalid session limit accepted", limit)
++		}
++	}
++	cfg.MaxActiveSessions = 255
++	e, err := NewEmbedded(context.Background(), cfg)
++	if err != nil {
++		t.Fatal(err)
++	}
++	defer e.Close()
++	if e.s.cfg.MaxAllowedClientActiveSessions != 255 {
++		t.Fatal("native session limit lost")
++	}
++	cfg.DialContext = nil
++	if e, err := NewEmbedded(context.Background(), cfg); err == nil {
++		e.Close()
++		t.Fatal("unmetered fallback allowed")
++	}
++}
++
++func TestEmbeddedPolicyAndShutdown(t *testing.T) {
++	var allowed atomic.Bool
++	allowed.Store(true)
++	cfg := embeddedPolicyConfig(&allowed)
++	entered := make(chan struct{}, 1)
++	cfg.DialContext = func(ctx context.Context, _, _ string) (net.Conn, error) {
++		entered <- struct{}{}
++		<-ctx.Done()
++		return nil, ctx.Err()
++	}
++	e, err := NewEmbedded(context.Background(), cfg)
++	if err != nil {
++		t.Fatal(err)
++	}
++	defer e.Close()
++	query := buildTestDNSQuery(42, "probe.md.account.example.com", 1)
++	if len(e.HandleDNS(query)) == 0 {
++		t.Fatal("active account did not answer")
++	}
++	allowed.Store(false)
++	if len(e.HandleDNS(query)) != 0 {
++		t.Fatal("disabled account answered")
++	}
++	if _, err := e.s.resolveDNSUpstream(query); !errors.Is(err, net.ErrClosed) {
++		t.Fatal("disabled account bypassed DNS policy", err)
++	}
++	if _, err := e.s.dialTCPTargetContext(context.Background(), "8.8.8.8:443"); !errors.Is(err, net.ErrClosed) {
++		t.Fatal("disabled account bypassed TCP policy", err)
++	}
++	allowed.Store(true)
++	done := make(chan error, 1)
++	go func() { _, err := e.s.dialTCPTargetContext(context.Background(), "8.8.8.8:443"); done <- err }()
++	select {
++	case <-entered:
++	case <-time.After(time.Second):
++		t.Fatal("dial hook not called")
++	}
++	if err := e.Close(); err != nil {
++		t.Fatal(err)
++	}
++	select {
++	case err := <-done:
++		if !errors.Is(err, context.Canceled) {
++			t.Fatal("dial was not cancelled", err)
++		}
++	case <-time.After(time.Second):
++		t.Fatal("dial leaked after close")
++	}
++	if len(e.HandleDNS(query)) != 0 {
++		t.Fatal("closed engine answered")
++	}
++}
+diff --git a/internal/udpserver/server.go b/internal/udpserver/server.go
+index 897dacd..c827d9b 100644
+--- a/internal/udpserver/server.go
++++ b/internal/udpserver/server.go
+@@ -41,6 +41,7 @@ const (
+ var preSessionPacketTypes = buildPreSessionPacketTypes()
+ 
+ type Server struct {
++	embeddedDialContext      func(context.Context, string, string) (net.Conn, error)
+ 	cfg                      config.ServerConfig
+ 	log                      *logger.Logger
+ 	codec                    *security.Codec
+diff --git a/internal/udpserver/socks5_upstream.go b/internal/udpserver/socks5_upstream.go
+index 596e6a6..0f74ae8 100644
+--- a/internal/udpserver/socks5_upstream.go
++++ b/internal/udpserver/socks5_upstream.go
+@@ -127,6 +127,9 @@ func (s *Server) dialTCPTarget(address string) (net.Conn, error) {
+ }
+ 
+ func (s *Server) dialTCPTargetContext(ctx context.Context, address string) (net.Conn, error) {
++	if s.embeddedDialContext != nil {
++		return s.embeddedDialContext(ctx, "tcp", address)
++	}
+ 	dialFn := s.dialStreamUpstreamFn
+ 	timeout := s.socksConnectTimeout
+ 	if timeout <= 0 {
+diff --git a/probe/http.go b/probe/http.go
+new file mode 100644
+index 0000000..f23b525
+--- /dev/null
++++ b/probe/http.go
+@@ -0,0 +1,275 @@
++// Package probe verifies an actual authenticated MasterDNS tunnel and HTTPS
++// egress. Credentials stay in memory or private temporary files, never argv.
++package probe
++
++import (
++	"context"
++	"crypto/tls"
++	"errors"
++	"fmt"
++	"io"
++	"net"
++	"net/http"
++	"net/http/httptrace"
++	"net/url"
++	"os"
++	"path/filepath"
++	"strings"
++	"sync"
++	"syscall"
++	"time"
++
++	"golang.org/x/net/proxy"
++	"masterdnsvpn-go/internal/client"
++	"masterdnsvpn-go/internal/config"
++)
++
++type Config struct {
++	Domain    string      `json:"domain"`
++	Key       string      `json:"key"`
++	Resolvers []string    `json:"-"`
++	Transport string      `json:"-"`
++	URL       string      `json:"-"`
++	TLSConfig *tls.Config `json:"-"`
++}
++
++// Result preserves the furthest observed stage, including when a later HTTPS
++// operation fails. ErrorClass is bounded and never includes traffic metadata.
++type Result struct {
++	OK         bool
++	Stage      string
++	Handshake  bool
++	HTTPStatus int
++	ErrorClass string
++}
++
++type progress struct {
++	mu        sync.Mutex
++	stage     string
++	connected bool
++}
++
++func (p *progress) mark(stage string) {
++	p.mu.Lock()
++	p.stage = stage
++	p.mu.Unlock()
++}
++
++func (p *progress) connect() {
++	p.mu.Lock()
++	p.connected, p.stage = true, "socks"
++	p.mu.Unlock()
++}
++
++func (p *progress) snapshot() (string, bool) {
++	p.mu.Lock()
++	defer p.mu.Unlock()
++	return p.stage, p.connected
++}
++
++type runtimeStoppedError struct{ class string }
++
++func (e runtimeStoppedError) Error() string { return "MasterDNS client stopped before HTTPS completed" }
++
++func classifyError(err error) string {
++	if err == nil {
++		return ""
++	}
++	var stopped runtimeStoppedError
++	if errors.As(err, &stopped) {
++		return stopped.class
++	}
++	if errors.Is(err, context.DeadlineExceeded) {
++		return "deadline_exceeded"
++	}
++	if errors.Is(err, context.Canceled) {
++		return "cancelled"
++	}
++	if errors.Is(err, syscall.EADDRINUSE) {
++		return "address_in_use"
++	}
++	if errors.Is(err, syscall.ECONNREFUSED) {
++		return "connection_refused"
++	}
++	if errors.Is(err, syscall.ECONNRESET) {
++		return "connection_reset"
++	}
++	if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
++		return "connection_closed"
++	}
++	var certificate *tls.CertificateVerificationError
++	if errors.As(err, &certificate) {
++		return "tls_certificate_error"
++	}
++	var networkError net.Error
++	if errors.As(err, &networkError) && networkError.Timeout() {
++		return "network_timeout"
++	}
++	return "operation_failed"
++}
++
++func CheckHTTP(parent context.Context, in Config) (int, error) {
++	result, err := CheckHTTPDetailed(parent, in)
++	return result.HTTPStatus, err
++}
++
++// CheckHTTPDetailed runs the same native-client check as CheckHTTP and retains
++// authenticated connection state on a subsequent TLS or HTTP failure.
++func CheckHTTPDetailed(parent context.Context, in Config) (result Result, returnedErr error) {
++	result.Stage = "configuration"
++	fail := func(class, message string) (Result, error) {
++		result.ErrorClass = class
++		return result, errors.New(message)
++	}
++	u, err := url.Parse(in.URL)
++	if err != nil || u.Scheme != "https" || u.Hostname() == "" || u.User != nil || u.Fragment != "" {
++		return fail("invalid_configuration", "probe requires an HTTPS destination")
++	}
++	if parent == nil || len(in.Key) < 32 || len(in.Domain) < 3 || len(in.Resolvers) == 0 {
++		return fail("invalid_configuration", "missing MasterDNS probe credentials or resolvers")
++	}
++	if in.Transport != "udp" && in.Transport != "auto" {
++		return fail("invalid_configuration", "invalid MasterDNS DNS transport")
++	}
++	work, err := os.MkdirTemp("", "whitedns-masterdns-check-")
++	if err != nil {
++		return fail("local_setup_failed", "MasterDNS probe temporary setup failed")
++	}
++	defer os.RemoveAll(work)
++	listener, err := net.Listen("tcp", "127.0.0.1:0")
++	if err != nil {
++		return fail("local_setup_failed", "MasterDNS probe listener setup failed")
++	}
++	address := listener.Addr().String()
++	port := listener.Addr().(*net.TCPAddr).Port
++	listener.Close()
++	text := fmt.Sprintf(`PROTOCOL_TYPE = "SOCKS5"
++LISTEN_IP = "127.0.0.1"
++LISTEN_PORT = %d
++SOCKS5_AUTH = false
++LOCAL_DNS_ENABLED = false
++DOMAINS = [%q]
++ENCRYPTION_KEY = %q
++DATA_ENCRYPTION_METHOD = 5
++MIN_UPLOAD_MTU = 80
++MAX_UPLOAD_MTU = 142
++MIN_DOWNLOAD_MTU = 16
++MAX_DOWNLOAD_MTU = 1500
++MTU_TEST_RETRIES = 1
++MTU_TEST_TIMEOUT = 1.0
++MTU_TEST_PARALLELISM = 1
++PACKET_DUPLICATION_COUNT = 0
++SETUP_PACKET_DUPLICATION_COUNT = 1
++RECHECK_INACTIVE_SERVERS_ENABLED = false
++AUTO_DISABLE_TIMEOUT_SERVERS = false
++SAVE_MTU_SERVERS_TO_FILE = false
++LOG_LEVEL = "ERROR"
++`, port, in.Domain, in.Key)
++	configPath, resolverPath := filepath.Join(work, "client.toml"), filepath.Join(work, "resolvers.txt")
++	if err = os.WriteFile(configPath, []byte(text), 0600); err != nil {
++		return fail("local_setup_failed", "MasterDNS probe configuration could not be written")
++	}
++	if err = os.WriteFile(resolverPath, []byte(strings.Join(in.Resolvers, "\n")+"\n"), 0600); err != nil {
++		return fail("local_setup_failed", "MasterDNS probe resolvers could not be written")
++	}
++	app, err := client.BootstrapSilent(configPath, config.ClientConfigOverrides{ResolversFilePath: &resolverPath})
++	if err != nil {
++		return fail("invalid_configuration", "MasterDNS probe configuration failed")
++	}
++	ctx, cancel := context.WithCancel(parent)
++	done := make(chan struct{})
++	var runtimeErr error
++	go func() {
++		defer close(done)
++		runtimeErr = app.Run(ctx)
++	}()
++	state := &progress{stage: "startup"}
++	defer func() {
++		result.Stage, result.Handshake = state.snapshot()
++		if result.OK {
++			result.Stage = "complete"
++		}
++	}()
++	defer func() {
++		cancel()
++		select {
++		case <-done:
++		case <-time.After(10 * time.Second):
++			if returnedErr == nil {
++				result.OK, result.ErrorClass = false, "cleanup_timeout"
++				state.mark("cleanup")
++				returnedErr = errors.New("MasterDNS probe shutdown timed out")
++			}
++		}
++	}()
++	dialer, err := proxy.SOCKS5("tcp", address, nil, &net.Dialer{Timeout: 5 * time.Second})
++	if err != nil {
++		return fail("local_setup_failed", "MasterDNS probe proxy setup failed")
++	}
++	contextDialer := dialer.(proxy.ContextDialer)
++	transport := &http.Transport{TLSClientConfig: in.TLSConfig, DisableKeepAlives: true, DialContext: func(ctx context.Context, network, target string) (net.Conn, error) {
++		for {
++			conn, err := contextDialer.DialContext(ctx, network, target)
++			if err == nil {
++				state.connect()
++				return conn, nil
++			}
++			// The legacy client may open SOCKS before its tunnel session is ready.
++			select {
++			case <-ctx.Done():
++				return nil, ctx.Err()
++			case <-done:
++				if ctx.Err() != nil {
++					return nil, ctx.Err()
++				}
++				class := classifyError(runtimeErr)
++				if class == "" {
++					class = "client_stopped"
++				}
++				return nil, runtimeStoppedError{class: class}
++			case <-time.After(50 * time.Millisecond):
++			}
++		}
++	}}
++	defer transport.CloseIdleConnections()
++	httpClient := &http.Client{Transport: transport, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
++	trace := &httptrace.ClientTrace{
++		TLSHandshakeStart: func() { state.mark("tls") },
++		TLSHandshakeDone: func(_ tls.ConnectionState, err error) {
++			if err == nil {
++				state.mark("http")
++			}
++		},
++		WroteRequest: func(info httptrace.WroteRequestInfo) {
++			if info.Err == nil {
++				state.mark("http")
++			}
++		},
++	}
++	req, err := http.NewRequestWithContext(httptrace.WithClientTrace(ctx, trace), "GET", in.URL, nil)
++	if err != nil {
++		return fail("invalid_configuration", "MasterDNS probe request configuration failed")
++	}
++	response, err := httpClient.Do(req)
++	if err != nil {
++		if ctx.Err() != nil {
++			err = ctx.Err()
++		}
++		return fail(classifyError(err), "MasterDNS tunnel HTTPS test failed; check DNS transport and outbound access")
++	}
++	defer response.Body.Close()
++	result.HTTPStatus = response.StatusCode
++	state.mark("body")
++	if _, err = io.Copy(io.Discard, io.LimitReader(response.Body, 64<<10)); err != nil {
++		if ctx.Err() != nil {
++			err = ctx.Err()
++		}
++		return fail(classifyError(err), "MasterDNS HTTPS response incomplete")
++	}
++	if response.StatusCode < 200 || response.StatusCode >= 400 {
++		state.mark("http")
++		return fail("http_status", "MasterDNS HTTPS destination returned an unsuccessful status")
++	}
++	result.OK = true
++	return result, nil
++}
+diff --git a/server/embedded.go b/server/embedded.go
+new file mode 100644
+index 0000000..cfbbad9
+--- /dev/null
++++ b/server/embedded.go
+@@ -0,0 +1,10 @@
++// Package server embeds isolated MasterDnsVPN accounts without binding ports,
++// reading key files, logging credentials or changing system configuration.
++package server
++
++import "masterdnsvpn-go/internal/udpserver"
++
++type Config = udpserver.EmbeddedConfig
++type Server = udpserver.Embedded
++
++var New = udpserver.NewEmbedded

@@ -42,7 +42,7 @@ module.exports=async function testSessionLimits({page,out,assert}){
    fixture=await readClient();checkAccount(fixture,{...expected,enabled,soar_session_limit:17,cotten_session_limit:23});
   }
   const [download]=await Promise.all([page.waitForEvent('download'),page.locator('#export-csv').click()]);const csv=fs.readFileSync(await download.path(),'utf8');
-  assert.match(csv.split('\r\n')[0],/"Soar session limit","Cotten session limit"$/);assert.match(csv.split('\r\n').find(line=>line.startsWith('"Session limits regression"')),/,"17","23"$/);
+  assert.match(csv.split('\r\n')[0],/"Soar session limit","Cotten session limit","MasterDNS session limit"$/);assert.match(csv.split('\r\n').find(line=>line.startsWith('"Session limits regression"')),/,"17","23","255"$/);
   // Older responses and restored account objects may not contain the new fields.
   for(const zero of [false,true]){
    await page.evaluate(({id,zero})=>{const legacy={...clients.find(c=>c.id===id)};if(zero){legacy.soar_session_limit=0;legacy.cotten_session_limit=0;}else{delete legacy.soar_session_limit;delete legacy.cotten_session_limit;}openClient(legacy);},{id:fixture.id,zero});

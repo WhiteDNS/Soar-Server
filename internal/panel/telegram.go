@@ -34,21 +34,24 @@ type TelegramConfig struct {
 	PairExpires int64  `json:"pair_expires,omitempty"`
 }
 type telegramState struct {
-	Offset               int64             `json:"offset"`
-	Booted               bool              `json:"booted"`
-	Accounts             map[string]string `json:"accounts,omitempty"`
-	RuntimeKnown         bool              `json:"runtime_known"`
-	RuntimeFailed        bool              `json:"runtime_failed"`
-	CottenIssues         uint64            `json:"cotten_issues,omitempty"`
-	CottenRecoveryStarts uint64            `json:"cotten_recovery_starts,omitempty"`
-	CottenFailed         bool              `json:"cotten_failed,omitempty"`
-	LastReport           string            `json:"last_report,omitempty"`
-	ReportStarted        int64             `json:"report_started,omitempty"`
-	LastRelease          string            `json:"last_release,omitempty"`
-	LastReleaseCheck     int64             `json:"last_release_check,omitempty"`
-	PendingAction        string            `json:"pending_action,omitempty"`
-	PendingSince         int64             `json:"pending_since,omitempty"`
-	PendingJob           string            `json:"pending_job,omitempty"`
+	MasterDNSIssues         uint64            `json:"masterdns_issues,omitempty"`
+	MasterDNSRecoveryStarts uint64            `json:"masterdns_recovery_starts,omitempty"`
+	MasterDNSFailed         bool              `json:"masterdns_failed,omitempty"`
+	Offset                  int64             `json:"offset"`
+	Booted                  bool              `json:"booted"`
+	Accounts                map[string]string `json:"accounts,omitempty"`
+	RuntimeKnown            bool              `json:"runtime_known"`
+	RuntimeFailed           bool              `json:"runtime_failed"`
+	CottenIssues            uint64            `json:"cotten_issues,omitempty"`
+	CottenRecoveryStarts    uint64            `json:"cotten_recovery_starts,omitempty"`
+	CottenFailed            bool              `json:"cotten_failed,omitempty"`
+	LastReport              string            `json:"last_report,omitempty"`
+	ReportStarted           int64             `json:"report_started,omitempty"`
+	LastRelease             string            `json:"last_release,omitempty"`
+	LastReleaseCheck        int64             `json:"last_release_check,omitempty"`
+	PendingAction           string            `json:"pending_action,omitempty"`
+	PendingSince            int64             `json:"pending_since,omitempty"`
+	PendingJob              string            `json:"pending_job,omitempty"`
 }
 type telegramDisk struct {
 	Config TelegramConfig `json:"config"`

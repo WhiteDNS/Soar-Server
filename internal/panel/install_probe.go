@@ -25,6 +25,22 @@ func (s *Store) WriteInstallCottenProbe(id, path string) error {
 	return WritePrivateJSON(path, map[string]string{"domain": c.cottenZone(), "key": cottenKey(seed)})
 }
 
+// WriteInstallMasterDNSProbe exports only the bounded temporary test account.
+func (s *Store) WriteInstallMasterDNSProbe(id, path string) error {
+	c, err := s.Get(id)
+	if err != nil {
+		return err
+	}
+	if !isInstallProbe(c) {
+		return errors.New("not an installation account")
+	}
+	seed, err := s.Seed(id)
+	if err != nil {
+		return err
+	}
+	return WritePrivateJSON(path, map[string]string{"domain": c.masterDNSZone(), "key": masterDNSKey(seed)})
+}
+
 // CreateInstallProbe is an offline installer operation, never exposed by HTTP.
 // One reserved slot allows checking a full installation without using a user's
 // credentials or quota. Expiry and a small quota bound an interrupted install.
@@ -41,7 +57,7 @@ func (s *Store) CreateInstallProbe() (Client, error) {
 		}
 	}
 	return s.create(ClientInput{
-		Name: installProbeName, Note: installProbeNote, Enabled: true, Engines: "both",
+		Name: installProbeName, Note: installProbeNote, Enabled: true, Engines: "all",
 		QuotaBytes: 1 << 20, ExpiresAt: time.Now().Add(10 * time.Minute).UnixMilli(), StreamLimit: 4,
 	}, true)
 }

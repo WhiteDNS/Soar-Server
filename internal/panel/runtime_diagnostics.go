@@ -23,42 +23,54 @@ func (m *Manager) writeDNSUDP(packet []byte, remote net.Addr) (int, error) {
 // RuntimeDiagnostics contains bounded aggregate counters only. Engine messages,
 // DNS names, remote addresses, account names and credentials are never retained.
 type RuntimeDiagnostics struct {
-	SoarQueueDrops        uint64    `json:"soar_queue_drops"`
-	CottenQueueDrops      uint64    `json:"cotten_queue_drops"`
-	UDPWriteErrors        uint64    `json:"udp_write_errors"`
-	TCPAcceptRetries      uint64    `json:"tcp_accept_retries"`
-	DialAttempts          uint64    `json:"dial_attempts"`
-	DialFailures          uint64    `json:"dial_failures"`
-	DialLatencyMicros     uint64    `json:"dial_latency_microseconds"`
-	DialLatencyMaxMicros  uint64    `json:"dial_latency_max_microseconds"`
-	DialLatencyBuckets    [5]uint64 `json:"dial_latency_buckets_10ms_100ms_1s_5s_over5s"`
-	RejectedAccountLimit  uint64    `json:"rejected_account_limit"`
-	RejectedServerLimit   uint64    `json:"rejected_server_limit"`
-	RejectedPolicy        uint64    `json:"rejected_policy"`
-	RejectedInactive      uint64    `json:"rejected_inactive"`
-	SoarStarts            uint64    `json:"soar_starts"`
-	SoarRunning           int64     `json:"soar_running"`
-	SoarExits             uint64    `json:"soar_exits"`
-	SoarUnexpectedExits   uint64    `json:"soar_unexpected_exits"`
-	SoarServeErrors       uint64    `json:"soar_serve_errors"`
-	SoarWarnings          uint64    `json:"soar_warnings"`
-	SoarLogErrors         uint64    `json:"soar_log_errors"`
-	CottenStarts          uint64    `json:"cotten_starts"`
-	CottenRunning         int64     `json:"cotten_running"`
-	CottenStartErrors     uint64    `json:"cotten_start_errors"`
-	CottenCloseErrors     uint64    `json:"cotten_close_errors"`
-	LastEngineIssueUnixMS int64     `json:"last_engine_issue_unix_ms"`
-	CottenSessions        int       `json:"cotten_sessions"`
-	SoarActiveStreams     int64     `json:"soar_active_streams"`
-	CottenActiveStreams   int64     `json:"cotten_active_streams"`
-	SoarOpenedStreams     uint64    `json:"soar_opened_streams"`
-	CottenOpenedStreams   uint64    `json:"cotten_opened_streams"`
-	SoarClosedStreams     uint64    `json:"soar_closed_streams"`
-	CottenClosedStreams   uint64    `json:"cotten_closed_streams"`
-	UpstreamCloseErrors   uint64    `json:"upstream_close_errors"`
+	MasterDNSQueueDrops    uint64    `json:"masterdns_queue_drops"`
+	MasterDNSStarts        uint64    `json:"masterdns_starts"`
+	MasterDNSRunning       int64     `json:"masterdns_running"`
+	MasterDNSStartErrors   uint64    `json:"masterdns_start_errors"`
+	MasterDNSCloseErrors   uint64    `json:"masterdns_close_errors"`
+	MasterDNSSessions      int       `json:"masterdns_sessions"`
+	MasterDNSActiveStreams int64     `json:"masterdns_active_streams"`
+	MasterDNSOpenedStreams uint64    `json:"masterdns_opened_streams"`
+	MasterDNSClosedStreams uint64    `json:"masterdns_closed_streams"`
+	SoarQueueDrops         uint64    `json:"soar_queue_drops"`
+	CottenQueueDrops       uint64    `json:"cotten_queue_drops"`
+	UDPWriteErrors         uint64    `json:"udp_write_errors"`
+	TCPAcceptRetries       uint64    `json:"tcp_accept_retries"`
+	DialAttempts           uint64    `json:"dial_attempts"`
+	DialFailures           uint64    `json:"dial_failures"`
+	DialLatencyMicros      uint64    `json:"dial_latency_microseconds"`
+	DialLatencyMaxMicros   uint64    `json:"dial_latency_max_microseconds"`
+	DialLatencyBuckets     [5]uint64 `json:"dial_latency_buckets_10ms_100ms_1s_5s_over5s"`
+	RejectedAccountLimit   uint64    `json:"rejected_account_limit"`
+	RejectedServerLimit    uint64    `json:"rejected_server_limit"`
+	RejectedPolicy         uint64    `json:"rejected_policy"`
+	RejectedInactive       uint64    `json:"rejected_inactive"`
+	SoarStarts             uint64    `json:"soar_starts"`
+	SoarRunning            int64     `json:"soar_running"`
+	SoarExits              uint64    `json:"soar_exits"`
+	SoarUnexpectedExits    uint64    `json:"soar_unexpected_exits"`
+	SoarServeErrors        uint64    `json:"soar_serve_errors"`
+	SoarWarnings           uint64    `json:"soar_warnings"`
+	SoarLogErrors          uint64    `json:"soar_log_errors"`
+	CottenStarts           uint64    `json:"cotten_starts"`
+	CottenRunning          int64     `json:"cotten_running"`
+	CottenStartErrors      uint64    `json:"cotten_start_errors"`
+	CottenCloseErrors      uint64    `json:"cotten_close_errors"`
+	LastEngineIssueUnixMS  int64     `json:"last_engine_issue_unix_ms"`
+	CottenSessions         int       `json:"cotten_sessions"`
+	SoarActiveStreams      int64     `json:"soar_active_streams"`
+	CottenActiveStreams    int64     `json:"cotten_active_streams"`
+	SoarOpenedStreams      uint64    `json:"soar_opened_streams"`
+	CottenOpenedStreams    uint64    `json:"cotten_opened_streams"`
+	SoarClosedStreams      uint64    `json:"soar_closed_streams"`
+	CottenClosedStreams    uint64    `json:"cotten_closed_streams"`
+	UpstreamCloseErrors    uint64    `json:"upstream_close_errors"`
 }
 
 type runtimeCounters struct {
+	masterQueueDrops, masterStarts, masterStartErrors, masterCloseErrors                                atomic.Uint64
+	masterOpenedStreams, masterClosedStreams                                                            atomic.Uint64
+	masterRunning, masterActiveStreams                                                                  atomic.Int64
 	soarQueueDrops, cottenQueueDrops, udpWriteErrors, tcpAcceptRetries                                  atomic.Uint64
 	dialAttempts, dialFailures, dialLatencyMicros, dialLatencyMaxMicros                                 atomic.Uint64
 	dialLatencyBuckets                                                                                  [5]atomic.Uint64
@@ -73,6 +85,9 @@ type runtimeCounters struct {
 func (m *Manager) Diagnostics() RuntimeDiagnostics {
 	c := &m.diagnostics
 	d := RuntimeDiagnostics{
+		MasterDNSQueueDrops: c.masterQueueDrops.Load(), MasterDNSStarts: c.masterStarts.Load(), MasterDNSRunning: c.masterRunning.Load(),
+		MasterDNSStartErrors: c.masterStartErrors.Load(), MasterDNSCloseErrors: c.masterCloseErrors.Load(), MasterDNSActiveStreams: c.masterActiveStreams.Load(),
+		MasterDNSOpenedStreams: c.masterOpenedStreams.Load(), MasterDNSClosedStreams: c.masterClosedStreams.Load(),
 		SoarQueueDrops: c.soarQueueDrops.Load(), CottenQueueDrops: c.cottenQueueDrops.Load(), UDPWriteErrors: c.udpWriteErrors.Load(), TCPAcceptRetries: c.tcpAcceptRetries.Load(),
 		DialAttempts: c.dialAttempts.Load(), DialFailures: c.dialFailures.Load(), DialLatencyMicros: c.dialLatencyMicros.Load(), DialLatencyMaxMicros: c.dialLatencyMaxMicros.Load(),
 		RejectedAccountLimit: c.rejectedAccountLimit.Load(), RejectedServerLimit: c.rejectedServerLimit.Load(), RejectedPolicy: c.rejectedPolicy.Load(), RejectedInactive: c.rejectedInactive.Load(),
@@ -93,6 +108,12 @@ func (m *Manager) Diagnostics() RuntimeDiagnostics {
 	}
 	m.mu.RUnlock()
 	for _, rt := range runtimes {
+		rt.masterMu.Lock()
+		master := rt.master
+		rt.masterMu.Unlock()
+		if master != nil {
+			d.MasterDNSSessions += master.SessionCount()
+		}
 		rt.cottenMu.Lock()
 		engine := rt.cotten
 		rt.cottenMu.Unlock()
@@ -109,6 +130,7 @@ const (
 	upstreamUnknown upstreamEngine = iota
 	upstreamSoar
 	upstreamCotten
+	upstreamMasterDNS
 )
 
 func (c *runtimeCounters) upstreamOpened(engine upstreamEngine) {
@@ -116,6 +138,9 @@ func (c *runtimeCounters) upstreamOpened(engine upstreamEngine) {
 	case upstreamSoar:
 		c.soarActiveStreams.Add(1)
 		c.soarOpenedStreams.Add(1)
+	case upstreamMasterDNS:
+		c.masterActiveStreams.Add(1)
+		c.masterOpenedStreams.Add(1)
 	case upstreamCotten:
 		c.cottenActiveStreams.Add(1)
 		c.cottenOpenedStreams.Add(1)
@@ -126,6 +151,9 @@ func (c *runtimeCounters) upstreamClosed(engine upstreamEngine, err error) {
 	case upstreamSoar:
 		c.soarActiveStreams.Add(-1)
 		c.soarClosedStreams.Add(1)
+	case upstreamMasterDNS:
+		c.masterActiveStreams.Add(-1)
+		c.masterClosedStreams.Add(1)
 	case upstreamCotten:
 		c.cottenActiveStreams.Add(-1)
 		c.cottenClosedStreams.Add(1)

@@ -193,7 +193,7 @@ check_stages() (
  CHECK_BIN=mock_check
  mock_check(){ printf '%s\n' "$*" >>"$work/tunnel.log";return "${fail_tunnel:-0}"; }
  panel_dns(){ [[ $1 == ready ]]; }
- probe_profile="$work/cotten-probe.json"
+ probe_profile="$work/cotten-probe.json" probe_master_profile="$work/masterdns-probe.json"
  probe_zone=account.soar.example.com probe_key=test-public-key probe_expires=9999999999
  listen_ip=10.0.0.2
  : >"$work/tunnel.log"
@@ -206,11 +206,12 @@ check_stages() (
  grep -q -- '-resolver 10.0.0.2 -tcp off' "$work/tunnel.log"
  grep -q -- '-resolver 1.1.1.1,8.8.8.8 -tcp auto' "$work/tunnel.log"
  grep -q -- '-cotten-profile-file .* -resolver 10.0.0.2 -tcp only' "$work/tunnel.log"
- [[ $(wc -l <"$work/tunnel.log") == 5 ]]
+ grep -q -- '-masterdns-profile-file .* -resolver 10.0.0.2 -tcp off' "$work/tunnel.log"
+ [[ $(wc -l <"$work/tunnel.log") == 7 ]]
 )
 expect_rc 0 'local and recursive authenticated tunnel tests are both required' check_stages
 refresh_expiring_probe() (
- CHECK_BIN=mock_check INSTALLED_BIN=mock_cli probe_profile="$work/cotten-probe.json"
+ CHECK_BIN=mock_check INSTALLED_BIN=mock_cli probe_profile="$work/cotten-probe.json" probe_master_profile="$work/masterdns-probe.json"
  mock_check(){ return 0; }
  mock_cli(){ [[ $1 == create-install-probe ]] || return 1;printf '0123456789abcdef0123456789abcdef account.soar.example.com public-key 9999999999\n'; }
  systemctl(){ printf '%s\n' "$*" >>"$work/renew.log"; }

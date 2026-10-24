@@ -188,7 +188,8 @@ panel_restore() {
 panel_create_probe() {
  local identity
  [[ -n ${probe_profile:-} ]] || probe_profile=$(mktemp /root/soar-panel-cotten.XXXXXX) || return 1
- identity=$("$INSTALLED_BIN" create-install-probe --db "$DB" --output "$probe_profile") || return 1
+ probe_master_profile=${probe_master_profile:-$probe_profile.masterdns}
+ identity=$("$INSTALLED_BIN" create-install-probe --db "$DB" --output "$probe_profile" --masterdns-output "$probe_master_profile") || return 1
  read -r probe_id probe_zone probe_key probe_expires <<< "$identity"
  [[ $probe_id =~ ^[a-f0-9]{32}$ && -n $probe_zone && -n $probe_key && $probe_expires =~ ^[0-9]+$ ]]
 }
@@ -222,6 +223,10 @@ panel_verify_connection() {
  "$CHECK_BIN" -cotten-profile-file "$probe_profile" -resolver "$listen_ip" -tcp only -timeout 40s || return 1
  printf '\nTest F: Cotten authenticated HTTPS through recursive DNS\n'
  "$CHECK_BIN" -cotten-profile-file "$probe_profile" -resolver "$test_resolvers" -tcp auto -timeout 60s || return 1
+ printf '\nTest G: MasterDNS authenticated HTTPS over local UDP DNS\n'
+ "$CHECK_BIN" -masterdns-profile-file "$probe_master_profile" -resolver "$listen_ip" -tcp off -timeout 40s || return 1
+ printf '\nTest H: MasterDNS authenticated HTTPS through recursive UDP DNS\n'
+ "$CHECK_BIN" -masterdns-profile-file "$probe_master_profile" -resolver "$test_resolvers" -tcp off -timeout 60s || return 1
  printf '[OK] Server-side tunnel checks passed. Test the phone on its own network next.\n'
 }
 panel_run_checks() {

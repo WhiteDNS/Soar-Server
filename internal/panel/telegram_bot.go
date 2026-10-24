@@ -245,15 +245,16 @@ func (t *Telegram) callback(ctx context.Context, data string) error {
 }
 func (t *Telegram) prompt(ctx context.Context, field string) error {
 	prompts := map[string]string{
-		"name":    t.tr("Reply with the account name (max 160 bytes).", "نام حساب را در پاسخ بفرستید (حداکثر ۱۶۰ بایت)."),
-		"note":    t.tr("Reply with a note (max 2048 bytes); send - to clear.", "یادداشت را در پاسخ بفرستید (حداکثر ۲۰۴۸ بایت)؛ برای حذف - بفرستید."),
-		"quota":   t.tr("Reply with quota in GiB; 0 means unlimited.", "حجم را به GiB در پاسخ بفرستید؛ ۰ یعنی نامحدود."),
-		"expiry":  t.tr("Reply with expiry: YYYY-MM-DD HH:MM (Gregorian, "+t.config().Timezone+"); 0 means no expiry.", "انقضا را با تاریخ میلادی YYYY-MM-DD HH:MM در منطقهٔ "+t.config().Timezone+" بفرستید؛ ۰ یعنی بدون انقضا."),
-		"rate":    t.tr("Reply with speed in KiB/s; 0 means unlimited.", "سرعت را به KiB/s در پاسخ بفرستید؛ ۰ یعنی نامحدود."),
-		"streams": t.tr("Reply with TCP stream limit (0–2147483647); 0 means unlimited, not device count.", "سقف جریان TCP را بفرستید (۰ تا ۲۱۴۷۴۸۳۶۴۷)؛ ۰ نامحدود است. تعداد دستگاه نیست."),
-		"soar":    t.tr("Reply with Soar session limit (1–32768).", "سقف نشست Soar را بفرستید (۱ تا ۳۲۷۶۸)."),
-		"cotten":  t.tr("Reply with Cotten session limit (1–65535).", "سقف نشست Cotten را بفرستید (۱ تا ۶۵۵۳۵)."),
-		"search":  t.tr("Reply with a name, note or domain to search.", "برای جست‌وجو، نام، یادداشت یا دامنه را در پاسخ بفرستید."),
+		"name":      t.tr("Reply with the account name (max 160 bytes).", "نام حساب را در پاسخ بفرستید (حداکثر ۱۶۰ بایت)."),
+		"note":      t.tr("Reply with a note (max 2048 bytes); send - to clear.", "یادداشت را در پاسخ بفرستید (حداکثر ۲۰۴۸ بایت)؛ برای حذف - بفرستید."),
+		"quota":     t.tr("Reply with quota in GiB; 0 means unlimited.", "حجم را به GiB در پاسخ بفرستید؛ ۰ یعنی نامحدود."),
+		"expiry":    t.tr("Reply with expiry: YYYY-MM-DD HH:MM (Gregorian, "+t.config().Timezone+"); 0 means no expiry.", "انقضا را با تاریخ میلادی YYYY-MM-DD HH:MM در منطقهٔ "+t.config().Timezone+" بفرستید؛ ۰ یعنی بدون انقضا."),
+		"rate":      t.tr("Reply with speed in KiB/s; 0 means unlimited.", "سرعت را به KiB/s در پاسخ بفرستید؛ ۰ یعنی نامحدود."),
+		"streams":   t.tr("Reply with TCP stream limit (0–2147483647); 0 means unlimited, not device count.", "سقف جریان TCP را بفرستید (۰ تا ۲۱۴۷۴۸۳۶۴۷)؛ ۰ نامحدود است. تعداد دستگاه نیست."),
+		"soar":      t.tr("Reply with Soar session limit (1–32768).", "سقف نشست Soar را بفرستید (۱ تا ۳۲۷۶۸)."),
+		"masterdns": t.tr("Reply with MasterDNS session limit (1–255).", "سقف نشست MasterDNS را بفرستید (۱ تا ۲۵۵)."),
+		"cotten":    t.tr("Reply with Cotten session limit (1–65535).", "سقف نشست Cotten را بفرستید (۱ تا ۶۵۵۳۵)."),
+		"search":    t.tr("Reply with a name, note or domain to search.", "برای جست‌وجو، نام، یادداشت یا دامنه را در پاسخ بفرستید."),
 	}
 	text, ok := prompts[field]
 	if !ok {
@@ -295,7 +296,7 @@ func (t *Telegram) setField(d *telegramConversation, field, value string) error 
 			in.Note = ""
 		}
 	case "engines":
-		if v != "both" && v != "soar" && v != "cotten" {
+		if !validEngines(v) || v == "" {
 			return errors.New("invalid engines")
 		}
 		in.Engines = v
@@ -331,13 +332,17 @@ func (t *Telegram) setField(d *telegramConversation, field, value string) error 
 			}
 			in.ExpiresAt = date.UnixMilli()
 		}
-	case "streams", "soar", "cotten":
+	case "streams", "soar", "cotten", "masterdns":
 		n, e := strconv.ParseInt(v, 10, 32)
 		limit := int64(MaxStreamLimit)
 		minimum := int64(0)
 		if field == "soar" {
 			minimum = 1
 			limit = MaxSoarSessionLimit
+		}
+		if field == "masterdns" {
+			minimum = 1
+			limit = MaxMasterDNSSessionLimit
 		}
 		if field == "cotten" {
 			minimum = 1
@@ -352,6 +357,8 @@ func (t *Telegram) setField(d *telegramConversation, field, value string) error 
 			in.StreamLimit = num
 		case "soar":
 			in.SoarSessionLimit = &num
+		case "masterdns":
+			in.MasterDNSSessionLimit = &num
 		case "cotten":
 			in.CottenSessionLimit = &num
 		}
@@ -388,12 +395,16 @@ func (t *Telegram) chooseExpiry(ctx context.Context) error {
 func (t *Telegram) engineChoices(ctx context.Context) error {
 	d := t.conversation
 	p := "set:" + d.Key + ":engines:"
-	_, e := t.notify(ctx, t.config(), t.tr("🔀 Choose connection engines.", "🔀 موتور اتصال را انتخاب کنید."), telegramKeyboard{Rows: [][]telegramButton{{t.button("Both", "هر دو", p+"both"), t.button("Soar", "Soar", p+"soar"), t.button("Cotten", "Cotten", p+"cotten")}}})
+	_, e := t.notify(ctx, t.config(), t.tr("🔀 Choose connection engines.", "🔀 موتور اتصال را انتخاب کنید."), telegramKeyboard{Rows: [][]telegramButton{{t.button("Both", "هر دو", p+"both"), t.button("Soar", "Soar", p+"soar"), t.button("Cotten", "Cotten", p+"cotten")}, {t.button("MasterDNS", "MasterDNS", p+"masterdns"), t.button("All three", "هر سه موتور", p+"all")}, {t.button("Soar + MasterDNS", "Soar + MasterDNS", p+"soar_masterdns"), t.button("Cotten + MasterDNS", "Cotten + MasterDNS", p+"cotten_masterdns")}}})
 	return e
 }
 func (t *Telegram) draftSummary(d *telegramConversation) string {
 	in := d.Input
 	soar, cotten := DefaultSoarSessionLimit, DefaultCottenSessionLimit
+	master := DefaultMasterDNSSessionLimit
+	if in.MasterDNSSessionLimit != nil {
+		master = *in.MasterDNSSessionLimit
+	}
 	if in.SoarSessionLimit != nil {
 		soar = *in.SoarSessionLimit
 	}
@@ -405,7 +416,7 @@ func (t *Telegram) draftSummary(d *telegramConversation) string {
 		loc, _ := time.LoadLocation(t.config().Timezone)
 		expiry = time.UnixMilli(in.ExpiresAt).In(loc).Format("2006-01-02 15:04") + " " + loc.String()
 	}
-	return fmt.Sprintf(t.tr("📝 Review account\nName: %s\nEngines: %s\nEnabled: %t\nQuota: %.2f GiB (0 = unlimited)\nExpiry: %s\nSpeed: %.2f KiB/s (0 = unlimited)\nTCP streams: %d (0 = unlimited)\nSessions Soar/Cotten: %d / %d\nNote: %s", "📝 بررسی حساب\nنام: %s\nموتور: %s\nفعال: %t\nحجم: %.2f GiB (۰ نامحدود)\nانقضا: %s\nسرعت: %.2f KiB/s (۰ نامحدود)\nجریان TCP: %d (۰ نامحدود)\nنشست Soar/Cotten: %d / %d\nیادداشت: %s"), in.Name, in.Engines, in.Enabled, float64(in.QuotaBytes)/(1<<30), expiry, float64(in.RateBytes)/1024, in.StreamLimit, soar, cotten, in.Note)
+	return fmt.Sprintf(t.tr("📝 Review account\nName: %s\nEngines: %s\nEnabled: %t\nQuota: %.2f GiB (0 = unlimited)\nExpiry: %s\nSpeed: %.2f KiB/s (0 = unlimited)\nTCP streams: %d (0 = unlimited)\nSessions Soar/Cotten/MasterDNS: %d / %d / %d\nNote: %s", "📝 بررسی حساب\nنام: %s\nموتور: %s\nفعال: %t\nحجم: %.2f GiB (۰ نامحدود)\nانقضا: %s\nسرعت: %.2f KiB/s (۰ نامحدود)\nجریان TCP: %d (۰ نامحدود)\nنشست Soar/Cotten/MasterDNS: %d / %d / %d\nیادداشت: %s"), in.Name, in.Engines, in.Enabled, float64(in.QuotaBytes)/(1<<30), expiry, float64(in.RateBytes)/1024, in.StreamLimit, soar, cotten, master, in.Note)
 }
 func (t *Telegram) review(ctx context.Context) error {
 	d := t.conversation
@@ -420,6 +431,7 @@ func (t *Telegram) review(ctx context.Context) error {
 		{t.button("Name", "نام", p+"name"), t.button("Quota", "حجم", p+"quota"), t.button("Expiry", "انقضا", p+"expiry")},
 		{t.button("Engines", "موتور", p+"engines"), t.button("Note", "یادداشت", p+"note"), t.button("Speed", "سرعت", p+"rate")},
 		{t.button("TCP streams", "جریان TCP", p+"streams"), t.button("Soar sessions", "نشست Soar", p+"soar"), t.button("Cotten sessions", "نشست Cotten", p+"cotten")},
+		{t.button("MasterDNS sessions", "نشست MasterDNS", p+"masterdns")},
 		{t.button("💾 Save", "💾 ذخیره", "save:"+d.Key), t.button("❌ Cancel", "❌ لغو", "home")}}}
 	_, e := t.notify(ctx, t.config(), t.draftSummary(d), k)
 	return e
@@ -585,7 +597,7 @@ func (t *Telegram) links(ctx context.Context, id string) error {
 	u.Fragment = ""
 	type share struct{ name, link string }
 	all := []share{{t.tr("Subscription", "ساب"), u.String()}}
-	for _, engine := range []string{"soar", "cotten"} {
+	for _, engine := range profileEngines {
 		if link := links[engine]; link != "" {
 			all = append(all, share{engine, link})
 		}

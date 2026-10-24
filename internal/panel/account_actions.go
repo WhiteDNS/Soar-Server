@@ -45,5 +45,5 @@ func (h *HTTP) applyAccountAction(action, id string, in ClientInput, revision *u
 
 func accountInput(c Client) ClientInput {
 	soar, cotten := c.SoarSessionLimit, c.CottenSessionLimit
-	return ClientInput{Engines: c.Engines, Name: c.Name, Note: c.Note, Enabled: c.Enabled, QuotaBytes: c.QuotaBytes, ExpiresAt: c.ExpiresAt, RateBytes: c.RateBytes, StreamLimit: c.StreamLimit, SoarSessionLimit: &soar, CottenSessionLimit: &cotten, Revision: c.Revision}
+	return ClientInput{Engines: c.Engines, Name: c.Name, Note: c.Note, Enabled: c.Enabled, QuotaBytes: c.QuotaBytes, ExpiresAt: c.ExpiresAt, RateBytes: c.RateBytes, StreamLimit: c.StreamLimit, SoarSessionLimit: &soar, CottenSessionLimit: &cotten, MasterDNSSessionLimit: &c.MasterDNSSessionLimit, Revision: c.Revision}
 }

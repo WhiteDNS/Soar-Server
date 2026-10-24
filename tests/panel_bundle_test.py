@@ -60,11 +60,11 @@ def main():
 
                 csrf = json.loads(request("/api/login", {"name": "admin", "password": password}))["csrf"]
                 assert json.loads(request("/api/dashboard"))["version"] == args.version
-                account = json.loads(request("/api/clients", {"name": "Native bundle smoke", "engines": "both", "enabled": True}))
+                account = json.loads(request("/api/clients", {"name": "Native bundle smoke", "engines": "all", "enabled": True}))
                 subscription = json.loads(request("/api/clients/" + account["id"] + "/subscription"))["url"]
                 with client.open(subscription, timeout=10) as response:
                     profiles = base64.b64decode(response.read()).decode()
-                assert "soar://" in profiles and "cottendns://" in profiles, "both engine profiles must be exported"
+                assert all(scheme in profiles for scheme in ("soar://", "cottendns://", "masterdns://")), "all three engine profiles must be exported"
             finally:
                 server.terminate()
                 try:
@@ -73,7 +73,7 @@ def main():
                     server.kill()
                     server.wait(timeout=5)
                     raise
-    print(f"PASS: native linux/{arch} bundle binaries, initialization, login, account creation and both profiles")
+    print(f"PASS: native linux/{arch} bundle binaries, initialization, login, account creation and all three profiles")
 
 
 if __name__ == "__main__":

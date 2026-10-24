@@ -26,6 +26,12 @@ CottenDNS dependencies include BurntSushi/toml, klauspost/compress,
 klauspost/cpuid, klauspost/reedsolomon and pierrec/lz4. Their original
 license texts are shipped in the management panel bundle.
 
+The panel also embeds MasterDnsVPN (MIT), Copyright 2026 Amin Mahmoudi.
+Source: https://github.com/masterking32/MasterDnsVPN
+The exact upstream commit and embedding patch are recorded in
+patches/masterdns-engine.json and SOURCE-VERSIONS.txt. The original license
+is retained in licenses/MasterDNS-LICENSE.txt.
+
 The optional WhiteDNS Soar Panel also includes bbolt (MIT) and go-qrcode (MIT).
 Their notices are shipped in the panel bundle's licenses/ directory.
 

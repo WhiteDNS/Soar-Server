@@ -38,7 +38,7 @@ jobs:
       - name: Prepare the verified patched engine workspace
         run: |
           GOWORK=off go mod download
-          python3 scripts/prepare_cotten_engine.py --source .engine-source/CottenDNS --workspace .engine-source/patched.go.work
+          python3 scripts/prepare_panel_engines.py --workspace .engine-source/patched.go.work
           echo "GOWORK=$GITHUB_WORKSPACE/.engine-source/patched.go.work" >> "$GITHUB_ENV"
       - name: Verify the release binaries
         run: go build -mod=readonly ./cmd/soar-panel ./cmd/soar-panel-ops ./cmd/soar-check
@@ -47,6 +47,8 @@ jobs:
           COTTEN_SOURCE=$(go list -m -f '{{.Dir}}' cottendns-go)
           (cd "$COTTEN_SOURCE" && go build -mod=readonly -o "$RUNNER_TEMP/cotten-client" ./cmd/client)
           echo "PANEL_COTTEN_CLIENT=$RUNNER_TEMP/cotten-client" >> "$GITHUB_ENV"
+      - name: Verify MasterDNS startup and settings restart races
+        run: go test -race ./internal/panel -run 'TestMasterDNS|TestSettingsSaveRestarts' -count=3 -timeout 180s
       - name: Verify modules and behavior
         run: |
           go mod verify
@@ -54,6 +56,7 @@ jobs:
           go test -race ./internal/panel ./internal/panelops -count=1 -timeout 900s
           go vet ./...
           (cd .engine-source/CottenDNS && go test ./... -count=1 -timeout 240s && go vet ./...)
+          (cd .engine-source/MasterDnsVPN && go test ./... -count=1 -timeout 240s && go test -race ./internal/udpserver -run TestEmbedded -count=1 -timeout 60s && go vet ./...)
           bash tests/installer_test.sh
           bash tests/panel_installer_test.sh
           bash tests/panel_bootstrap_test.sh

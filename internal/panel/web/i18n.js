@@ -2,6 +2,16 @@
 // Translation is applied to authored UI only. Account names, notes, URLs and input values are never translated.
 const panelI18n = (() => {
  const catalog = {
+ "تنظیمات ذخیره شد و موتورهای فعال دوباره راه‌اندازی شدند.": "Settings saved and active engines restarted.",
+ "تنظیمات ذخیره شد و موتورهای فعال دوباره راه‌اندازی شدند. ساب را در اپ تازه‌سازی کنید.": "Settings saved and active engines restarted. Refresh the subscription in the app.",
+
+ "هر سه موتور": "All three engines",
+ "سقف نشست MasterDNS": "MasterDNS session limit",
+ "نشست‌های هم‌زمان تونل MasterDNS؛ از ۱ تا ۲۵۵. تعداد دستگاه نیست.": "Concurrent MasterDNS tunnel sessions: 1–255. This is not a device count.",
+ "موتورهای انتخاب‌شده در یک ساب قرار می‌گیرند. حجم و انقضا مشترک است؛ تنظیم DNS دیگری لازم نیست.": "Selected engines share one subscription, quota and expiry. No additional DNS records are needed.",
+ "QR پروفایل MasterDNS": "MasterDNS profile QR code",
+ "سقف نشست MasterDNS باید عدد صحیح بین ۱ تا ۲۵۵ باشد.": "MasterDNS session limit must be an integer from 1 to 255.",
+
  "تنظیمات تلگرام ذخیره شد.": "Telegram settings saved.",
  "ذخیرهٔ تنظیمات تلگرام": "Telegram settings saved",
  "اتصال مدیر تلگرام": "Telegram administrator connected",
@@ -76,7 +86,7 @@ const panelI18n = (() => {
  "مسیر DNS به این سرور تأیید نشد. رکورد NS، رکورد A نام‌سرور و پورت‌های UDP/TCP 53 را بررسی کنید. این نتیجه مشخص نمی‌کند که دامنه یا ریزالور در اینترنت کاربر فیلتر است یا نه.": "DNS route to this server could not be verified. Check the NS delegation, nameserver A record and UDP/TCP 53. This does not establish whether a resolver or domain is filtered on the user's network.",
  "آدرس‌های جایگزین ساب": "Alternative subscription URLs",
  "این آدرس‌ها یک حساب را باز می‌کنند. اگر دامنهٔ ساب فیلتر شد، یکی از آدرس‌های جایگزین را در اپ وارد کنید.": "These URLs open the same account. If the subscription domain is blocked, import an alternative URL in the app.",
- "این تنظیمات مخصوص پروفایل Soar است. Cotten با تنظیمات آمادهٔ اتصال صادر می‌شود. حجم، انقضا، سرعت و سقف اتصال حساب روی هر دو موتور اعمال می‌شوند. پس از تغییر، ساب را تازه‌سازی کنید.": "These settings apply to Soar profiles. Cotten profiles use ready-to-connect defaults. Account quota, expiry, speed and connection limits apply to both engines. Refresh the subscription after changes.",
+ "این تنظیمات مخصوص پروفایل Soar است. Cotten با تنظیمات آمادهٔ اتصال صادر می‌شود. حجم، انقضا، سرعت و سقف اتصال حساب روی موتورهای انتخاب‌شده اعمال می‌شوند. پس از تغییر، ساب را تازه‌سازی کنید.": "These settings apply to Soar profiles. Cotten profiles use ready-to-connect defaults. Account quota, expiry, speed and connection limits apply to selected engines. Refresh the subscription after changes.",
  "موتور اتصال": "Connection engine",
  "Soar و Cotten (پیشنهادی)": "Soar and Cotten (recommended)",
  "با انتخاب هر دو، یک لینک ساب شامل دو روش اتصال می‌گیرید. حجم و انقضا مشترک است؛ تنظیم DNS دیگری لازم نیست.": "Choose both to receive two connection profiles in one subscription. Quota and expiry are shared. No extra DNS setup is needed.",
@@ -92,12 +102,12 @@ const panelI18n = (() => {
  "ثبت‌های مصرف / تراکنش‌ها": "Usage operations / commits",
  "تلاش دوبارهٔ پذیرش DNS": "DNS accept retries",
  "سقف جریان TCP حساب": "Account TCP stream limit",
- "مجموع جریان‌های TCP هم‌زمان این حساب در Soar و Cotten؛ صفر = نامحدود. تعداد دستگاه نیست.": "Concurrent TCP streams for this account across Soar and Cotten; 0 = unlimited. This is not a device count.",
+ "مجموع جریان‌های TCP هم‌زمان این حساب در Soar، Cotten و MasterDNS؛ صفر = نامحدود. تعداد دستگاه نیست.": "Concurrent TCP streams for this account across Soar, Cotten and MasterDNS; 0 = unlimited. This is not a device count.",
  "سقف جریان‌های سرور": "Server stream limits",
  "سقف جریان TCP سرور": "Server TCP stream limit",
  "سقف جریان TCP سرور باید عدد صحیح بین ۰ تا ۲۱۴۷۴۸۳۶۴۷ باشد؛ صفر یعنی نامحدود.": "Server TCP stream limit must be an integer from 0 to 2147483647; 0 means unlimited.",
  "۰ = نامحدود؛ بین همهٔ حساب‌ها و هر دو موتور مشترک": "0 = unlimited; shared by all accounts and both engines",
- "مجموع جریان‌های TCP هم‌زمان همهٔ حساب‌ها در Soar و Cotten است؛ سقف هر حساب جداگانه اعمال می‌شود. صفر یعنی نامحدود؛ برای سقف مشخص، عدد صحیح بین ۱ تا ۲۱۴۷۴۸۳۶۴۷ وارد کنید. این عدد تعداد دستگاه یا نشست تونل نیست و تنظیم maxStreams پروفایل گوشی را تغییر نمی‌دهد.": "Concurrent TCP streams across all accounts in Soar and Cotten. Each account's limit also applies. Use 0 for unlimited, or an integer from 1 to 2147483647 for a fixed limit. This is not a device or tunnel-session count and does not change the phone profile's maxStreams setting.",
+ "مجموع جریان‌های TCP هم‌زمان همهٔ حساب‌ها در Soar، Cotten و MasterDNS است؛ سقف هر حساب جداگانه اعمال می‌شود. صفر یعنی نامحدود؛ برای سقف مشخص، عدد صحیح بین ۱ تا ۲۱۴۷۴۸۳۶۴۷ وارد کنید. این عدد تعداد دستگاه یا نشست تونل نیست و تنظیم maxStreams پروفایل گوشی را تغییر نمی‌دهد.": "Concurrent TCP streams across all accounts in Soar, Cotten and MasterDNS. Each account's limit also applies. Use 0 for unlimited, or an integer from 1 to 2147483647 for a fixed limit. This is not a device or tunnel-session count and does not change the phone profile's maxStreams setting.",
  "بین هر دو موتور مشترک؛ محدودیت دستگاه نیست": "Shared by both engines; not a device limit",
  "سقف نشست Soar": "Soar session limit",
  "سقف نشست Cotten": "Cotten session limit",
