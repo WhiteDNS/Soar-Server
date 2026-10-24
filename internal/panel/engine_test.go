@@ -9,6 +9,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"io"
+	"math/rand/v2"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -23,13 +24,25 @@ import (
 
 func testManager(t *testing.T, s *Store, override func(context.Context, string, string) (net.Conn, error)) *Manager {
 	t.Helper()
-	tcp, e := net.Listen("tcp", "127.0.0.1:0")
-	if e != nil {
-		t.Fatal(e)
-	}
-	pc, e := net.ListenPacket("udp", tcp.Addr().String())
-	if e != nil {
+	var tcp net.Listener
+	var pc net.PacketConn
+	var e error
+	// Windows reserves different ephemeral TCP and UDP ranges. A TCP-selected
+	// :0 port can be forbidden for UDP for hundreds of consecutive allocations.
+	// Reserve both protocols on a randomized, unprivileged test-only port.
+	for range 32 {
+		address := net.JoinHostPort("127.0.0.1", strconv.Itoa(20000+rand.IntN(29000)))
+		tcp, e = net.Listen("tcp", address)
+		if e != nil {
+			continue
+		}
+		pc, e = net.ListenPacket("udp", address)
+		if e == nil {
+			break
+		}
 		tcp.Close()
+	}
+	if e != nil {
 		t.Fatal(e)
 	}
 	ctx, cancel := context.WithCancel(context.Background())

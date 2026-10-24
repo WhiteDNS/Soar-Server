@@ -7,6 +7,7 @@ import (
 	"errors"
 	"io"
 	"net"
+	"net/netip"
 	"strconv"
 	"strings"
 	"sync"
@@ -14,7 +15,6 @@ import (
 	"time"
 
 	cotten "cottendns-go/server"
-	"github.com/getlantern/soar"
 	masterdns "masterdnsvpn-go/server"
 )
 
@@ -112,6 +112,7 @@ func (r *accountRuntime) stop() {
 }
 
 type Manager struct {
+	flood          *floodGuard
 	domainProofKey [32]byte
 	cancel         context.CancelFunc
 	cottenJobs     chan cottenJob
@@ -126,6 +127,7 @@ type Manager struct {
 	// dialOverride is supplied only by in-process integration tests. The shipped
 	// command never supplies it and always applies public-destination protection.
 	dialOverride          func(context.Context, string, string) (net.Conn, error)
+	lookupOverride        func(context.Context, string, string) ([]netip.Addr, error)
 	dnsIn, dnsOut, active atomic.Uint64
 	started               time.Time
 	workers               sync.WaitGroup
@@ -135,6 +137,7 @@ type Manager struct {
 func NewManager(ctx context.Context, s *Store, pc net.PacketConn) *Manager {
 	ctx, cancel := context.WithCancel(ctx)
 	m := &Manager{ctx: ctx, cancel: cancel, cottenJobs: make(chan cottenJob, 128), store: s, pc: pc, accounts: map[string]*accountRuntime{}, zones: map[string]*accountRuntime{}, started: time.Now()}
+	m.flood = newFloodGuard(s)
 	rand.Read(m.domainProofKey[:])
 	return m
 }
@@ -163,6 +166,9 @@ func (m *Manager) reconcile(restart bool) error {
 	if e != nil {
 		return e
 	}
+	if e = m.flood.configure(cfg.antiFloodPolicy(), list); e != nil {
+		return e
+	}
 	desired := map[string]Client{}
 	for _, c := range list {
 		if isInstallProbe(c) && c.Status(time.Now()) == "expired" {
@@ -171,7 +177,7 @@ func (m *Manager) reconcile(restart bool) error {
 			}
 			continue
 		}
-		if c.Status(time.Now()) == "active" {
+		if c.Status(time.Now()) == "active" && !m.flood.blocked(c.ID) {
 			desired[c.ID] = c
 		}
 	}
@@ -489,22 +495,30 @@ func (m *Manager) dialEgressFor(r *accountRuntime, ctx context.Context, network,
 			m.active.Add(^uint64(0))
 		}
 	}()
-	ctx, cancel := context.WithCancel(ctx)
+	lease, err, quarantined := m.flood.begin(c.ID, resolver, time.Now())
+	if err != nil {
+		if quarantined {
+			m.Disconnect(c.ID)
+		}
+		return nil, err
+	}
+	defer func() {
+		if !transferred {
+			lease.release()
+		}
+	}()
+	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
 	stop := context.AfterFunc(r.ctx, cancel)
 	defer stop()
-	dial := m.dialOverride
-	if dial == nil {
-		dial = (&net.Dialer{Timeout: 15 * time.Second, Control: soar.PublicOnly}).DialContext
-	}
 	m.diagnostics.dialAttempts.Add(1)
 	started := time.Now()
-	upstream, e := dial(ctx, network, addr)
+	upstream, e := m.guardedDial(ctx, network, addr, resolver, lease)
 	m.diagnostics.recordDial(time.Since(started), e != nil)
 	if e != nil {
 		return nil, e
 	}
-	mc := &meterConn{Conn: upstream, manager: m, rt: r, datagram: strings.HasPrefix(network, "udp"), engine: engine}
+	mc := &meterConn{Conn: upstream, manager: m, rt: r, datagram: strings.HasPrefix(network, "udp"), engine: engine, flood: lease}
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if r.closed || r.ctx.Err() != nil {
@@ -563,6 +577,7 @@ func (m *Manager) Disconnect(id string) {
 }
 
 type meterConn struct {
+	flood    *floodLease
 	engine   upstreamEngine
 	datagram bool
 	net.Conn
@@ -589,6 +604,7 @@ func (c *meterConn) Close() error {
 		delete(c.rt.conns, c)
 		c.rt.mu.Unlock()
 		c.manager.active.Add(^uint64(0))
+		c.flood.release()
 		c.manager.diagnostics.upstreamClosed(c.engine, e)
 	})
 	return e
@@ -650,6 +666,9 @@ func (c *meterConn) Write(p []byte) (int, error) {
 		}
 		if c.rt.ctx.Err() != nil {
 			return total, ErrDenied
+		}
+		if err := c.guardWrite(len(part)); err != nil {
+			return total, err
 		}
 		allowed, epoch, e := c.manager.store.reserveEpoch(info.ID, len(part), true, c.rt.client.UsageEpoch)
 		if e != nil {

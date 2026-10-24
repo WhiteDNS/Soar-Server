@@ -46,6 +46,9 @@ func (c *meterConn) writeDatagram(p []byte) (int, error) {
 	if c.rt.ctx.Err() != nil {
 		return 0, ErrDenied
 	}
+	if err := c.guardWrite(len(p)); err != nil {
+		return 0, err
+	}
 	allowed, epoch, err := c.manager.store.reserveDatagramEpoch(info.ID, len(p), true, c.rt.client.UsageEpoch)
 	if err != nil {
 		return 0, err

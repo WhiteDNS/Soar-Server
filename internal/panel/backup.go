@@ -88,6 +88,9 @@ func inspectBackupTransaction(tx *bolt.Tx, summary *BackupSummary) error {
 	if err := cfg.Validate(); err != nil {
 		return err
 	}
+	if _, err := readFloodBlocks(tx.Bucket(meta)); err != nil {
+		return err
+	}
 	summary.BaseZone = cfg.BaseZone
 	var admin Admin
 	if err := json.Unmarshal(tx.Bucket(meta).Get([]byte("admin")), &admin); err != nil {

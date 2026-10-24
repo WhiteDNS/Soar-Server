@@ -369,6 +369,9 @@ func (m *Manager) tunnelDNS(rt *accountRuntime, parent context.Context, query []
 		response, err := m.exchangeDNSFor(rt, attempt, "udp", endpoint, query, engine)
 		if err != nil {
 			stop()
+			if errors.Is(err, errAntiFlood) || errors.Is(err, ErrDenied) {
+				return nil, err
+			}
 			if parent.Err() == nil && resolverFailure(err, rt) {
 				rt.resolverResult(endpoint, time.Since(started), false)
 			}
@@ -394,7 +397,7 @@ func (m *Manager) tunnelDNS(rt *accountRuntime, parent context.Context, query []
 }
 
 func resolverFailure(err error, rt *accountRuntime) bool {
-	return rt.ctx.Err() == nil && !errors.Is(err, ErrDenied) && !errors.Is(err, context.Canceled) && !errors.Is(err, errPacingDeadline) && !errors.Is(err, errAccountStreamLimit) && !errors.Is(err, errServerStreamCapacity) && !errors.Is(err, errDestinationPort)
+	return rt.ctx.Err() == nil && !errors.Is(err, ErrDenied) && !errors.Is(err, context.Canceled) && !errors.Is(err, errPacingDeadline) && !errors.Is(err, errAccountStreamLimit) && !errors.Is(err, errServerStreamCapacity) && !errors.Is(err, errDestinationPort) && !errors.Is(err, errAntiFlood)
 }
 
 func resolverEndpoint(resolver string) string {

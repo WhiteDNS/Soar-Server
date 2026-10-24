@@ -180,7 +180,7 @@ func (h *HTTP) serveHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		switch r.URL.Path {
-		case "/", "/index.html", "/app.js", "/maintenance.js", "/telegram.js", "/i18n.js", "/ltr.css", "/settings.js", "/ui.js", "/tokens.css", "/redesign.css", "/style.css", "/fonts/vazirmatn.ttf", "/fonts/vazirmatn.woff2":
+		case "/", "/index.html", "/app.js", "/antiflood.js", "/maintenance.js", "/telegram.js", "/i18n.js", "/ltr.css", "/settings.js", "/ui.js", "/tokens.css", "/redesign.css", "/style.css", "/fonts/vazirmatn.ttf", "/fonts/vazirmatn.woff2":
 			if r.URL.Path == "/" || r.URL.Path == "/index.html" {
 				raw, e := webFiles.ReadFile("web/index.html")
 				if e != nil {
@@ -239,6 +239,10 @@ func (h *HTTP) serveHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	if r.URL.Path == "/api/diagnostics" && r.Method == "GET" {
 		jsonReply(w, 200, map[string]any{"runtime": h.manager.Diagnostics(), "accounting": h.store.AccountingStats(), "host": h.metrics.sample()})
+		return
+	}
+	if r.URL.Path == "/api/antiflood" || r.URL.Path == "/api/antiflood/release" {
+		h.antiFloodAPI(w, r)
 		return
 	}
 	if h.maintenance(w, r, session) {

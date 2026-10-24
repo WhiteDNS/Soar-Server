@@ -39,6 +39,7 @@ const (
 )
 
 type Settings struct {
+	AntiFlood         *AntiFloodPolicy  `json:"antiflood,omitempty"`
 	TunnelNameservers map[string]string `json:"tunnel_nameservers,omitempty"`
 	PublicIP          string            `json:"public_ip,omitempty"`
 	NameserverHost    string            `json:"nameserver_host,omitempty"`
@@ -53,6 +54,9 @@ type Settings struct {
 }
 
 func (s Settings) Validate() error {
+	if err := s.antiFloodPolicy().Validate(); err != nil {
+		return err
+	}
 	if s.ServerStreamLimit < 0 || s.ServerStreamLimit > MaxStreamLimit {
 		return fmt.Errorf("server_stream_limit must be between 0 and %d", MaxStreamLimit)
 	}
@@ -306,6 +310,10 @@ func (s *Store) Settings() (v Settings, e error) {
 		p := DefaultProfileSettings()
 		v.SoarSettings = &p
 	}
+	if e == nil && v.AntiFlood == nil {
+		p := DefaultAntiFloodPolicy()
+		v.AntiFlood = &p
+	}
 	return
 }
 func (s *Store) SaveSettings(v Settings) error {
@@ -351,6 +359,10 @@ func (s *Store) saveSettings(v Settings, streamLimit *int) error {
 		if v.SoarSettings == nil {
 			p := old.profileSettings()
 			v.SoarSettings = &p
+		}
+		if v.AntiFlood == nil {
+			p := old.antiFloodPolicy()
+			v.AntiFlood = &p
 		}
 		if e := v.Validate(); e != nil {
 			return e

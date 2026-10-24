@@ -217,6 +217,15 @@ func TestStreamLimitsConcurrentReservationsAndDynamicGlobalLimit(t *testing.T) {
 
 func TestStreamLimitsNativeSoarAbove128AcrossSessions(t *testing.T) {
 	s := testStore(t)
+	// This regression isolates the configurable stream ceiling. The independent
+	// anti-flood account ceiling/rate is exercised by the protection tests.
+	cfg, _ := s.Settings()
+	p := DefaultAntiFloodPolicy()
+	p.Mode = "off"
+	cfg.AntiFlood = &p
+	if err := s.SaveSettings(cfg); err != nil {
+		t.Fatal(err)
+	}
 	c, err := s.Create(ClientInput{Name: "many streams", Enabled: true})
 	if err != nil {
 		t.Fatal(err)
