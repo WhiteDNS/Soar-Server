@@ -16,8 +16,11 @@ valid_checksum(){
  actual=$(sha256sum -- "$2");[[ ${actual%% *} == "$digest" ]]
 }
 valid_member(){ [[ $1 == "$2"/* && $1 != *'/../'* && $1 != */.. && $1 != *'/./'* && $1 != *\\* ]]; }
+panel_arch(){
+ case "${1:-$(uname -m)}" in x86_64|amd64) printf amd64 ;; aarch64|arm64) printf arm64 ;; *) fail 'Unsupported architecture; use a Linux amd64 or arm64 server.' ;; esac
+}
 main(){
- local mode=${1:-install} command asset base member
+ local mode=${1:-install} command asset base member arch
  [[ $# -le 1 && ( $mode == install || $mode == --check-download ) ]] || fail 'Usage: panel-setup.sh [install|--check-download]'
  if [[ $mode == install ]];then
   [[ -t 0 ]] || fail 'Run from an interactive SSH terminal: bash <(curl -fsSL URL)'
@@ -25,19 +28,20 @@ main(){
   [[ -f /etc/os-release ]] || fail 'Ubuntu or Debian is required.'
   . /etc/os-release
   case "$ID:${VERSION_ID%%.*}" in ubuntu:22|ubuntu:24|ubuntu:26|debian:12|debian:13) ;;*) fail 'Supported: Ubuntu 22.04/24.04/26.04 or Debian 12/13.';;esac
-  [[ $(uname -m) == x86_64 ]] || fail 'This panel release is for Linux amd64.'
  fi
+ arch=$(panel_arch)
+ if [[ $arch == arm64 && $PANEL_RELEASE =~ ^0\.[0-6]\. ]]; then fail "Panel $PANEL_RELEASE has no arm64 bundle. ARM64 requires panel 0.7.0 or newer; use its verified linux-arm64 archive when published.";fi
  for command in curl tar sha256sum mktemp awk;do command -v "$command" >/dev/null || fail "Missing $command. Install curl/coreutils/tar, then retry.";done
  PANEL_WORK=$(mktemp -d "${TMPDIR:-/tmp}/whitedns-soar-panel.XXXXXXXX");trap cleanup EXIT
- asset="soar-panel-$PANEL_RELEASE-linux-amd64.tar.gz";base="https://github.com/$PANEL_REPO/releases/download/panel-v$PANEL_RELEASE"
+ asset="soar-panel-$PANEL_RELEASE-linux-$arch.tar.gz";base="https://github.com/$PANEL_REPO/releases/download/panel-v$PANEL_RELEASE"
  printf 'WhiteDNS Soar Panel %s - STABLE\nDownloading the pinned release and its SHA-256 checksum...\n' "$PANEL_RELEASE"
  for member in "$asset" "$asset.sha256";do curl --fail --show-error --silent --location --retry 3 --connect-timeout 15 --max-time 180 --proto '=https' --proto-redir '=https' "$base/$member" -o "$PANEL_WORK/$member" || fail 'Download failed. Check GitHub access and retry.';done
  valid_checksum "$PANEL_WORK/$asset.sha256" "$PANEL_WORK/$asset" "$asset" || fail 'Checksum mismatch. Installation was not started.'
  tar -tzf "$PANEL_WORK/$asset" > "$PANEL_WORK/members" || fail 'Invalid archive.'
- while IFS= read -r member;do valid_member "$member" "soar-panel-$PANEL_RELEASE-linux-amd64" || fail 'Unsafe archive path.';done < "$PANEL_WORK/members"
+ while IFS= read -r member;do valid_member "$member" "soar-panel-$PANEL_RELEASE-linux-$arch" || fail 'Unsafe archive path.';done < "$PANEL_WORK/members"
  tar -tvzf "$PANEL_WORK/$asset" | awk 'substr($1,1,1)!="-" && substr($1,1,1)!="d"{bad=1}END{exit bad}' || fail 'Archive contains unsupported links or special files.'
  tar --no-same-owner --no-same-permissions -xzf "$PANEL_WORK/$asset" -C "$PANEL_WORK"
- local installer="$PANEL_WORK/soar-panel-$PANEL_RELEASE-linux-amd64/panel-install.sh"
+ local installer="$PANEL_WORK/soar-panel-$PANEL_RELEASE-linux-$arch/panel-install.sh"
  bash "$installer" --check-bundle
  if [[ $mode == --check-download ]];then printf '[OK] Panel download and bundled checksums passed. No services changed.\n';return;fi
  printf 'The guided seven-step installer will now explain installation or migration.\n'

@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"regexp"
+	"runtime"
 	"strconv"
 	"strings"
 	"time"
@@ -103,18 +104,33 @@ func ReleaseForVersion(ctx context.Context, version string) (PanelRelease, error
 	return r, e
 }
 func validatePanelRelease(r PanelRelease, v string) error {
+	return validatePanelReleaseArch(r, v, runtime.GOARCH)
+}
+
+func PanelArchiveName(version, arch string) (string, error) {
+	if !ValidVersion(version) || (arch != "amd64" && arch != "arm64") {
+		return "", errors.New("unsupported panel version or architecture")
+	}
+	return "soar-panel-" + version + "-linux-" + arch + ".tar.gz", nil
+}
+
+func validatePanelReleaseArch(r PanelRelease, v, arch string) error {
+	archive, e := PanelArchiveName(v, arch)
+	if e != nil {
+		return e
+	}
 	if r.Draft || r.Tag != "panel-v"+v || r.URL != "https://github.com/WhiteDNS/Soar-Server/releases/tag/"+r.Tag {
 		return errors.New("invalid official panel release")
 	}
-	found := 0
+	found := map[string]bool{}
 	for _, a := range r.Assets {
-		for _, name := range []string{"soar-panel-" + v + "-linux-amd64.tar.gz", "soar-panel-" + v + "-linux-amd64.tar.gz.sha256"} {
+		for _, name := range []string{archive, archive + ".sha256"} {
 			if a.Name == name && a.URL == "https://github.com/WhiteDNS/Soar-Server/releases/download/"+r.Tag+"/"+name && a.Size > 0 && a.Size <= 96<<20 {
-				found++
+				found[name] = true
 			}
 		}
 	}
-	if found != 2 {
+	if len(found) != 2 {
 		return errors.New("official panel bundle is not available")
 	}
 	return nil

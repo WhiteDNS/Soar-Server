@@ -7,16 +7,23 @@ ROOT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 PANEL_VERSION=0.7.0
 DB=/var/lib/soar-panel/panel.db
 SERVICE=/etc/systemd/system/soar-panel.service
-BIN="$ROOT_DIR/bin/linux-amd64/soar-panel"
-OPS_BIN="$ROOT_DIR/bin/linux-amd64/soar-panel-ops"
 OPS_SERVICE=/etc/systemd/system/soar-panel-ops.service
 INSTALLED_BIN=/usr/local/bin/soar-panel
 CHECK_BIN=/usr/local/bin/soar-check
 die(){ printf '\n[ERROR] %s\n' "$*" >&2; exit 1; }
+BUNDLE_ARCH=$(cat "$ROOT_DIR/ARCH" 2>/dev/null) || die 'Missing bundle architecture. Download the complete panel archive.'
+case "$BUNDLE_ARCH" in amd64|arm64) ;; *) die "Unsupported panel bundle architecture: $BUNDLE_ARCH" ;; esac
+BIN="$ROOT_DIR/bin/linux-$BUNDLE_ARCH/soar-panel"
+OPS_BIN="$ROOT_DIR/bin/linux-$BUNDLE_ARCH/soar-panel-ops"
+check_host_arch(){
+ local host
+ case "$(uname -m)" in x86_64|amd64) host=amd64 ;; aarch64|arm64) host=arm64 ;; *) die 'Unsupported architecture; use a Linux amd64 or arm64 server.' ;; esac
+ [[ $host == "$BUNDLE_ARCH" ]] || die "Bundle architecture $BUNDLE_ARCH does not match host $host. Download the linux-$host panel bundle."
+}
 check_bundle(){
  local file
  [[ -f "$ROOT_DIR/SHA256SUMS" ]] || die 'Incomplete panel bundle. Download and extract the full archive.'
- for file in panel-install.sh panel-security.sh lib/panel-installer.sh lib/standalone-install.sh bin/linux-amd64/soar-panel bin/linux-amd64/soar-panel-ops bin/linux-amd64/soar-check; do
+ for file in ARCH panel-install.sh panel-security.sh lib/panel-installer.sh lib/standalone-install.sh bin/linux-$BUNDLE_ARCH/soar-panel bin/linux-$BUNDLE_ARCH/soar-panel-ops bin/linux-$BUNDLE_ARCH/soar-check; do
   [[ -f "$ROOT_DIR/$file" ]] && awk -v path="$file" '{sub(/^\*/,"",$2)} $2==path{n++}END{exit n!=1}' "$ROOT_DIR/SHA256SUMS" || die "Missing bundle file or checksum: $file"
  done
  (cd "$ROOT_DIR" && sha256sum --check --status SHA256SUMS) || die 'Bundle checksum failed. Do not install this copy.'
@@ -25,11 +32,11 @@ check_bundle(){
 main(){
 if [[ $# == 1 && $1 == --check-bundle ]]; then check_bundle; return 0; fi
 [[ $# == 0 ]] || die 'Usage: bash panel-install.sh [--check-bundle]'
+check_host_arch
 [[ $EUID == 0 ]] || die 'Run this installer with sudo bash panel-install.sh'
 [[ -r /etc/os-release ]] || die 'This installer requires Ubuntu 22.04+ or Debian 12+.'
 . /etc/os-release
 case "$ID:${VERSION_ID%%.*}" in ubuntu:22|ubuntu:24|ubuntu:26|debian:12|debian:13) ;; *) die 'Supported systems: Ubuntu 22.04/24.04/26.04, Debian 12/13.' ;; esac
-[[ $(uname -m) == x86_64 ]] || die 'This panel bundle is for amd64 servers only.'
 [[ -t 0 ]] || die 'Run in an interactive SSH terminal; do not pipe the installer into bash.'
 check_bundle
 source "$ROOT_DIR/lib/panel-installer.sh"
@@ -158,7 +165,7 @@ chmod 0600 /var/lib/soar-panel/public-ip
 install -m 0755 "$BIN" /usr/local/bin/soar-panel
 install -m 0755 "$OPS_BIN" /usr/local/bin/soar-panel-ops
 install -m 0755 "$ROOT_DIR/panel-security.sh" /usr/local/bin/soar-panel-security
-install -m 0755 "$ROOT_DIR/bin/linux-amd64/soar-check" "$CHECK_BIN"
+install -m 0755 "$ROOT_DIR/bin/linux-$BUNDLE_ARCH/soar-check" "$CHECK_BIN"
 fresh_install=0
 if [[ ! -f $DB ]];then
  fresh_install=1

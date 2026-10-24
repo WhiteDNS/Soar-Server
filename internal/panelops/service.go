@@ -18,6 +18,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -467,7 +468,10 @@ func (s *Service) fetchBundle(ctx context.Context, version, dir string) error {
 	if e != nil {
 		return e
 	}
-	archive := "soar-panel-" + version + "-linux-amd64.tar.gz"
+	archive, e := panel.PanelArchiveName(version, runtime.GOARCH)
+	if e != nil {
+		return e
+	}
 	sumName := archive + ".sha256"
 	var sums []byte
 	var archivePath string
@@ -529,6 +533,14 @@ func (s *Service) fetchBundle(ctx context.Context, version, dir string) error {
 	return ExtractBinaries(archivePath, dir, version)
 }
 func ExtractBinaries(archive, destination, version string) error {
+	return extractBinariesArch(archive, destination, version, runtime.GOARCH)
+}
+func extractBinariesArch(archive, destination, version, arch string) error {
+	name, e := panel.PanelArchiveName(version, arch)
+	if e != nil {
+		return e
+	}
+	root := strings.TrimSuffix(name, ".tar.gz")
 	f, e := os.Open(archive)
 	if e != nil {
 		return e
@@ -550,9 +562,9 @@ func ExtractBinaries(archive, destination, version string) error {
 			return e
 		}
 		for _, name := range []string{"soar-panel", "soar-panel-ops", "soar-panel-security"} {
-			want := "soar-panel-" + version + "-linux-amd64/bin/linux-amd64/" + name
+			want := root + "/bin/linux-" + arch + "/" + name
 			if name == "soar-panel-security" {
-				want = "soar-panel-" + version + "-linux-amd64/panel-security.sh"
+				want = root + "/panel-security.sh"
 			}
 			if header.Name != want {
 				continue

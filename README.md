@@ -4,7 +4,7 @@
 
 [دامنه‌های جایگزین تونل و پنل](docs/DOMAINS.fa.md): حداکثر ۸ دامنه برای هر بخش، بدون ساخت دوبارهٔ حساب‌ها یا تغییر سهمیه. نصب اولیه همچنان فقط یک دامنه می‌خواهد.
 
-پنل مدیریت سرور **WhiteDNS 0.7.0** با موتورهای **Soar و Cotten** برای **Ubuntu 22.04/24.04/26.04 یا Debian 12/13، معماری amd64/x86_64**.
+پنل مدیریت سرور **WhiteDNS 0.7.0** با موتورهای **Soar و Cotten** برای **Ubuntu 22.04/24.04/26.04 یا Debian 12/13، معماری amd64/x86_64 یا arm64/aarch64**.
 
 **CottenDNS** نیز از [فورک سازگار WhiteDNS](https://github.com/WhiteDNS/CottenDns) و با حفظ نام و مجوز نویسندگان اصلی اضافه شده است.
 
@@ -106,7 +106,8 @@ bash tests/panel_bootstrap_test.sh
 PANEL_COTTEN_CLIENT="$PWD/.engine-source/cotten-client" go test ./... -count=1 -timeout 240s
 go test -race ./internal/panel ./internal/panelops -count=1 -timeout 300s
 go vet ./...
-python3 scripts/build_panel_bundle.py
+python3 scripts/build_panel_bundle.py --arch amd64
+python3 scripts/build_panel_bundle.py --arch arm64
 bash dist/soar-panel-0.7.0-linux-amd64/panel-install.sh --check-bundle
 ```
 

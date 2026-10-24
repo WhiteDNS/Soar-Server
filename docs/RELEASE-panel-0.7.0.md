@@ -1,5 +1,6 @@
 # WhiteDNS Panel 0.7.0
 
+- Added Linux arm64 bundles alongside amd64, architecture-aware installation and verified updates, ELF architecture checks, and native amd64/arm64 CI build, test, browser and release stages (issue #10).
 - Added a dedicated Telegram bot for one private administrator. Set up with a bot token and a five-minute, single-use pairing link in dashboard settings; no manual chat ID is required.
 - Added Persian/English button menus, guided account creation and editing, account controls, copyable subscription/direct connection strings, and `/stats` for current server resources and usage. Telegram sends no QR images.
 - Added confirmed panel/tunnel restarts and verified official stable panel updates through the existing maintenance service, plus account/runtime/release alerts and a daily current-state report at 09:00 Asia/Tehran by default.
