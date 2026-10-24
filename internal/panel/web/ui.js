@@ -63,7 +63,10 @@ const panelUI = (() => {
   if(changed){select.dispatchEvent(new Event('input',{bubbles:true}));select.dispatchEvent(new Event('change',{bubbles:true}));}
  }
  function openSelect(select){
-  closeSelectMenu();closeActionMenu(false);currentSelect=select;const button=selects.get(select);button.setAttribute('aria-expanded','true');selectMenu.setAttribute('aria-labelledby',button.getAttribute('aria-labelledby'));
+  closeSelectMenu();closeActionMenu(false);
+  // A modal dialog makes nodes outside its subtree inert, including top-layer popovers.
+  (select.closest('dialog')||document.body).append(selectMenu);
+  currentSelect=select;const button=selects.get(select);button.setAttribute('aria-expanded','true');selectMenu.setAttribute('aria-labelledby',button.getAttribute('aria-labelledby'));
   selectMenu.replaceChildren(...[...select.options].map((option,index)=>{
    const item=document.createElement('div');item.id=select.id+'-option-'+index;item.dataset.index=index;item.className='select-option';item.setAttribute('role','option');item.setAttribute('aria-selected',String(option.selected));if(option.disabled)item.setAttribute('aria-disabled','true');
    const label=document.createElement('span');label.textContent=option.textContent;item.append(label,icon('check'));
