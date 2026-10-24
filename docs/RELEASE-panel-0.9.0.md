@@ -1,4 +1,4 @@
-# WhiteDNS Server Management 0.8.3
+# WhiteDNS Server Management 0.9.0
 
 - Add outbound anti-flood controls shared by Soar, Cotten and MasterDNS, including all tunnel domains. Limit connection starts, pending/open streams, destination IP/network activity, distinct destinations and upload traffic on existing connections.
 - Temporarily quarantine repeated account violations and high-failure scans across diverse targets. Quarantine closes all engines for the account, survives a server restart and can be released by an administrator.
