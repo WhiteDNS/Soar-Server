@@ -1,6 +1,6 @@
 ![Soar Server and WhiteDNS management dashboard](docs/assets/soar-server-banner.png)
 
-# WhiteDNS Soar Panel
+# WhiteDNS Server Management
 
 [English installation guide](docs/PANEL.en.md) · [راهنمای فارسی](docs/PANEL.fa.md)
 

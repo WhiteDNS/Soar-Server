@@ -41,7 +41,7 @@ main(){
  PANEL_RELEASE=$(latest_panel_release) || exit 1
  PANEL_WORK=$(mktemp -d "${TMPDIR:-/tmp}/whitedns-soar-panel.XXXXXXXX");trap cleanup EXIT
  asset="soar-panel-$PANEL_RELEASE-linux-$arch.tar.gz";base="https://github.com/$PANEL_REPO/releases/download/panel-v$PANEL_RELEASE"
- printf 'WhiteDNS Soar Panel %s - STABLE\nDownloading the latest stable release and its SHA-256 checksum...\n' "$PANEL_RELEASE"
+ printf 'WhiteDNS Server Management %s - STABLE\nDownloading the latest stable release and its SHA-256 checksum...\n' "$PANEL_RELEASE"
  for member in "$asset" "$asset.sha256";do curl --fail --show-error --silent --location --retry 3 --connect-timeout 15 --max-time 180 --proto '=https' --proto-redir '=https' "$base/$member" -o "$PANEL_WORK/$member" || fail "Panel $PANEL_RELEASE download failed for Linux $arch. Check that the latest release has both the archive and checksum, then retry. Installation was not started.";done
  valid_checksum "$PANEL_WORK/$asset.sha256" "$PANEL_WORK/$asset" "$asset" || fail 'Checksum mismatch. Installation was not started.'
  tar -tzf "$PANEL_WORK/$asset" > "$PANEL_WORK/members" || fail 'Invalid archive.'

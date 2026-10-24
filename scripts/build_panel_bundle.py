@@ -15,7 +15,7 @@ import struct
 import tarfile
 
 ROOT=Path(__file__).resolve().parents[1]
-VERSION="0.8.1"
+VERSION="0.8.2"
 
 def verify_version():
     for path, pattern in [
@@ -82,7 +82,7 @@ def main():
     cotten=Path(run("go","list","-m","-f","{{.Dir}}","cottendns-go"))
     cotten_revision=run("git","-C",str(cotten),"rev-parse","HEAD") if (cotten/".git").exists() else run("go","list","-m","-f","{{.Replace.Version}}","cottendns-go")
     patch_manifest=json.loads((ROOT/"patches/cotten-engine.json").read_text())
-    (bundle/"SOURCE-VERSIONS.txt").write_text(f"WhiteDNS Soar Panel: {VERSION}\nPanel source commit: {run('git','rev-parse','HEAD')}\nLantern Soar: v0.2.2\nCottenDNS source revision: {cotten_revision}\nCottenDNS patch SHA256: {patch_manifest['patch_sha256']}\nMasterDNS source revision: {json.loads((ROOT/'patches/masterdns-engine.json').read_text())['base_commit']}\nMasterDNS patch SHA256: {json.loads((ROOT/'patches/masterdns-engine.json').read_text())['patch_sha256']}\nToolchain: {run('go','version')}\nTarget: linux/{args.arch}; CGO_ENABLED=0\n\n{run('go','list','-m','all')}\n",encoding="ascii")
+    (bundle/"SOURCE-VERSIONS.txt").write_text(f"WhiteDNS Server Management: {VERSION}\nPanel source commit: {run('git','rev-parse','HEAD')}\nLantern Soar: v0.2.2\nCottenDNS source revision: {cotten_revision}\nCottenDNS patch SHA256: {patch_manifest['patch_sha256']}\nMasterDNS source revision: {json.loads((ROOT/'patches/masterdns-engine.json').read_text())['base_commit']}\nMasterDNS patch SHA256: {json.loads((ROOT/'patches/masterdns-engine.json').read_text())['patch_sha256']}\nToolchain: {run('go','version')}\nTarget: linux/{args.arch}; CGO_ENABLED=0\n\n{run('go','list','-m','all')}\n",encoding="ascii")
     sums="".join(f"{hashlib.sha256(f.read_bytes()).hexdigest()}  {f.relative_to(bundle).as_posix()}\n" for f in sorted(bundle.rglob("*")) if f.is_file() and f.name!="SHA256SUMS")
     (bundle/"SHA256SUMS").write_bytes(sums.encode("ascii"))
     archive=args.output/(bundle.name+".tar.gz")

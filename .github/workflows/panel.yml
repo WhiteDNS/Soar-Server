@@ -130,5 +130,5 @@ jobs:
             gh release upload "$GITHUB_REF_NAME" "${assets[@]}"
           else
             gh release create "$GITHUB_REF_NAME" "${assets[@]}" --verify-tag \
-              --title "WhiteDNS Panel $version" --notes-file "docs/RELEASE-panel-$version.md"
+              --title "WhiteDNS Server Management $version" --notes-file "docs/RELEASE-panel-$version.md"
           fi

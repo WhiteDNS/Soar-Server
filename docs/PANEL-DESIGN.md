@@ -1,4 +1,4 @@
-# WhiteDNS Soar Panel: implementation contract
+# WhiteDNS Server Management: implementation contract
 
 The panel is a server-side addition. No Android files or wire protocol are changed.
 Lantern owns the upstream Soar engine; WhiteDNS develops this management layer.

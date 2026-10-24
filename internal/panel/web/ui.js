@@ -192,7 +192,7 @@ const panelUI = (() => {
   text('send-rate',sample.send==null?'—':size(sample.send)+'/s');text('receive-rate',sample.receive==null?'—':size(sample.receive)+'/s');
   text('dns-send-total',size(down));text('dns-receive-total',size(up));text('dns-traffic',size(up+down));
   text('uptime',fmt.format(Math.floor(d.uptime_seconds/3600))+panelText(" ساعت و ")+fmt.format(Math.floor(d.uptime_seconds/60)%60)+panelText(" دقیقه"));
-  text('platform',h.platform);text('panel-version',d.version);text('footer-version',d.version);
+  text('platform',h.platform);for(const el of document.querySelectorAll('[data-panel-version]'))el.textContent=d.version;
   const diagnostics=d.diagnostics||{},accounting=d.accounting||{},metric=n=>Number.isFinite(n)?fmt.format(n):'—',ratio=(used,limit)=>metric(used)+' / '+metric(limit);
   text('diag-udp-errors',metric(diagnostics.udp_write_errors));text('diag-queue-drops',metric((diagnostics.soar_queue_drops||0)+(diagnostics.cotten_queue_drops||0)+(diagnostics.masterdns_queue_drops||0)));
   text('diag-dial-failures',metric(diagnostics.dial_failures));text('diag-dial-time',diagnostics.dial_attempts?((diagnostics.dial_latency_microseconds||0)/diagnostics.dial_attempts/1000).toFixed(1)+' ms':'—');

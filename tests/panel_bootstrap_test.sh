@@ -45,7 +45,7 @@ for host in x86_64 amd64 aarch64 arm64;do
   main --check-download
  ) >"$work/download-result"
  grep -q 'No services changed' "$work/download-result"
- grep -q "WhiteDNS Soar Panel $version - STABLE" "$work/download-result"
+ grep -q "WhiteDNS Server Management $version - STABLE" "$work/download-result"
 done
 done
 if (panel_arch ppc64le) >"$work/result" 2>&1;then echo 'FAIL unsupported architecture';exit 1;fi
