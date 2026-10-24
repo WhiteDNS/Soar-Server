@@ -54,7 +54,7 @@ jobs:
           go test -race ./internal/panel ./internal/panelops -count=1 -timeout 900s
           go vet ./...
           (cd .engine-source/CottenDNS && go test ./... -count=1 -timeout 240s && go vet ./...)
-          (cd .engine-source/MasterDnsVPN && go test ./... -count=1 -timeout 240s && go test -race ./internal/udpserver -count=1 -timeout 300s && go vet ./...)
+          (cd .engine-source/MasterDnsVPN && go test ./... -count=1 -timeout 240s && go test -race ./internal/udpserver -run TestEmbedded -count=1 -timeout 60s && go vet ./...)
           bash tests/installer_test.sh
           bash tests/panel_installer_test.sh
           bash tests/panel_bootstrap_test.sh

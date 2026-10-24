@@ -404,7 +404,7 @@ func (h *HTTP) settings(w http.ResponseWriter, r *http.Request) {
 		errorReply(w, 400, e)
 		return
 	}
-	if e := h.manager.Reconcile(); e != nil {
+	if e := h.manager.RestartEngines(); e != nil {
 		errorReply(w, 500, errors.New("saved settings; runtime synchronization failed"))
 		return
 	}

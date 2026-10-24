@@ -2,6 +2,9 @@
 // Translation is applied to authored UI only. Account names, notes, URLs and input values are never translated.
 const panelI18n = (() => {
  const catalog = {
+ "تنظیمات ذخیره شد و موتورهای فعال دوباره راه‌اندازی شدند.": "Settings saved and active engines restarted.",
+ "تنظیمات ذخیره شد و موتورهای فعال دوباره راه‌اندازی شدند. ساب را در اپ تازه‌سازی کنید.": "Settings saved and active engines restarted. Refresh the subscription in the app.",
+
  "هر سه موتور": "All three engines",
  "سقف نشست MasterDNS": "MasterDNS session limit",
  "نشست‌های هم‌زمان تونل MasterDNS؛ از ۱ تا ۲۵۵. تعداد دستگاه نیست.": "Concurrent MasterDNS tunnel sessions: 1–255. This is not a device count.",

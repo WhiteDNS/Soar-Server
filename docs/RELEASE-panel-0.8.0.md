@@ -4,6 +4,7 @@
 - Apply the existing shared quota, speed, expiry, TCP stream limits, destination policy and account revocation to MasterDNS traffic.
 - Add MasterDNS profile links and QR codes, a separate 1–255 tunnel-session limit, runtime diagnostics and Telegram management and recovery alerts.
 - Preserve existing accounts: legacy `both` still means Soar + Cotten. Enable MasterDNS explicitly; account identities, existing tunnel keys and subscription URLs stay valid.
+- Restart active account engines after a successful settings save while preserving keys, subscriptions and persisted usage. Failed saves leave engines running.
 - Verify native MasterDNS HTTPS during guided installation, using private short-lived credentials and the same rollback path as other tunnel checks.
 - Pin the original MasterDnsVPN source and the complete embedding patch with checksums. Include original MIT attribution and Linux amd64/arm64 bundles.
 

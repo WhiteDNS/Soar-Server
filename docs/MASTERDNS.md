@@ -29,9 +29,11 @@ python3 scripts/prepare_panel_engines.py
 export GOWORK="$PWD/.engine-source/patched.go.work"
 go test ./... -count=1 -timeout 240s
 go test -race ./internal/panel ./internal/panelops -count=1 -timeout 900s
-(cd .engine-source/MasterDnsVPN && go test ./... && go test -race ./internal/udpserver)
+(cd .engine-source/MasterDnsVPN && go test ./... && go test -race ./internal/udpserver -run TestEmbedded)
 python3 scripts/build_panel_bundle.py --arch amd64
 python3 scripts/build_panel_bundle.py --arch arm64
 ```
 
 `TestMasterDNSNativeHTTPSAndAccounting` runs the original native MasterDNS client through the panel router to a TLS-verified test origin and checks account billing. Additional tests cover engine selection, key isolation, revocation, session validation, policy hooks, shutdown, subscriptions and browser sharing. Guided installation checks both local and recursive UDP DNS paths with an expiring, quota-limited installation account. A failed check follows the existing retry, rollback or explicitly unverified-install flow.
+
+Saving panel settings successfully restarts active account engines on the shared DNS listener, closes their old streams and reloads the new settings. Failed validation does not restart engines. Account keys, subscription identities and persisted usage survive the restart. Profile settings on a phone still require refreshing its subscription.

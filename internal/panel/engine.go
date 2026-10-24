@@ -139,6 +139,17 @@ func NewManager(ctx context.Context, s *Store, pc net.PacketConn) *Manager {
 	return m
 }
 func (m *Manager) Reconcile() error {
+	return m.reconcile(false)
+}
+
+// RestartEngines applies successfully saved settings to every active account.
+// The DNS listener and management server stay available; account identities,
+// keys, subscriptions and persisted usage are unchanged.
+func (m *Manager) RestartEngines() error {
+	return m.reconcile(true)
+}
+
+func (m *Manager) reconcile(restart bool) error {
 	m.reconcileMu.Lock()
 	defer m.reconcileMu.Unlock()
 	if m.ctx.Err() != nil {
@@ -170,7 +181,7 @@ func (m *Manager) Reconcile() error {
 	m.cfg = cfg
 	for id, r := range m.accounts {
 		c, ok := desired[id]
-		if !ok || r.ctx.Err() != nil || c.Zone != r.client.Zone || c.PublicKey != r.client.PublicKey || c.Engines != r.client.Engines ||
+		if restart || !ok || r.ctx.Err() != nil || c.Zone != r.client.Zone || c.PublicKey != r.client.PublicKey || c.Engines != r.client.Engines ||
 			c.StreamLimit != r.client.StreamLimit || c.UsageEpoch != r.client.UsageEpoch ||
 			c.SoarSessionLimit != r.client.SoarSessionLimit || c.CottenSessionLimit != r.client.CottenSessionLimit || c.MasterDNSSessionLimit != r.client.MasterDNSSessionLimit ||
 			strings.Join(r.zones, ",") != strings.Join(cfg.accountZones(c), ",") {
