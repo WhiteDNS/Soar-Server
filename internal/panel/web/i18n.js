@@ -2,6 +2,18 @@
 // Translation is applied to authored UI only. Account names, notes, URLs and input values are never translated.
 const panelI18n = (() => {
  const catalog = {
+ "خاموش": "Off",
+ "۰ = نامحدود؛ بین همهٔ حساب‌ها و هر سه موتور مشترک": "0 = unlimited; shared by all accounts and all three engines",
+ "جمع کردن منو": "Collapse sidebar",
+ "گسترش منو": "Expand sidebar",
+ "پرش به محتوای اصلی": "Skip to main content",
+ "تغییرات ذخیره‌نشده": "Unsaved changes",
+ "نرخ و جهش اتصال": "Connection rates and bursts",
+ "ظرفیت و مقصدها": "Capacity and destinations",
+ "تشخیص و قرنطینه": "Detection and quarantine",
+ "آپلود و DNS": "Upload and DNS",
+ "وضعیت حفاظت": "Protection status",
+ "ذخیره شد": "Saved",
  "تنظیمات ذخیره شد و موتورهای فعال دوباره راه‌اندازی شدند.": "Settings saved and active engines restarted.",
  "تنظیمات ذخیره شد و موتورهای فعال دوباره راه‌اندازی شدند. ساب را در اپ تازه‌سازی کنید.": "Settings saved and active engines restarted. Refresh the subscription in the app.",
 
