@@ -16,3 +16,5 @@ dialog{background:var(--surface);color:var(--ink);border:1px solid var(--line);b
 .domain-check-row{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;padding-block:8px}.domain-check-row bdi{overflow-wrap:anywhere;min-width:0}#access-addresses input{width:100%}#tunnel-primary{direction:ltr}
 .domain-record{padding:12px 0;border-top:1px solid var(--line)}.domain-record pre{white-space:pre-wrap;overflow-wrap:anywhere;font-size:12px;line-height:1.8}#share-alternatives-label{display:flex;flex-direction:column;gap:8px}
 #page-security>.maintenance-card+.maintenance-card{margin-top:24px}
+
+#page-antiflood .events-list li{flex-wrap:wrap;align-items:center}#page-antiflood .events-list li>div{flex:1;min-width:180px;overflow-wrap:anywhere}#page-antiflood .events-list small{direction:inherit;text-align:start;overflow-wrap:anywhere}#page-antiflood .events-list li>button{flex-shrink:0}#page-antiflood .events-list li>time{white-space:normal}#flood-mode{max-width:100%}

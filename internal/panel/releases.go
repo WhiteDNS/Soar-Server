@@ -16,7 +16,7 @@ import (
 
 const ProductName = "WhiteDNS Server Management"
 
-var Version = "0.8.2"
+var Version = "0.9.0"
 var panelVersionPattern = regexp.MustCompile(`^(\d+)\.(\d+)\.(\d+)(?:-beta(\d+))?$`)
 
 func ValidVersion(v string) bool { return panelVersionPattern.MatchString(v) && len(v) < 48 }
