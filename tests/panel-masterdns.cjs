@@ -18,7 +18,7 @@ module.exports=async({page,out,assert})=>{
   await page.locator('#share-masterdns-mode').click();
   const link=await page.locator('#share-link').inputValue();assert.match(link,/^masterdns:\/\//);
   const payload=JSON.parse(Buffer.from(link.split('://')[1],'base64url')).profile;
-  assert.match(payload.server.domain,/^md\./);assert.equal(payload.server.encryption_method,5);assert.match(payload.server.encryption_key,/^[a-f0-9]{64}$/);
+  assert.match(payload.server.domain,/^mdns-1\./);assert.equal(payload.server.encryption_method,5);assert.match(payload.server.encryption_key,/^[a-f0-9]{64}$/);
   await page.locator('#share-qr').evaluate(img=>img.decode());assert.match(await page.locator('#share-qr').getAttribute('src'),/engine=masterdns$/);
   await page.locator('#share-sub-mode').click();const sub=await page.locator('#share-link').inputValue();
   const response=await page.request.get(sub);assert.equal(response.status(),200);

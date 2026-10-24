@@ -23,7 +23,7 @@ func (m *Manager) masterDNSFor(rt *accountRuntime) (*masterdns.Server, error) {
 	}
 	domains := make([]string, len(rt.zones))
 	for i, zone := range rt.zones {
-		domains[i] = "md." + zone
+		domains[i] = "mdns-1." + zone
 	}
 	engine, err := masterdns.New(rt.ctx, masterdns.Config{
 		Domain: domains[0], Domains: domains, Key: masterDNSKey(seed),

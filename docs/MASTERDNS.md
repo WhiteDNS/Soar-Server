@@ -8,7 +8,7 @@ The original protocol is pinned at `acbf1c61f90786f41b975d2e2f616afbce292b29`.
 
 ## Accounts and routing
 
-MasterDNS uses `md.<account>.<tunnel-zone>`, with the same existing delegation and optional alternate tunnel zones. `cot` remains reserved for Cotten. NS/SOA control responses remain the panel router's responsibility. Encrypted engine requests are dispatched through a bounded shared work queue. Accounts instantiate their MasterDNS runtime lazily on first traffic.
+MasterDNS uses `mdns-1.<account>.<tunnel-zone>`, with the same existing delegation and optional alternate tunnel zones. The hyphen makes the MasterDNS label distinct from Soar's base32 payload alphabet; `cot` remains reserved for Cotten. NS/SOA control responses remain the panel router's responsibility. Encrypted engine requests are dispatched through a bounded shared work queue. Accounts instantiate their MasterDNS runtime lazily on first traffic.
 
 Each MasterDNS key is HMAC-SHA256 derived from the existing account seed with a dedicated context, distinct from the Cotten key. Profiles use AES-GCM method 5 and the existing `whitedns.profile` version 1 schema under `masterdns://`. Rotating account keys revokes MasterDNS credentials as well. Backups already contain the seed; no second secret database is needed.
 

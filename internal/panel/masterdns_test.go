@@ -17,8 +17,49 @@ import (
 	"time"
 
 	cottenprobe "cottendns-go/probe"
+	"golang.org/x/net/dns/dnsmessage"
 	masterprobe "masterdnsvpn-go/probe"
 )
+
+func TestMasterDNSNamespaceDoesNotStealSoarPayload(t *testing.T) {
+	s := testStore(t)
+	c, err := s.Create(ClientInput{Name: "routing", Engines: "all", Enabled: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg, _ := s.Settings()
+	pc := &virtualPacketConn{input: make(chan packet, 1), done: make(chan struct{})}
+	rt := &accountRuntime{client: c, soarPCs: map[string]*virtualPacketConn{c.Zone: pc}}
+	m := &Manager{cfg: cfg, zones: map[string]*accountRuntime{c.Zone: rt}, cottenJobs: make(chan cottenJob, 1)}
+	query := func(name string) []byte {
+		raw, err := (&dnsmessage.Message{Header: dnsmessage.Header{ID: 42, RecursionDesired: true}, Questions: []dnsmessage.Question{{Name: dnsmessage.MustNewName(name + "."), Type: dnsmessage.TypeTXT, Class: dnsmessage.ClassINET}}}).Pack()
+		if err != nil {
+			t.Fatal(err)
+		}
+		return raw
+	}
+	// An 80-byte Soar payload has 128 base32 characters: 63 + 63 + 2.
+	// Its final label can be "md"; that must remain ordinary Soar traffic.
+	raw := query(strings.Repeat("a", 63) + "." + strings.Repeat("a", 63) + ".md." + c.Zone)
+	m.routeDNS(raw, &net.UDPAddr{}, false, func([]byte) { t.Error("Soar payload was rejected") })
+	select {
+	case <-pc.input:
+	default:
+		t.Fatal("MasterDNS stole a valid Soar payload namespace")
+	}
+	if len(m.cottenJobs) != 0 {
+		t.Fatal("Soar traffic reached another engine")
+	}
+	m.routeDNS(query("payload."+c.masterDNSZone()), &net.UDPAddr{}, false, func([]byte) { t.Error("MasterDNS request was rejected") })
+	select {
+	case job := <-m.cottenJobs:
+		if !job.master {
+			t.Fatal("MasterDNS request routed to Cotten")
+		}
+	default:
+		t.Fatal("MasterDNS request was not queued")
+	}
+}
 
 func TestMasterDNSNativeHTTPSAndAccounting(t *testing.T) {
 	s := testStore(t)

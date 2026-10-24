@@ -169,7 +169,7 @@ func (m *Manager) startCottenWorkers() {
 }
 
 // All engines live beneath the existing delegation. The internal "cot" and
-// "md" labels keep account keys isolated without extra operator DNS records.
+// "mdns-1" labels keep account keys isolated without extra operator DNS records.
 func (m *Manager) routeDNS(query []byte, remote net.Addr, tcp bool, reply func([]byte)) {
 	name, end, typ, ok := dnsQuestion(query)
 	if !ok {
@@ -205,7 +205,7 @@ func (m *Manager) routeDNS(query []byte, remote net.Addr, tcp bool, reply func([
 	if rt != nil {
 		cottenZone := "cot." + zone
 		cottenQuery := name == cottenZone || strings.HasSuffix(name, "."+cottenZone)
-		masterZone := "md." + zone
+		masterZone := "mdns-1." + zone
 		masterQuery := name == masterZone || strings.HasSuffix(name, "."+masterZone)
 		if masterQuery && rt.client.hasEngine("masterdns") {
 			job := cottenJob{rt: rt, query: append([]byte(nil), query...), reply: reply, tcp: tcp, master: true}

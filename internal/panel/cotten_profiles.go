@@ -20,7 +20,7 @@ func (c Client) hasEngine(engine string) bool {
 }
 
 func (c Client) cottenZone() string    { return "cot." + c.Zone }
-func (c Client) masterDNSZone() string { return "md." + c.Zone }
+func (c Client) masterDNSZone() string { return "mdns-1." + c.Zone }
 
 func masterDNSKey(seed []byte) string {
 	mac := hmac.New(sha256.New, seed)
