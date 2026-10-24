@@ -277,7 +277,17 @@ func (t *Telegram) call(ctx context.Context, c TelegramConfig, method string, bo
 }
 func (t *Telegram) notify(ctx context.Context, c TelegramConfig, text string, keyboard any) (int64, error) {
 	var msg telegramMessage
-	e := t.call(ctx, c, "sendMessage", map[string]any{"chat_id": c.ChatID, "text": text, "reply_markup": keyboard, "link_preview_options": map[string]bool{"is_disabled": true}}, &msg)
+	body := map[string]any{
+		"chat_id":              c.ChatID,
+		"text":                 text,
+		"link_preview_options": map[string]bool{"is_disabled": true},
+	}
+	// Telegram rejects a JSON null reply_markup ("object expected as reply markup"),
+	// so the field must be omitted entirely when no keyboard is attached.
+	if keyboard != nil {
+		body["reply_markup"] = keyboard
+	}
+	e := t.call(ctx, c, "sendMessage", body, &msg)
 	t.connection(e)
 	return msg.ID, e
 }
