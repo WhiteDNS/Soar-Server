@@ -5,8 +5,10 @@ WhiteDNS builds the management panel and installer. The tunnel engine is
 [WhiteDNS CottenDNS fork](https://github.com/WhiteDNS/CottenDNS). The dashboard uses original
 code with a workflow inspired by 3x-ui; Xray is not installed.
 
-Supported servers: Ubuntu 22.04/24.04/26.04 or Debian 12/13, amd64/x86_64,
+Supported servers: Ubuntu 22.04/24.04/26.04 or Debian 12/13, amd64/x86_64 or arm64/aarch64,
 with root/sudo and systemd. No Docker, Go, Node or external database is required.
+
+Panel 0.7.0 provides separate archives for each architecture. The installer rejects mismatched bundles before installation. The public bootstrap remains pinned to the last verified release; arm64 needs a published 0.7.0 or newer release.
 
 ## 1. Prepare a server and DNS
 

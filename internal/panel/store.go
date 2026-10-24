@@ -490,10 +490,16 @@ func (s *Store) Edit(id string, in ClientInput) (c Client, e error) {
 	return
 }
 func (s *Store) ResetUsage(id string) error {
+	return s.resetUsage(id, nil)
+}
+func (s *Store) resetUsage(id string, revision *uint64) error {
 	return s.db.Update(func(tx *bolt.Tx) error {
 		c, e := getClient(tx, id)
 		if e != nil {
 			return e
+		}
+		if revision != nil && c.Revision != *revision {
+			return ErrConflict
 		}
 		c.UploadBytes = 0
 		c.DownloadBytes = 0
@@ -507,6 +513,9 @@ func (s *Store) ResetUsage(id string) error {
 	})
 }
 func (s *Store) Rotate(id string) (c Client, e error) {
+	return s.rotate(id, nil)
+}
+func (s *Store) rotate(id string, revision *uint64) (c Client, e error) {
 	cfg, e := s.Settings()
 	if e != nil {
 		return
@@ -519,6 +528,9 @@ func (s *Store) Rotate(id string) (c Client, e error) {
 		c, e = getClient(tx, id)
 		if e != nil {
 			return e
+		}
+		if revision != nil && c.Revision != *revision {
+			return ErrConflict
 		}
 		c.Zone = zone
 		c.PublicKey = pub
@@ -535,9 +547,16 @@ func (s *Store) Rotate(id string) (c Client, e error) {
 	return
 }
 func (s *Store) Delete(id string) error {
+	return s.deleteRevision(id, nil)
+}
+func (s *Store) deleteRevision(id string, revision *uint64) error {
 	return s.db.Update(func(tx *bolt.Tx) error {
-		if _, e := getClient(tx, id); e != nil {
+		c, e := getClient(tx, id)
+		if e != nil {
 			return e
+		}
+		if revision != nil && c.Revision != *revision {
+			return ErrConflict
 		}
 		return deleteClient(tx, id)
 	})

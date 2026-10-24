@@ -25,6 +25,7 @@ module.exports = async ({page, out, assert}) => {
   await page.locator(`nav a[data-page=${section}]`).click();
   const pageEl=page.locator('#page-'+section);await pageEl.waitFor({state:'visible'});
   if(section==='settings'){
+   await page.locator('#telegram-form').waitFor({state:'visible'});assert.match(await page.locator('#telegram-heading').innerText(),/Telegram management/);assert.equal(await page.locator('#telegram-token').inputValue(),'');await page.screenshot({path:path.join(out,'telegram-en-1440.png'),fullPage:true});
    await page.locator('#soar-transport-trigger').click();assert.equal(await page.locator('#panel-select-options').evaluate(el=>getComputedStyle(el).direction),'ltr');await page.keyboard.press('Escape');
    const help=page.locator('.setting-field').filter({has:page.locator('#base-zone')}).locator('.help-trigger');
    await help.hover();await page.locator('#field-tooltip').waitFor({state:'visible'});

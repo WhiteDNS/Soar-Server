@@ -39,6 +39,11 @@ func TestRestoreActivationRollbackAndPersistentRecovery(t *testing.T) {
 			current := filepath.Join(dir, "panel.db")
 			candidate := filepath.Join(dir, "candidate.db")
 			database(t, current, "current-password-2026")
+			telegramFile := filepath.Join(dir, "telegram.json")
+			telegramConfig := []byte(`{"token":"private-server-bot","chat_id":12345}`)
+			if e := os.WriteFile(telegramFile, telegramConfig, 0600); e != nil {
+				t.Fatal(e)
+			}
 			database(t, candidate, "backup-password-2026")
 			raw, _ := os.ReadFile(candidate)
 			hash := sha256.Sum256(raw)
@@ -64,6 +69,9 @@ func TestRestoreActivationRollbackAndPersistentRecovery(t *testing.T) {
 			job := panel.MaintenanceJob{ID: "restore-fixture", Kind: "restore", State: "running"}
 			s.perform(panel.MaintenanceRequest{Action: "restore", Backup: raw, SHA256: hex.EncodeToString(hash[:]), ExpectedZone: "soar.example.org"}, job)
 			state := s.Status()
+			if raw, e := os.ReadFile(telegramFile); e != nil || !bytes.Equal(raw, telegramConfig) {
+				t.Fatal("restore/rollback changed machine-local Telegram access", e)
+			}
 			want := "succeeded"
 			if failStart {
 				want = "rolled_back"
@@ -152,56 +160,121 @@ func TestUpdateBeforeStopValidationAndAutomaticRollback(t *testing.T) {
 	}
 }
 func TestExtractorDoesNotInstallTraversalSymlinkOrDuplicate(t *testing.T) {
-	for _, variant := range []string{"safe", "missing", "symlink", "duplicate"} {
-		t.Run(variant, func(t *testing.T) {
-			dir := t.TempDir()
-			archive := filepath.Join(dir, "test.tar.gz")
-			f, _ := os.Create(archive)
-			z := gzip.NewWriter(f)
-			tarw := tar.NewWriter(z)
-			_ = tarw.WriteHeader(&tar.Header{Name: "../../escaped", Typeflag: tar.TypeReg, Mode: 0755, Size: 4})
-			_, _ = io.WriteString(tarw, "evil")
-			for _, name := range []string{"soar-panel", "soar-panel-ops", "soar-panel-security"} {
-				if variant == "missing" && name == "soar-panel-ops" {
-					continue
-				}
-				count := 1
-				if variant == "duplicate" {
-					count = 2
-				}
-				for i := 0; i < count; i++ {
-					header := &tar.Header{Name: "soar-panel-0.2.0-beta8-linux-amd64/bin/linux-amd64/" + name, Typeflag: tar.TypeReg, Size: 4, Mode: 0755}
-					if name == "soar-panel-security" {
-						header.Name = "soar-panel-0.2.0-beta8-linux-amd64/panel-security.sh"
+	for _, arch := range []string{"amd64", "arm64"} {
+		for _, variant := range []string{"safe", "missing", "symlink", "duplicate", "wrong_arch"} {
+			t.Run(arch+"/"+variant, func(t *testing.T) {
+				dir := t.TempDir()
+				archive := filepath.Join(dir, "test.tar.gz")
+				f, _ := os.Create(archive)
+				z := gzip.NewWriter(f)
+				tarw := tar.NewWriter(z)
+				_ = tarw.WriteHeader(&tar.Header{Name: "../../escaped", Typeflag: tar.TypeReg, Mode: 0755, Size: 4})
+				_, _ = io.WriteString(tarw, "evil")
+				for _, name := range []string{"soar-panel", "soar-panel-ops", "soar-panel-security"} {
+					if variant == "missing" && name == "soar-panel-ops" {
+						continue
 					}
-					if variant == "symlink" {
-						header.Typeflag = tar.TypeSymlink
-						header.Linkname = "/etc/passwd"
-						header.Size = 0
+					count := 1
+					if variant == "duplicate" {
+						count = 2
 					}
-					_ = tarw.WriteHeader(header)
-					if header.Typeflag == tar.TypeReg {
-						_, _ = io.WriteString(tarw, "safe")
+					for i := 0; i < count; i++ {
+						bundleArch := arch
+						if variant == "wrong_arch" {
+							if arch == "amd64" {
+								bundleArch = "arm64"
+							} else {
+								bundleArch = "amd64"
+							}
+						}
+						root := "soar-panel-0.2.0-beta8-linux-" + bundleArch
+						header := &tar.Header{Name: root + "/bin/linux-" + bundleArch + "/" + name, Typeflag: tar.TypeReg, Size: 4, Mode: 0755}
+						if name == "soar-panel-security" {
+							header.Name = root + "/panel-security.sh"
+						}
+						if variant == "symlink" {
+							header.Typeflag = tar.TypeSymlink
+							header.Linkname = "/etc/passwd"
+							header.Size = 0
+						}
+						_ = tarw.WriteHeader(header)
+						if header.Typeflag == tar.TypeReg {
+							_, _ = io.WriteString(tarw, "safe")
+						}
 					}
 				}
-			}
-			tarw.Close()
-			z.Close()
-			f.Close()
-			target := filepath.Join(dir, "out")
-			_ = os.Mkdir(target, 0700)
-			e := ExtractBinaries(archive, target, "0.2.0-beta8")
-			if (e == nil) != (variant == "safe") {
-				t.Fatal(variant, e)
-			}
-			files, _ := os.ReadDir(target)
-			for _, file := range files {
-				if !strings.HasPrefix(file.Name(), "soar-panel") {
-					t.Fatal("unexpected extracted path")
+				tarw.Close()
+				z.Close()
+				f.Close()
+				target := filepath.Join(dir, "out")
+				_ = os.Mkdir(target, 0700)
+				e := extractBinariesArch(archive, target, "0.2.0-beta8", arch)
+				if (e == nil) != (variant == "safe") {
+					t.Fatal(variant, e)
 				}
+				if variant == "safe" {
+					native := filepath.Join(dir, "native")
+					if e := os.Mkdir(native, 0700); e != nil {
+						t.Fatal(e)
+					}
+					if e := ExtractBinaries(archive, native, "0.2.0-beta8"); (e == nil) != (arch == runtime.GOARCH) {
+						t.Fatal("extractor did not select the running architecture", e)
+					}
+				}
+				files, _ := os.ReadDir(target)
+				for _, file := range files {
+					if !strings.HasPrefix(file.Name(), "soar-panel") {
+						t.Fatal("unexpected extracted path")
+					}
+				}
+				if _, e = os.Stat(filepath.Join(dir, "escaped")); !os.IsNotExist(e) {
+					t.Fatal("traversal entry was extracted")
+				}
+			})
+		}
+	}
+}
+
+func TestPanelRestartUsesAllowlistedControlAndPersistentHealthResult(t *testing.T) {
+	for _, fail := range []string{"", "control", "health"} {
+		t.Run(fail, func(t *testing.T) {
+			calls := []string{}
+			s := &Service{StateDir: t.TempDir(), Control: func(_ context.Context, action string) error {
+				calls = append(calls, action)
+				if fail == "control" {
+					return errors.New("failed restart")
+				}
+				return nil
+			}, Health: func(context.Context) error {
+				if fail == "health" {
+					return errors.New("unhealthy")
+				}
+				return nil
+			}}
+			if e := s.Initialize(); e != nil {
+				t.Fatal(e)
 			}
-			if _, e = os.Stat(filepath.Join(dir, "escaped")); !os.IsNotExist(e) {
-				t.Fatal("traversal entry was extracted")
+			s.perform(panel.MaintenanceRequest{Action: "restart"}, panel.MaintenanceJob{ID: "restart", Kind: "restart", State: "running"})
+			want := "succeeded"
+			if fail != "" {
+				want = "failed"
+			}
+			if s.Status().State != want {
+				t.Fatal(s.Status())
+			}
+			if len(calls) != 1 || calls[0] != "restart" {
+				t.Fatal(calls)
+			}
+			loaded := &Service{StateDir: s.StateDir}
+			if e := loaded.Initialize(); e != nil || loaded.Status().State != want {
+				t.Fatal("restart result not persisted", e)
+			}
+			if _, e := s.Begin(panel.MaintenanceRequest{Action: "restart", Version: "1.0.0"}); e == nil {
+				t.Fatal("restart accepted update fields")
+			}
+			s.Save(panel.MaintenanceJob{State: "running"})
+			if _, e := s.Begin(panel.MaintenanceRequest{Action: "restart"}); e == nil {
+				t.Fatal("overlapping restart accepted")
 			}
 		})
 	}

@@ -88,8 +88,9 @@ API returns the latest 200. Browsing destinations/content are not recorded.
 
 ## Rollout
 
-Stable standalone setup remains separate. Panel 0.3.1 is the stable default in the README,
-with IPv4/amd64 support. A running standalone instance is stopped only after
+Stable standalone setup remains separate. Panel 0.7.0 sources support IPv4 on amd64 and arm64; the public bootstrap
+tracks the latest verified published release. Architecture-specific bundles and
+updates are tested on native amd64 and arm64 CI runners. A running standalone instance is stopped only after
 typing MIGRATE, preserving its keys/config and offering rollback. Migrating root
 shared profiles to individual accounts requires distributing new profile links,
 with the existing profile format. The browser transport fixes require WhiteDNS
