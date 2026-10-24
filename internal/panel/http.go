@@ -8,6 +8,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"html"
 	"io"
 	"io/fs"
 	"net"
@@ -191,6 +192,7 @@ func (h *HTTP) serveHTTP(w http.ResponseWriter, r *http.Request) {
 					prefix = h.access.Config().BasePath
 				}
 				body := strings.Replace(string(raw), "<head>", "<head><base href=\""+prefix+"\">", 1)
+				body = strings.NewReplacer("{{PANEL_NAME}}", html.EscapeString(ProductName), "{{PANEL_VERSION}}", html.EscapeString(Version)).Replace(body)
 				w.Header().Set("Content-Type", "text/html; charset=utf-8")
 				if r.Method != "HEAD" {
 					_, _ = io.WriteString(w, body)

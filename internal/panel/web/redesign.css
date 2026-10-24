@@ -54,6 +54,7 @@ nav a:hover{color:var(--color-ink);background:var(--color-paper-2)}
 .sidebar-foot{border-top:1px solid var(--color-rule);padding:16px 8px 0;font-size:11px;color:var(--color-ink-2)}
 .sidebar-foot .beta{font-size:10px;border:0;padding:0;color:var(--color-accent);letter-spacing:0}
 .sidebar-foot p{font-size:11px;margin:8px 0;opacity:1;line-height:1.8}
+.sidebar-foot .panel-identity{color:var(--color-accent);font-size:10px;overflow-wrap:anywhere}
 .sidebar-foot a{color:var(--color-ink-2);font-size:11px;white-space:nowrap}
 .workspace{margin-inline-start:var(--sidebar-width)}
 .topbar{height:var(--toolbar-height);padding:0 24px;background:var(--color-paper);border-bottom:1px solid var(--color-rule);gap:16px}
@@ -198,6 +199,7 @@ dialog #toast{position:static;max-width:none;margin-top:16px;box-shadow:none}
 .login-card{width:min(408px,100%);padding:32px;background:var(--color-paper-2);border:1px solid var(--color-rule);border-radius:20px;box-shadow:0 20px 70px var(--color-shadow);text-align:start}
 .login-brand{display:flex;flex-direction:column;align-items:center;gap:10px;margin-bottom:24px}.login-brand strong{font-size:25px;font-weight:750;letter-spacing:.2px;color:var(--color-accent);direction:ltr}
 .login-brand::after{content:'';width:38px;height:3px;border-radius:3px;background:var(--color-accent)}
+.login-brand>span{font-size:13px;color:var(--color-ink-2);direction:ltr}.main-footer>span{min-width:0}
 .login-card h1{font-size:26px;text-align:center;margin:0 0 8px;font-weight:700}.login-card>.muted{font-size:var(--text-sm);text-align:center;margin-bottom:24px}
 .login-card label{font-size:var(--text-sm);margin-top:18px;margin-bottom:7px}.login-card label:first-of-type{margin-top:0}
 .input-icon{position:relative;display:flex;align-items:center}.input-icon>.icon{position:absolute;left:12px;top:12px;color:var(--color-ink-2);pointer-events:none;width:17px;height:17px}

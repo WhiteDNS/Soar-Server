@@ -14,7 +14,9 @@ import (
 	"time"
 )
 
-var Version = "0.8.1"
+const ProductName = "WhiteDNS Server Management"
+
+var Version = "0.8.2"
 var panelVersionPattern = regexp.MustCompile(`^(\d+)\.(\d+)\.(\d+)(?:-beta(\d+))?$`)
 
 func ValidVersion(v string) bool { return panelVersionPattern.MatchString(v) && len(v) < 48 }
@@ -80,7 +82,7 @@ func getReleaseJSON(ctx context.Context, path string, out any) error {
 	if e != nil {
 		return e
 	}
-	req.Header.Set("User-Agent", "WhiteDNS-Soar-Panel/"+Version)
+	req.Header.Set("User-Agent", "WhiteDNS-Server-Management/"+Version)
 	req.Header.Set("Accept", "application/vnd.github+json")
 	response, e := ReleaseClient().Do(req)
 	if e != nil {

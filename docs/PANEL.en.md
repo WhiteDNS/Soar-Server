@@ -1,4 +1,4 @@
-# Install and use WhiteDNS Soar Panel
+# Install and use WhiteDNS Server Management
 
 WhiteDNS builds the management panel and installer. The tunnel engine is
 [Lantern Soar](https://github.com/getlantern/soar), alongside the compatible
