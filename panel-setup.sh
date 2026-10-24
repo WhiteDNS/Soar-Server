@@ -3,8 +3,6 @@
 set -Eeuo pipefail
 export LC_ALL=C
 umask 077
-# Advance only after the matching release archive and checksum are verified.
-PANEL_RELEASE=0.6.0
 PANEL_REPO=WhiteDNS/Soar-Server
 PANEL_WORK=
 fail(){ printf '[ERROR] %s\n' "$*" >&2;exit 1; }
@@ -19,8 +17,16 @@ valid_member(){ [[ $1 == "$2"/* && $1 != *'/../'* && $1 != */.. && $1 != *'/./'*
 panel_arch(){
  case "${1:-$(uname -m)}" in x86_64|amd64) printf amd64 ;; aarch64|arm64) printf arm64 ;; *) fail 'Unsupported architecture; use a Linux amd64 or arm64 server.' ;; esac
 }
+latest_panel_release(){
+ local url version prefix="https://github.com/$PANEL_REPO/releases/tag/panel-v"
+ url=$(curl --fail --show-error --silent --location --retry 3 --connect-timeout 15 --max-time 60 --proto '=https' --proto-redir '=https' --header 'Cache-Control: no-cache' --output /dev/null --write-out '%{url_effective}' "https://github.com/$PANEL_REPO/releases/latest") || fail 'Could not find the latest stable panel release. Check GitHub access and retry. Installation was not started.'
+ [[ $url == "$prefix"* ]] || fail 'GitHub latest does not point to an official stable panel release. Installation was not started.'
+ version=${url#"$prefix"}
+ [[ $version =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]] || fail 'Invalid stable panel release version. Installation was not started.'
+ printf '%s\n' "$version"
+}
 main(){
- local mode=${1:-install} command asset base member arch
+ local mode=${1:-install} command asset base member arch PANEL_RELEASE
  [[ $# -le 1 && ( $mode == install || $mode == --check-download ) ]] || fail 'Usage: panel-setup.sh [install|--check-download]'
  if [[ $mode == install ]];then
   [[ -t 0 ]] || fail 'Run from an interactive SSH terminal: bash <(curl -fsSL URL)'
@@ -30,12 +36,13 @@ main(){
   case "$ID:${VERSION_ID%%.*}" in ubuntu:22|ubuntu:24|ubuntu:26|debian:12|debian:13) ;;*) fail 'Supported: Ubuntu 22.04/24.04/26.04 or Debian 12/13.';;esac
  fi
  arch=$(panel_arch)
- if [[ $arch == arm64 && $PANEL_RELEASE =~ ^0\.[0-6]\. ]]; then fail "Panel $PANEL_RELEASE has no arm64 bundle. ARM64 requires panel 0.7.0 or newer; use its verified linux-arm64 archive when published.";fi
  for command in curl tar sha256sum mktemp awk;do command -v "$command" >/dev/null || fail "Missing $command. Install curl/coreutils/tar, then retry.";done
+ printf 'Checking the latest official stable panel release...\n'
+ PANEL_RELEASE=$(latest_panel_release) || exit 1
  PANEL_WORK=$(mktemp -d "${TMPDIR:-/tmp}/whitedns-soar-panel.XXXXXXXX");trap cleanup EXIT
  asset="soar-panel-$PANEL_RELEASE-linux-$arch.tar.gz";base="https://github.com/$PANEL_REPO/releases/download/panel-v$PANEL_RELEASE"
- printf 'WhiteDNS Soar Panel %s - STABLE\nDownloading the pinned release and its SHA-256 checksum...\n' "$PANEL_RELEASE"
- for member in "$asset" "$asset.sha256";do curl --fail --show-error --silent --location --retry 3 --connect-timeout 15 --max-time 180 --proto '=https' --proto-redir '=https' "$base/$member" -o "$PANEL_WORK/$member" || fail 'Download failed. Check GitHub access and retry.';done
+ printf 'WhiteDNS Soar Panel %s - STABLE\nDownloading the latest stable release and its SHA-256 checksum...\n' "$PANEL_RELEASE"
+ for member in "$asset" "$asset.sha256";do curl --fail --show-error --silent --location --retry 3 --connect-timeout 15 --max-time 180 --proto '=https' --proto-redir '=https' "$base/$member" -o "$PANEL_WORK/$member" || fail "Panel $PANEL_RELEASE download failed for Linux $arch. Check that the latest release has both the archive and checksum, then retry. Installation was not started.";done
  valid_checksum "$PANEL_WORK/$asset.sha256" "$PANEL_WORK/$asset" "$asset" || fail 'Checksum mismatch. Installation was not started.'
  tar -tzf "$PANEL_WORK/$asset" > "$PANEL_WORK/members" || fail 'Invalid archive.'
  while IFS= read -r member;do valid_member "$member" "soar-panel-$PANEL_RELEASE-linux-$arch" || fail 'Unsafe archive path.';done < "$PANEL_WORK/members"

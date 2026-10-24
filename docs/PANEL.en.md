@@ -8,7 +8,7 @@ code with a workflow inspired by 3x-ui; Xray is not installed.
 Supported servers: Ubuntu 22.04/24.04/26.04 or Debian 12/13, amd64/x86_64 or arm64/aarch64,
 with root/sudo and systemd. No Docker, Go, Node or external database is required.
 
-Panel 0.7.0 provides separate archives for each architecture. The installer rejects mismatched bundles before installation. The public bootstrap remains pinned to the last verified release; arm64 needs a published 0.7.0 or newer release.
+Panel 0.7.0 provides separate archives for each architecture. The installer rejects mismatched bundles before installation. On every run, the public bootstrap resolves GitHub's latest stable panel release and downloads the matching architecture archive and checksum. It stops before installation if discovery, download or verification fails; it never silently installs an older version.
 
 ## 1. Prepare a server and DNS
 
@@ -47,7 +47,7 @@ sudo apt-get install -y curl
 
 Follow the numbered English prompts. Enter your delegated zone, for example
 `soar.example.com`. Pick an administrator username and strong password. The
-installer downloads the pinned stable release, verifies its checksum, installs
+installer discovers the latest stable release, downloads the matching architecture archive, verifies its checksum, installs
 the services and prints the complete login URL. Save that URL: its random path
 is required. The bare IP/domain intentionally does not show a login page.
 

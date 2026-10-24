@@ -9,4 +9,4 @@
 
 See [Telegram setup, scope, and recovery](TELEGRAM.md). Back up the panel before upgrading. Complete outages cannot send Telegram messages until the panel returns. Reports show current account totals, not previous-day traffic.
 
-The source, runtime, dashboard, installer, and offline bundle identify as 0.7.0. The public bootstrap stays pinned to the previously verified 0.6.0 release until the 0.7.0 archive and checksum are published and verified. A source push does not publish release assets or upgrade a running server.
+The source, runtime, dashboard, installer, and offline bundle identify as 0.7.0. The public bootstrap discovers the latest published stable panel release on each run and verifies its architecture-specific archive and checksum before installation. A source push does not publish release assets or upgrade a running server.
