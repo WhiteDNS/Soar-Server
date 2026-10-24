@@ -35,9 +35,16 @@ func removeSubscription(tx *bolt.Tx, id string) error {
 }
 
 func (s *Store) SubscriptionToken(id string, rotate bool) (encoded string, err error) {
+	return s.subscriptionToken(id, rotate, nil)
+}
+func (s *Store) subscriptionToken(id string, rotate bool, revision *uint64) (encoded string, err error) {
 	err = s.db.Update(func(tx *bolt.Tx) error {
-		if _, e := getClient(tx, id); e != nil {
+		c, e := getClient(tx, id)
+		if e != nil {
 			return e
+		}
+		if revision != nil && c.Revision != *revision {
+			return ErrConflict
 		}
 		b := tx.Bucket(subscriptions)
 		raw := b.Get([]byte(id))

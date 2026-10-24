@@ -4,7 +4,7 @@
 
 [دامنه‌های جایگزین تونل و پنل](docs/DOMAINS.fa.md): حداکثر ۸ دامنه برای هر بخش، بدون ساخت دوبارهٔ حساب‌ها یا تغییر سهمیه. نصب اولیه همچنان فقط یک دامنه می‌خواهد.
 
-پنل مدیریت سرور **WhiteDNS 0.6.0** با موتورهای **Soar و Cotten** برای **Ubuntu 22.04/24.04/26.04 یا Debian 12/13، معماری amd64/x86_64**.
+پنل مدیریت سرور **WhiteDNS 0.7.0** با موتورهای **Soar و Cotten** برای **Ubuntu 22.04/24.04/26.04 یا Debian 12/13، معماری amd64/x86_64**.
 
 **CottenDNS** نیز از [فورک سازگار WhiteDNS](https://github.com/WhiteDNS/CottenDns) و با حفظ نام و مجوز نویسندگان اصلی اضافه شده است.
 
@@ -48,6 +48,10 @@ sudo apt-get install -y curl
 برای ساب کامل از **[WhiteDNS 1.6.8 یا جدیدتر](https://github.com/WhiteDNS/WhiteDNS-Android/releases/latest)** استفاده کنید. پس از تغییر تنظیمات تونل، ساب را در اپ تازه‌سازی کنید؛ برای لینک مستقیم، پروفایل را دوباره Import کنید. [راهنمای ساب، حجم، انقضا و تعویض لینک](docs/SUBSCRIPTIONS.md) · [گزارش آزمون پنل و اپ](docs/SUBSCRIPTIONS-VERIFICATION-2026-10-18.md).
 
 در فرم حساب، «Soar و Cotten (پیشنهادی)» هر دو روش اتصال را در یک ساب می‌دهد. دامنه و کلید دیگری لازم نیست؛ حجم، انقضا و سرعت مشترک‌اند. حساب‌های قبلی و لینک Soar آن‌ها حفظ می‌شوند.
+
+نسخهٔ کد منبع 0.7.0 است؛ نصب‌کنندهٔ عمومی تا انتشار و تأیید فایل‌های 0.7.0 روی نسخهٔ پایدار منتشرشدهٔ 0.6.0 می‌ماند.
+
+[مدیریت با تلگرام / Telegram management](docs/TELEGRAM.md): اتصال با توکن ربات و لینک یک‌بارمصرف، مدیریت حساب‌ها، راه‌اندازی مجدد و ارتقای پنل، هشدار و گزارش روزانه.
 
 ## امکانات و ارتقا
 
@@ -103,7 +107,7 @@ PANEL_COTTEN_CLIENT="$PWD/.engine-source/cotten-client" go test ./... -count=1 -
 go test -race ./internal/panel ./internal/panelops -count=1 -timeout 300s
 go vet ./...
 python3 scripts/build_panel_bundle.py
-bash dist/soar-panel-0.6.0-linux-amd64/panel-install.sh --check-bundle
+bash dist/soar-panel-0.7.0-linux-amd64/panel-install.sh --check-bundle
 ```
 
 نسخهٔ پایه، پچ و هش تمام فایل‌های موتور Cotten در `patches/cotten-engine.json`

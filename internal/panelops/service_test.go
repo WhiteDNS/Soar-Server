@@ -39,6 +39,11 @@ func TestRestoreActivationRollbackAndPersistentRecovery(t *testing.T) {
 			current := filepath.Join(dir, "panel.db")
 			candidate := filepath.Join(dir, "candidate.db")
 			database(t, current, "current-password-2026")
+			telegramFile := filepath.Join(dir, "telegram.json")
+			telegramConfig := []byte(`{"token":"private-server-bot","chat_id":12345}`)
+			if e := os.WriteFile(telegramFile, telegramConfig, 0600); e != nil {
+				t.Fatal(e)
+			}
 			database(t, candidate, "backup-password-2026")
 			raw, _ := os.ReadFile(candidate)
 			hash := sha256.Sum256(raw)
@@ -64,6 +69,9 @@ func TestRestoreActivationRollbackAndPersistentRecovery(t *testing.T) {
 			job := panel.MaintenanceJob{ID: "restore-fixture", Kind: "restore", State: "running"}
 			s.perform(panel.MaintenanceRequest{Action: "restore", Backup: raw, SHA256: hex.EncodeToString(hash[:]), ExpectedZone: "soar.example.org"}, job)
 			state := s.Status()
+			if raw, e := os.ReadFile(telegramFile); e != nil || !bytes.Equal(raw, telegramConfig) {
+				t.Fatal("restore/rollback changed machine-local Telegram access", e)
+			}
 			want := "succeeded"
 			if failStart {
 				want = "rolled_back"
@@ -202,6 +210,51 @@ func TestExtractorDoesNotInstallTraversalSymlinkOrDuplicate(t *testing.T) {
 			}
 			if _, e = os.Stat(filepath.Join(dir, "escaped")); !os.IsNotExist(e) {
 				t.Fatal("traversal entry was extracted")
+			}
+		})
+	}
+}
+
+func TestPanelRestartUsesAllowlistedControlAndPersistentHealthResult(t *testing.T) {
+	for _, fail := range []string{"", "control", "health"} {
+		t.Run(fail, func(t *testing.T) {
+			calls := []string{}
+			s := &Service{StateDir: t.TempDir(), Control: func(_ context.Context, action string) error {
+				calls = append(calls, action)
+				if fail == "control" {
+					return errors.New("failed restart")
+				}
+				return nil
+			}, Health: func(context.Context) error {
+				if fail == "health" {
+					return errors.New("unhealthy")
+				}
+				return nil
+			}}
+			if e := s.Initialize(); e != nil {
+				t.Fatal(e)
+			}
+			s.perform(panel.MaintenanceRequest{Action: "restart"}, panel.MaintenanceJob{ID: "restart", Kind: "restart", State: "running"})
+			want := "succeeded"
+			if fail != "" {
+				want = "failed"
+			}
+			if s.Status().State != want {
+				t.Fatal(s.Status())
+			}
+			if len(calls) != 1 || calls[0] != "restart" {
+				t.Fatal(calls)
+			}
+			loaded := &Service{StateDir: s.StateDir}
+			if e := loaded.Initialize(); e != nil || loaded.Status().State != want {
+				t.Fatal("restart result not persisted", e)
+			}
+			if _, e := s.Begin(panel.MaintenanceRequest{Action: "restart", Version: "1.0.0"}); e == nil {
+				t.Fatal("restart accepted update fields")
+			}
+			s.Save(panel.MaintenanceJob{State: "running"})
+			if _, e := s.Begin(panel.MaintenanceRequest{Action: "restart"}); e == nil {
+				t.Fatal("overlapping restart accepted")
 			}
 		})
 	}

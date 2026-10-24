@@ -221,3 +221,14 @@ dialog #toast{position:static;max-width:none;margin-top:16px;box-shadow:none}
 @media(max-width:600px){.admin-form .form-grid{grid-template-columns:minmax(0,1fr)}.admin-form>.primary{width:100%}.bulk-toolbar{padding:12px;gap:8px}.bulk-toolbar [role=status]{flex-basis:100%}.bulk-toolbar button{flex:1}.table-footer #selection-help{white-space:normal}}
 .runtime-diagnostics{padding:20px;margin-block:20px}.runtime-diagnostics summary{cursor:pointer;font-weight:700}.runtime-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:20px;margin-block:20px 0}.runtime-grid div{min-width:0}.runtime-grid dt{color:var(--color-ink-2);font-size:var(--text-sm);overflow-wrap:anywhere}.runtime-grid dd{margin:8px 0 0;font-weight:700;font-variant-numeric:tabular-nums;overflow-wrap:anywhere}
 @media(max-width:800px){.runtime-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}@media(max-width:360px){.runtime-grid{grid-template-columns:minmax(0,1fr)}}
+
+.telegram-card { margin-block-end: 24px; }
+.telegram-card h2 { margin-block: 0 12px; }
+.telegram-card details { margin-block: 20px; }
+.telegram-card summary { cursor: pointer; padding-block: 8px; }
+.telegram-card .checkbox { margin-block: 12px; }
+.telegram-card .settings-actions { flex-wrap: wrap; }
+#telegram-status, #telegram-feedback { overflow-wrap: anywhere; }
+#telegram-pairing { margin-block: 16px; }
+#telegram-pair-link { display: inline-block; padding-block: 8px; margin-inline-end: 12px; }
+#telegram-pair-link[hidden] { display: none; }

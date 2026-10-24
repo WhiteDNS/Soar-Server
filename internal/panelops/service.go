@@ -83,6 +83,9 @@ func (s *Service) Initialize() error {
 		} else {
 			job.State = "failed"
 			job.Message = "Interrupted before activation; previous installation retained."
+			if job.Kind == "restart" {
+				job.Message = "Panel restart was interrupted; check service status before retrying."
+			}
 		}
 		job.Finished = time.Now().UnixMilli()
 		s.Save(job)
@@ -91,7 +94,7 @@ func (s *Service) Initialize() error {
 }
 func systemControl(ctx context.Context, action string) error {
 	switch action {
-	case "stop", "start":
+	case "stop", "start", "restart":
 		return exec.CommandContext(ctx, "systemctl", action, "soar-panel.service").Run()
 	case "restart-ops":
 		return exec.CommandContext(ctx, "systemctl", "--no-block", "try-restart", "soar-panel-ops.service").Run()
@@ -196,8 +199,11 @@ func (s *Service) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(job)
 }
 func (s *Service) Begin(request panel.MaintenanceRequest) (panel.MaintenanceJob, error) {
-	if request.Action != "restore" && request.Action != "update" {
+	if request.Action != "restore" && request.Action != "update" && request.Action != "restart" {
 		return panel.MaintenanceJob{}, errors.New("unsupported maintenance operation")
+	}
+	if request.Action == "restart" && (request.Version != "" || len(request.Backup) != 0 || request.SHA256 != "" || request.ExpectedZone != "") {
+		return panel.MaintenanceJob{}, errors.New("invalid panel restart")
 	}
 	if request.Action == "update" && (!panel.ValidVersion(request.Version) || len(request.Backup) != 0) {
 		return panel.MaintenanceJob{}, errors.New("invalid panel update")
@@ -228,6 +234,21 @@ func (s *Service) Begin(request panel.MaintenanceRequest) (panel.MaintenanceJob,
 func (s *Service) perform(request panel.MaintenanceRequest, job panel.MaintenanceJob) {
 	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Minute)
 	defer cancel()
+	if request.Action == "restart" {
+		job.Message = "Panel and tunnel restart completed"
+		e := s.Control(ctx, "restart")
+		if e == nil {
+			e = s.waitHealthy(ctx)
+		}
+		job.State = "succeeded"
+		if e != nil {
+			job.State = "failed"
+			job.Message = "Panel restart failed; check the service on the server"
+		}
+		job.Finished = time.Now().UnixMilli()
+		s.Save(job)
+		return
+	}
 	work := filepath.Join(s.StateDir, job.ID)
 	defer func() {
 		for _, name := range []string{"restore.db", "release.tar.gz", "soar-panel", "soar-panel-ops", "soar-panel-security"} {

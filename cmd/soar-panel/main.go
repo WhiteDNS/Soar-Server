@@ -309,6 +309,14 @@ func execute(args []string) error {
 		return e
 	}
 	defer access.Close()
+	telegram, telegramErr := panel.NewTelegram(handler, filepath.Join(filepath.Dir(*db), "telegram.json"))
+	if telegramErr != nil {
+		log.Printf("Telegram disabled: %v", telegramErr)
+	} else {
+		botDone := make(chan struct{})
+		go func() { defer close(botDone); telegram.Run(ctx) }()
+		defer func() { stop(); <-botDone }()
+	}
 	server := &http.Server{Handler: handler, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 90 * time.Second, WriteTimeout: 90 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 16 * 1024}
 	done := make(chan error, 3)
 	go func() { done <- m.Run() }()
