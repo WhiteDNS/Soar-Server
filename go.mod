@@ -10,7 +10,10 @@ require (
 	golang.org/x/crypto v0.52.0
 	golang.org/x/net v0.54.0
 	golang.org/x/sys v0.45.0
+	masterdnsvpn-go v0.0.0
 )
+
+replace masterdnsvpn-go => github.com/masterking32/MasterDnsVPN v0.0.0-20260829205859-acbf1c61f907
 
 replace cottendns-go => github.com/WhiteDNS/CottenDNS v0.0.0-20261019083927-48b52018a0c2
 

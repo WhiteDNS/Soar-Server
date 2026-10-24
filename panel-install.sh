@@ -4,7 +4,7 @@ set -Eeuo pipefail
 export LC_ALL=C
 umask 077
 ROOT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
-PANEL_VERSION=0.7.0
+PANEL_VERSION=0.8.0
 DB=/var/lib/soar-panel/panel.db
 SERVICE=/etc/systemd/system/soar-panel.service
 OPS_SERVICE=/etc/systemd/system/soar-panel-ops.service
@@ -73,7 +73,7 @@ panel_port_available t "$listen_ip" 53 || die 'TCP/53 belongs to another service
 panel_port_available u "$listen_ip" 53 || die 'UDP/53 belongs to another service. Choose another local IPv4 or a dedicated VPS; keep the existing service running.'
 printf '\n[3/7] Administrator account\n'
 password='';pwfile=''
-cleanup(){ [[ -z $pwfile ]] || rm -f -- "$pwfile"; [[ -z ${probe_profile:-} ]] || rm -f -- "$probe_profile"; unset password password2; }
+cleanup(){ [[ -z $pwfile ]] || rm -f -- "$pwfile"; [[ -z ${probe_profile:-} ]] || rm -f -- "$probe_profile"; [[ -z ${probe_master_profile:-} ]] || rm -f -- "$probe_master_profile"; unset password password2; }
 trap cleanup EXIT
 if [[ -e $DB ]]; then
  printf 'Existing database found. Its accounts, keys, admin password and usage will be preserved.\n'

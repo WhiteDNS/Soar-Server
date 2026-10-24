@@ -158,13 +158,16 @@ func (t *Telegram) tick(ctx context.Context) {
 	}
 	t.state.Accounts = current
 	d := t.h.manager.Diagnostics()
-	var expectedSoar, expectedCotten int64
+	var expectedSoar, expectedCotten, expectedMaster int64
 	for _, account := range list {
 		if account.Status(t.now()) != "active" {
 			continue
 		}
 		if account.hasEngine("soar") {
 			expectedSoar++
+		}
+		if account.hasEngine("masterdns") {
+			expectedMaster++
 		}
 		if account.hasEngine("cotten") {
 			expectedCotten++
@@ -179,7 +182,16 @@ func (t *Telegram) tick(ctx context.Context) {
 	if expectedCotten == 0 || (!newCottenFailure && d.CottenStarts > t.state.CottenRecoveryStarts) {
 		t.state.CottenFailed = false
 	}
-	failed := (d.SoarUnexpectedExits > 0 && d.SoarRunning < expectedSoar) || t.state.CottenFailed
+	newMasterFailure := t.state.RuntimeKnown && d.MasterDNSStartErrors > t.state.MasterDNSIssues
+	if newMasterFailure {
+		t.state.MasterDNSFailed = true
+		t.state.MasterDNSRecoveryStarts = d.MasterDNSStarts
+	}
+	if expectedMaster == 0 || (!newMasterFailure && d.MasterDNSStarts > t.state.MasterDNSRecoveryStarts) {
+		t.state.MasterDNSFailed = false
+	}
+	t.state.MasterDNSIssues = d.MasterDNSStartErrors
+	failed := (d.SoarUnexpectedExits > 0 && d.SoarRunning < expectedSoar) || t.state.CottenFailed || t.state.MasterDNSFailed
 	t.state.CottenIssues = d.CottenStartErrors
 	if c.Alerts && t.state.RuntimeKnown && failed != t.state.RuntimeFailed {
 		text := t.tr("✅ Tunnel runtimes recovered.", "✅ موتورهای تونل بازیابی شدند.")

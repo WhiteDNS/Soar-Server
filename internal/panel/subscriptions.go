@@ -178,7 +178,7 @@ func (h *HTTP) serveSubscription(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "subscription unavailable", 500)
 			return
 		}
-		for _, engine := range []string{"soar", "cotten"} {
+		for _, engine := range profileEngines {
 			if link := links[engine]; link != "" {
 				body += link + "\n"
 			}

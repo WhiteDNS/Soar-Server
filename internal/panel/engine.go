@@ -15,6 +15,7 @@ import (
 
 	cotten "cottendns-go/server"
 	"github.com/getlantern/soar"
+	masterdns "masterdnsvpn-go/server"
 )
 
 var (
@@ -62,6 +63,8 @@ func (p *virtualPacketConn) SetReadDeadline(t time.Time) error {
 func (p *virtualPacketConn) SetWriteDeadline(t time.Time) error { return p.SetReadDeadline(t) }
 
 type accountRuntime struct {
+	masterMu       sync.Mutex
+	master         *masterdns.Server
 	soarPCs        map[string]*virtualPacketConn
 	zones          []string
 	cottenMu       sync.Mutex
@@ -169,7 +172,7 @@ func (m *Manager) Reconcile() error {
 		c, ok := desired[id]
 		if !ok || r.ctx.Err() != nil || c.Zone != r.client.Zone || c.PublicKey != r.client.PublicKey || c.Engines != r.client.Engines ||
 			c.StreamLimit != r.client.StreamLimit || c.UsageEpoch != r.client.UsageEpoch ||
-			c.SoarSessionLimit != r.client.SoarSessionLimit || c.CottenSessionLimit != r.client.CottenSessionLimit ||
+			c.SoarSessionLimit != r.client.SoarSessionLimit || c.CottenSessionLimit != r.client.CottenSessionLimit || c.MasterDNSSessionLimit != r.client.MasterDNSSessionLimit ||
 			strings.Join(r.zones, ",") != strings.Join(cfg.accountZones(c), ",") {
 			delete(m.accounts, id)
 			for _, zone := range r.zones {

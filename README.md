@@ -6,7 +6,7 @@
 
 [دامنه‌های جایگزین تونل و پنل](docs/DOMAINS.fa.md): حداکثر ۸ دامنه برای هر بخش، بدون ساخت دوبارهٔ حساب‌ها یا تغییر سهمیه. نصب اولیه همچنان فقط یک دامنه می‌خواهد.
 
-پنل مدیریت سرور **WhiteDNS 0.7.0** با موتورهای **Soar و Cotten** برای **Ubuntu 22.04/24.04/26.04 یا Debian 12/13، معماری amd64/x86_64 یا arm64/aarch64**.
+پنل مدیریت سرور **WhiteDNS 0.8.0** با موتورهای **Soar، Cotten و MasterDNS** برای **Ubuntu 22.04/24.04/26.04 یا Debian 12/13، معماری amd64/x86_64 یا arm64/aarch64**.
 
 **CottenDNS** نیز از [فورک سازگار WhiteDNS](https://github.com/WhiteDNS/CottenDns) و با حفظ نام و مجوز نویسندگان اصلی اضافه شده است.
 
@@ -49,7 +49,7 @@ sudo apt-get install -y curl
 
 برای ساب کامل از **[WhiteDNS 1.6.8 یا جدیدتر](https://github.com/WhiteDNS/WhiteDNS-Android/releases/latest)** استفاده کنید. پس از تغییر تنظیمات تونل، ساب را در اپ تازه‌سازی کنید؛ برای لینک مستقیم، پروفایل را دوباره Import کنید. [راهنمای ساب، حجم، انقضا و تعویض لینک](docs/SUBSCRIPTIONS.md) · [گزارش آزمون پنل و اپ](docs/SUBSCRIPTIONS-VERIFICATION-2026-10-18.md).
 
-در فرم حساب، «Soar و Cotten (پیشنهادی)» هر دو روش اتصال را در یک ساب می‌دهد. دامنه و کلید دیگری لازم نیست؛ حجم، انقضا و سرعت مشترک‌اند. حساب‌های قبلی و لینک Soar آن‌ها حفظ می‌شوند.
+در فرم حساب می‌توانید Soar، Cotten، MasterDNS یا هر ترکیب از آن‌ها را انتخاب کنید. «هر سه موتور» یک ساب با سه روش اتصال می‌دهد؛ حجم، انقضا و سرعت مشترک‌اند و رکورد DNS دیگری لازم نیست. حساب‌های موجود انتخاب قبلی خود را حفظ می‌کنند؛ برای افزودن MasterDNS، حساب را ویرایش و سپس ساب را تازه‌سازی کنید. [راهنمای MasterDNS](docs/MASTERDNS.md).
 
 لینک نصب ثابت است و با انتشار نسخهٔ پایدار جدید به تغییر دستور یا شمارهٔ نسخه نیاز ندارد. نسخه‌های آزمایشی نصب نمی‌شوند؛ اگر یافتن نسخه، دریافت بستهٔ معماری سرور یا بررسی checksum شکست بخورد، نصب پیش از تغییر سرویس متوقف می‌شود و نسخهٔ قدیمی جایگزین نمی‌شود.
 
@@ -100,7 +100,7 @@ bash <(curl -fsSL https://raw.githubusercontent.com/WhiteDNS/Soar-Server/main/se
 Go 1.26.1، Python 3 و Bash در محیط توسعه لازم‌اند:
 
 ```bash
-python3 scripts/prepare_cotten_engine.py --workspace .engine-source/patched.go.work
+python3 scripts/prepare_panel_engines.py --workspace .engine-source/patched.go.work
 export GOWORK="$PWD/.engine-source/patched.go.work"
 go build -o .engine-source/cotten-client ./.engine-source/CottenDNS/cmd/client
 bash tests/panel_installer_test.sh
@@ -110,10 +110,10 @@ go test -race ./internal/panel ./internal/panelops -count=1 -timeout 300s
 go vet ./...
 python3 scripts/build_panel_bundle.py --arch amd64
 python3 scripts/build_panel_bundle.py --arch arm64
-bash dist/soar-panel-0.7.0-linux-amd64/panel-install.sh --check-bundle
+bash dist/soar-panel-0.8.0-linux-amd64/panel-install.sh --check-bundle
 ```
 
-نسخهٔ پایه، پچ و هش تمام فایل‌های موتور Cotten در `patches/cotten-engine.json`
+نسخهٔ پایه، پچ و هش تمام فایل‌های موتور Cotten در `patches/cotten-engine.json` و `patches/masterdns-engine.json`
 ثبت شده‌اند. ابزار آماده‌سازی، پچ را روی همان commit اعمال و نتیجه را بررسی می‌کند؛
 ساخت بسته نیز سورس متفاوت یا فایل کد اضافه را رد می‌کند. این مرحله تنظیمات،
 کاربران یا پایگاه دادهٔ سرویس در حال اجرا را تغییر نمی‌دهد.

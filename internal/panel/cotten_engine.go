@@ -20,10 +20,11 @@ import (
 )
 
 type cottenJob struct {
-	rt    *accountRuntime
-	query []byte
-	reply func([]byte)
-	tcp   bool
+	master bool
+	rt     *accountRuntime
+	query  []byte
+	reply  func([]byte)
+	tcp    bool
 }
 
 func (m *Manager) runAccount(rt *accountRuntime, seed []byte) {
@@ -69,6 +70,15 @@ func (m *Manager) runAccount(rt *accountRuntime, seed []byte) {
 			m.diagnostics.lastEngineIssueUnixMS.Store(time.Now().UnixMilli())
 		}
 		m.diagnostics.cottenRunning.Add(-1)
+	}
+	rt.masterMu.Lock()
+	master := rt.master
+	rt.masterMu.Unlock()
+	if master != nil {
+		if err := master.Close(); err != nil {
+			m.diagnostics.masterCloseErrors.Add(1)
+		}
+		m.diagnostics.masterRunning.Add(-1)
 	}
 	<-soarDone
 }
@@ -136,7 +146,15 @@ func (m *Manager) startCottenWorkers() {
 					return
 				case job := <-m.cottenJobs:
 					var response []byte
-					if engine, err := m.cottenFor(job.rt); err == nil {
+					if job.master {
+						if engine, err := m.masterDNSFor(job.rt); err == nil {
+							if job.tcp {
+								response = engine.HandleDNSTCP(job.query)
+							} else {
+								response = engine.HandleDNS(job.query)
+							}
+						}
+					} else if engine, err := m.cottenFor(job.rt); err == nil {
 						if job.tcp {
 							response = engine.HandleDNSTCP(job.query)
 						} else {
@@ -150,8 +168,8 @@ func (m *Manager) startCottenWorkers() {
 	}
 }
 
-// Both engines live beneath the existing delegation. "cot" is an internal
-// engine label; the operator never needs another DNS record or another key.
+// All engines live beneath the existing delegation. The internal "cot" and
+// "md" labels keep account keys isolated without extra operator DNS records.
 func (m *Manager) routeDNS(query []byte, remote net.Addr, tcp bool, reply func([]byte)) {
 	name, end, typ, ok := dnsQuestion(query)
 	if !ok {
@@ -187,7 +205,17 @@ func (m *Manager) routeDNS(query []byte, remote net.Addr, tcp bool, reply func([
 	if rt != nil {
 		cottenZone := "cot." + zone
 		cottenQuery := name == cottenZone || strings.HasSuffix(name, "."+cottenZone)
-		if cottenQuery && rt.client.hasEngine("cotten") {
+		masterZone := "md." + zone
+		masterQuery := name == masterZone || strings.HasSuffix(name, "."+masterZone)
+		if masterQuery && rt.client.hasEngine("masterdns") {
+			job := cottenJob{rt: rt, query: append([]byte(nil), query...), reply: reply, tcp: tcp, master: true}
+			select {
+			case m.cottenJobs <- job:
+				return
+			default:
+				m.diagnostics.masterQueueDrops.Add(1)
+			}
+		} else if cottenQuery && rt.client.hasEngine("cotten") {
 			job := cottenJob{rt: rt, query: append([]byte(nil), query...), reply: reply, tcp: tcp}
 			select {
 			case m.cottenJobs <- job:
@@ -195,7 +223,7 @@ func (m *Manager) routeDNS(query []byte, remote net.Addr, tcp bool, reply func([
 			default:
 				m.diagnostics.cottenQueueDrops.Add(1)
 			}
-		} else if !cottenQuery && !tcp && rt.client.hasEngine("soar") {
+		} else if !cottenQuery && !masterQuery && !tcp && rt.client.hasEngine("soar") {
 			q := packet{append([]byte(nil), query...), remote}
 			select {
 			case rt.soarPCs[zone].input <- q:
@@ -314,6 +342,9 @@ func recoverableAcceptError(err error) bool {
 }
 
 func (m *Manager) cottenDNS(rt *accountRuntime, parent context.Context, query []byte) ([]byte, error) {
+	return m.tunnelDNS(rt, parent, query, upstreamCotten)
+}
+func (m *Manager) tunnelDNS(rt *accountRuntime, parent context.Context, query []byte, engine upstreamEngine) ([]byte, error) {
 	if _, _, _, ok := dnsQuestion(query); !ok || len(query) > 4096 {
 		return nil, errors.New("invalid tunneled DNS query")
 	}
@@ -335,7 +366,7 @@ func (m *Manager) cottenDNS(rt *accountRuntime, parent context.Context, query []
 		}
 		attempt, stop := context.WithTimeout(ctx, budget)
 		started := time.Now()
-		response, err := m.exchangeCottenDNS(rt, attempt, "udp", endpoint, query)
+		response, err := m.exchangeDNSFor(rt, attempt, "udp", endpoint, query, engine)
 		if err != nil {
 			stop()
 			if parent.Err() == nil && resolverFailure(err, rt) {
@@ -344,7 +375,7 @@ func (m *Manager) cottenDNS(rt *accountRuntime, parent context.Context, query []
 			continue
 		}
 		if len(response) >= 4 && response[2]&2 != 0 {
-			response, err = m.exchangeCottenDNS(rt, attempt, "tcp", endpoint, query)
+			response, err = m.exchangeDNSFor(rt, attempt, "tcp", endpoint, query, engine)
 		}
 		stop()
 		if err == nil && len(response) >= 12 && response[0] == query[0] && response[1] == query[1] && response[2]&0x80 != 0 {
@@ -392,7 +423,10 @@ func (s Settings) cottenResolvers() []string {
 }
 
 func (m *Manager) exchangeCottenDNS(rt *accountRuntime, ctx context.Context, network, address string, query []byte) ([]byte, error) {
-	c, err := m.dialEgress(rt, ctx, network, address, true)
+	return m.exchangeDNSFor(rt, ctx, network, address, query, upstreamCotten)
+}
+func (m *Manager) exchangeDNSFor(rt *accountRuntime, ctx context.Context, network, address string, query []byte, engine upstreamEngine) ([]byte, error) {
+	c, err := m.dialEgressFor(rt, ctx, network, address, true, engine)
 	if err != nil {
 		return nil, err
 	}

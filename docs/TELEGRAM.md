@@ -136,3 +136,10 @@ The Go tests use a local fake Bot API; no real bot token is needed. The existing
 `tests/panel-ui.cjs` suite includes token-only settings, pairing-link controls,
 token privacy, Persian/English and mobile checks. Real Telegram delivery and
 systemd restart/update behavior still require a disposable Linux VPS and bot.
+
+
+## MasterDNS (0.8.0)
+
+The engine menu supports MasterDNS, any pair, or all three engines. The separate MasterDNS session control accepts 1–255. Account operations, shared quotas, profile sharing, confirmed changes and lazy-engine failure/recovery alerts include MasterDNS. Existing Both selections retain Soar+Cotten.
+
+منوی موتور، MasterDNS و ترکیب‌های دو یا سه‌موتوره را هم دارد. سقف نشست MasterDNS از ۱ تا ۲۵۵ است؛ حجم، سرعت و انقضا با موتورهای همان حساب مشترک‌اند. گزینهٔ قدیمی «هر دو» همچنان Soar و Cotten است.

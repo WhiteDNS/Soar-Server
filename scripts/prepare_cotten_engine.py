@@ -27,7 +27,7 @@ def prepare(source: Path, check: bool = False) -> dict:
         if check:
             raise RuntimeError("Patched Cotten source is missing; run scripts/prepare_cotten_engine.py first")
         source.parent.mkdir(parents=True, exist_ok=True)
-        subprocess.run(["git", "clone", "--no-checkout", "https://github.com/WhiteDNS/CottenDNS.git", str(source)], check=True)
+        subprocess.run(["git", "clone", "--config", "core.autocrlf=false", "--no-checkout", "https://github.com/WhiteDNS/CottenDNS.git", str(source)], check=True)
         subprocess.run(["git", "-C", str(source), "checkout", "--detach", manifest["base_commit"]], check=True)
 
     if (source / ".git").exists():
