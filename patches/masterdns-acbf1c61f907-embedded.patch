@@ -30,11 +30,33 @@ index a129ea6..b79fbc2 100644
 +golang.org/x/net v0.54.0/go.mod h1:Sj4oj8jK6XmHpBZU/zWHw3BV3abl4Kvi+Ut7cQcY+cQ=
 +golang.org/x/sys v0.44.0 h1:ildZl3J4uzeKP07r2F++Op7E9B29JRUy+a27EibtBTQ=
 +golang.org/x/sys v0.44.0/go.mod h1:4GL1E5IUh+htKOUEOaiffhrAeqysfVGipDYzABqnCmw=
+diff --git a/internal/client/async_runtime.go b/internal/client/async_runtime.go
+index e27fbf1..aa71ec1 100644
+--- a/internal/client/async_runtime.go
++++ b/internal/client/async_runtime.go
+@@ -243,7 +243,7 @@ func (c *Client) resetSessionState(resetSessionCookie bool) {
+ 	if resetSessionCookie {
+ 		c.sessionCookie = 0
+ 	}
+-	c.responseMode = 0
++	c.setResponseMode(0)
+ 	c.clearSessionInitBusyUntil()
+ 	c.resetSessionInitState()
+ }
+@@ -879,7 +879,7 @@ func (c *Client) handleInboundPacket(data []byte, addr *net.UDPAddr, localAddr s
+ 	// c.log.Debugf("Inbound packet from %v (%d bytes)", addr, len(data))
+ 
+ 	// 1. Extract VPN Packet from DNS Response
+-	vpnPacket, err := DnsParser.ExtractVPNResponse(data, c.responseMode == mtuProbeBase64Reply)
++	vpnPacket, err := DnsParser.ExtractVPNResponse(data, c.ResponseMode() == mtuProbeBase64Reply)
+ 	if err != nil {
+ 		if errors.Is(err, DnsParser.ErrTXTAnswerMissing) {
+ 			receivedAt := time.Now()
 diff --git a/internal/client/client.go b/internal/client/client.go
-index 803ca81..b9adb30 100644
+index 803ca81..f7a6ed0 100644
 --- a/internal/client/client.go
 +++ b/internal/client/client.go
-@@ -33,10 +33,11 @@ const (
+@@ -33,10 +33,12 @@ const (
  )
  
  type Client struct {
@@ -42,6 +64,7 @@ index 803ca81..b9adb30 100644
 -	log      *logger.Logger
 -	codec    *security.Codec
 -	balancer *Balancer
++	responseModeMu                sync.RWMutex
 +	resolverUDPConnectionPoolSize int
 +	cfg                           config.ClientConfig
 +	log                           *logger.Logger
@@ -50,7 +73,7 @@ index 803ca81..b9adb30 100644
  
  	successMTUChecks  bool
  	udpBufferPool     sync.Pool
-@@ -215,6 +216,23 @@ func Bootstrap(configPath string, logPath string, overrides config.ClientConfigO
+@@ -215,6 +217,23 @@ func Bootstrap(configPath string, logPath string, overrides config.ClientConfigO
  	return BootstrapLoadedConfig(cfg, logPath)
  }
  
@@ -74,7 +97,7 @@ index 803ca81..b9adb30 100644
  func BootstrapLoadedConfig(cfg config.ClientConfig, logPath string) (*Client, error) {
  	var log *logger.Logger
  	if logPath != "" {
-@@ -245,15 +263,16 @@ func New(cfg config.ClientConfig, log *logger.Logger, codec *security.Codec) *Cl
+@@ -245,15 +264,16 @@ func New(cfg config.ClientConfig, log *logger.Logger, codec *security.Codec) *Cl
  	}
  
  	c := &Client{
@@ -100,8 +123,43 @@ index 803ca81..b9adb30 100644
  		udpBufferPool: sync.Pool{
  			New: func() any {
  				return make([]byte, RuntimeUDPReadBufferSize)
+diff --git a/internal/client/client_utils.go b/internal/client/client_utils.go
+index 1f848e3..3ad2968 100644
+--- a/internal/client/client_utils.go
++++ b/internal/client/client_utils.go
+@@ -177,9 +177,17 @@ func (c *Client) IsSessionReady() bool {
+ }
+ 
+ func (c *Client) ResponseMode() uint8 {
++	c.responseModeMu.RLock()
++	defer c.responseModeMu.RUnlock()
+ 	return c.responseMode
+ }
+ 
++func (c *Client) setResponseMode(mode uint8) {
++	c.responseModeMu.Lock()
++	c.responseMode = mode
++	c.responseModeMu.Unlock()
++}
++
+ func (c *Client) NotifyPacket(packetType uint8, isInbound bool) {
+ 	if c.pingManager != nil {
+ 		c.pingManager.NotifyPacket(packetType, isInbound)
+diff --git a/internal/client/session.go b/internal/client/session.go
+index bf87cc2..4f939db 100644
+--- a/internal/client/session.go
++++ b/internal/client/session.go
+@@ -163,7 +163,7 @@ func (c *Client) applySessionInitPacket(packet VpnProto.Packet, initPayload []by
+ 
+ 		c.sessionID = sessionAccept.SessionID
+ 		c.sessionCookie = sessionAccept.SessionCookie
+-		c.responseMode = initPayload[0]
++		c.setResponseMode(initPayload[0])
+ 		c.uploadCompression, c.downloadCompression = compression.SplitPair(sessionAccept.CompressionPair)
+ 		if sessionAccept.HasClientPolicySync {
+ 			c.applySessionClientPolicy(sessionAccept.ClientPolicy)
 diff --git a/internal/client/tunnel_runtime.go b/internal/client/tunnel_runtime.go
-index f194734..a52e0bc 100644
+index f194734..ee277be 100644
 --- a/internal/client/tunnel_runtime.go
 +++ b/internal/client/tunnel_runtime.go
 @@ -140,7 +140,7 @@ func (c *Client) getUDPConn(resolverLabel string) (*net.UDPConn, error) {
@@ -113,6 +171,15 @@ index f194734..a52e0bc 100644
  		c.resolverConns[resolverLabel] = pool
  	}
  	c.resolverConnsMu.Unlock()
+@@ -293,7 +293,7 @@ func (c *Client) exchangeDNSOverConnection(conn Connection, query []byte, timeou
+ 
+ 	c.putUDPConn(conn.ResolverLabel, udpConn)
+ 
+-	packet, err := dnsparser.ExtractVPNResponse(response, c.responseMode == mtuProbeBase64Reply)
++	packet, err := dnsparser.ExtractVPNResponse(response, c.ResponseMode() == mtuProbeBase64Reply)
+ 	if err != nil {
+ 		return VpnProto.Packet{}, err
+ 	}
 diff --git a/internal/config/server.go b/internal/config/server.go
 index 6f46a31..e8ae839 100644
 --- a/internal/config/server.go

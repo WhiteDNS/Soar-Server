@@ -47,6 +47,8 @@ jobs:
           COTTEN_SOURCE=$(go list -m -f '{{.Dir}}' cottendns-go)
           (cd "$COTTEN_SOURCE" && go build -mod=readonly -o "$RUNNER_TEMP/cotten-client" ./cmd/client)
           echo "PANEL_COTTEN_CLIENT=$RUNNER_TEMP/cotten-client" >> "$GITHUB_ENV"
+      - name: Verify MasterDNS startup and settings restart races
+        run: go test -race ./internal/panel -run 'TestMasterDNS|TestSettingsSaveRestarts' -count=3 -timeout 180s
       - name: Verify modules and behavior
         run: |
           go mod verify
