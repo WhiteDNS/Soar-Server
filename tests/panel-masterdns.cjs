@@ -2,12 +2,13 @@ const path=require('node:path');
 
 module.exports=async({page,out,assert})=>{
  const form=page.locator('#client-form');let fixture;
+ const chooseEngine=async value=>{const label=await form.locator('[name=engines]').evaluate((el,value)=>[...el.options].find(option=>option.value===value).textContent,value);await page.locator('#client-engines-trigger').click();await page.locator('#panel-select-options').getByRole('option',{name:label,exact:true}).click();};
  const read=()=>page.evaluate(async()=>{const result=await api('/clients');return result.clients.find(c=>c.name==='MasterDNS browser regression');});
  try{
   await page.evaluate(()=>location.hash='clients');await page.locator('#page-clients').waitFor({state:'visible'});
   await page.locator('#page-clients .new-client').click();
   await form.locator('[name=name]').fill('MasterDNS browser regression');
-  await form.locator('[name=engines]').selectOption('all',{force:true});
+  await chooseEngine('all');
   const limit=form.locator('[name=masterdns_session_limit]');
   assert.equal(await limit.inputValue(),'255');
   for(const value of ['0','256','1.5','']){await limit.fill(value);assert.equal(await limit.evaluate(el=>el.checkValidity()),false);}
@@ -31,7 +32,7 @@ module.exports=async({page,out,assert})=>{
   }
   await page.setViewportSize({width:1440,height:1100});await page.locator('#share-dialog .close-dialog').click();
   await row.getByRole('button',{name:'ویرایش',exact:true}).click();assert.equal(await limit.inputValue(),'9');
-  await form.locator('[name=engines]').selectOption('masterdns',{force:true});await form.locator('[type=submit]').click();await page.locator('#client-dialog').waitFor({state:'hidden'});
+  await chooseEngine('masterdns');await form.locator('[type=submit]').click();await page.locator('#client-dialog').waitFor({state:'hidden'});
   fixture=await read();assert.equal(fixture.engines,'masterdns');assert.equal(fixture.masterdns_session_limit,9);
   await row.getByRole('button',{name:'لینک / QR',exact:true}).click();await page.locator('#share-dialog').waitFor({state:'visible'});
   assert.match(await page.locator('#share-link').inputValue(),/^masterdns:\/\//);

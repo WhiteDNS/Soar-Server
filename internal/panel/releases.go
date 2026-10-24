@@ -14,7 +14,7 @@ import (
 	"time"
 )
 
-var Version = "0.8.0"
+var Version = "0.8.1"
 var panelVersionPattern = regexp.MustCompile(`^(\d+)\.(\d+)\.(\d+)(?:-beta(\d+))?$`)
 
 func ValidVersion(v string) bool { return panelVersionPattern.MatchString(v) && len(v) < 48 }

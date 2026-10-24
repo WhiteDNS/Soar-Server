@@ -10,7 +10,7 @@ module.exports=async function testSessionLimits({page,out,assert}){
  const limits=async(a,b)=>{assert.equal(await soar.inputValue(),String(a));assert.equal(await cotten.inputValue(),String(b));};
  const expected={engines:'both',quota_bytes:3*1024**3,rate_bytes:64*1024,stream_limit:16,note:'Keep account settings',enabled:true};
  const checkAccount=(client,values)=>{assert.ok(client,'session-limit account was not persisted');for(const [key,value] of Object.entries(values))assert.equal(client[key],value,key+' changed unexpectedly');};
- const chooseEngine=engine=>page.locator('#client-engines').selectOption({label:engine},{force:true});
+ const chooseEngine=async engine=>{await page.locator('#client-engines-trigger').click();await page.locator('#panel-select-options').getByRole('option',{name:engine,exact:true}).click();};
  let fixture;
  try{
   const defaultAccount=await page.evaluate(async()=>{const response=await fetch('/api/clients');return (await response.json()).clients.find(c=>c.name==='کاربر آزمایشی ایران');});

@@ -15,7 +15,7 @@ import struct
 import tarfile
 
 ROOT=Path(__file__).resolve().parents[1]
-VERSION="0.8.0"
+VERSION="0.8.1"
 
 def verify_version():
     for path, pattern in [
