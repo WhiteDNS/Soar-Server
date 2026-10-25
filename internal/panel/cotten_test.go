@@ -40,11 +40,15 @@ func TestCottenInstallerHTTPSProbe(t *testing.T) {
 	roots := x509.NewCertPool()
 	roots.AddCert(origin.Certificate())
 	seed, _ := s.Seed(c.ID)
-	for _, transport := range []string{"udp", "tcp"} {
-		t.Run(transport, func(t *testing.T) {
+	for _, scenario := range []string{"udp", "tcp", "max-udp", "max-tcp"} {
+		mode, transport := "legacy", scenario
+		if strings.HasPrefix(scenario, "max-") {
+			mode, transport = "cottenmax", strings.TrimPrefix(scenario, "max-")
+		}
+		t.Run(scenario, func(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 			defer cancel()
-			code, err := cottenprobe.CheckHTTP(ctx, cottenprobe.Config{Domain: c.cottenZone(), Key: cottenKey(seed), Resolvers: []string{m.pc.LocalAddr().String()}, Transport: transport, URL: "https://example.com/", TLSConfig: &tls.Config{RootCAs: roots, MinVersion: tls.VersionTLS12}})
+			code, err := cottenprobe.CheckHTTP(ctx, cottenprobe.Config{TunnelMode: mode, Domain: c.cottenZone(), Key: cottenKey(seed), Resolvers: []string{m.pc.LocalAddr().String()}, Transport: transport, URL: "https://example.com/", TLSConfig: &tls.Config{RootCAs: roots, MinVersion: tls.VersionTLS12}})
 			if err != nil || code != 200 {
 				t.Fatal("installer Cotten HTTPS failed", code, err)
 			}
@@ -182,9 +186,13 @@ func TestCottenNativeClientAndSharedBudget(t *testing.T) {
 	if binary == "" {
 		t.Skip("PANEL_COTTEN_CLIENT not set; CI supplies the pinned native engine")
 	}
-	for _, scenario := range []string{"udp", "tcp", "udp-alias", "tcp-alias"} {
+	for _, scenario := range []string{"udp", "tcp", "udp-alias", "tcp-alias", "max-udp", "max-tcp", "max-udp-alias", "max-tcp-alias"} {
 		t.Run(scenario, func(t *testing.T) {
 			transport := strings.TrimSuffix(scenario, "-alias")
+			mode := "legacy"
+			if strings.HasPrefix(transport, "max-") {
+				mode, transport = "cottenmax", strings.TrimPrefix(transport, "max-")
+			}
 			s := testStore(t)
 			c, err := s.Create(ClientInput{Name: "native cotten", Engines: "both", Enabled: true, StreamLimit: 16, QuotaBytes: 2 << 20})
 			if err != nil {
@@ -270,7 +278,9 @@ func TestCottenNativeClientAndSharedBudget(t *testing.T) {
 			localDNS.Close()
 			work := t.TempDir()
 			seed, _ := s.Seed(c.ID)
-			cfg := fmt.Sprintf(`PROTOCOL_TYPE = "SOCKS5"
+			cfg := fmt.Sprintf(`TUNNEL_MODE = %q
+COTTENMAX_SAFE_QNAME = %d
+PROTOCOL_TYPE = "SOCKS5"
 LISTEN_IP = "127.0.0.1"
 LISTEN_PORT = %d
 LOCAL_DNS_ENABLED = true
@@ -300,7 +310,7 @@ DOWNLOAD_SETUP_PACKET_DUPLICATION_COUNT = 1
 RECHECK_INACTIVE_SERVERS_ENABLED = false
 AUTO_DISABLE_TIMEOUT_SERVERS = false
 LOG_LEVEL = "INFO"
-`, localPort, dnsPort, domain, cottenKey(seed), transport)
+`, mode, max(101, len(domain)+75), localPort, dnsPort, domain, cottenKey(seed), transport)
 			configPath := filepath.Join(work, "client.toml")
 			resolvers := filepath.Join(work, "resolvers.txt")
 			os.WriteFile(configPath, []byte(cfg), 0600)
@@ -336,10 +346,16 @@ LOG_LEVEL = "INFO"
 			if _, err = io.ReadFull(conn, got); err != nil || !bytes.Equal(got, payload) {
 				t.Fatal("native payload corrupted", err, log.String())
 			}
-			cottenNativeUDP(t, localPort, bytes.Repeat([]byte("U"), 50000))
+			if mode == "legacy" {
+				cottenNativeUDP(t, localPort, bytes.Repeat([]byte("U"), 50000))
+			}
 			cottenNativeDNS(t, dnsPort)
 			actual, _ := s.Get(c.ID)
-			if actual.UploadBytes < int64(len(payload)+50000) || actual.DownloadBytes < int64(len(payload)+50000) {
+			minimum := int64(len(payload))
+			if mode == "legacy" {
+				minimum += 50000
+			}
+			if actual.UploadBytes < minimum || actual.DownloadBytes < minimum {
 				t.Fatal("Cotten payload not billed", actual.UploadBytes, actual.DownloadBytes)
 			}
 			// The unmodified Soar engine spends the same account budget.

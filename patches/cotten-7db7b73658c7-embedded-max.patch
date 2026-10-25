@@ -1,0 +1,411 @@
+diff --git a/internal/cottenmax/engine/NOTICE.cottendns.txt b/internal/cottenmax/engine/NOTICE.cottendns.txt
+index 11c8c2c..74b1ee4 100644
+--- a/internal/cottenmax/engine/NOTICE.cottendns.txt
++++ b/internal/cottenmax/engine/NOTICE.cottendns.txt
+@@ -92,3 +92,9 @@ without an FEC header; parity fragments obey DNS answer budgets and bounded
+ queues/history. Replay protection, stream offsets, ACKs and ARQ remain active.
+ Disabled FEC retains the prior wire format. This extension requires updated
+ CottenDNS client/server code when enabled and is not an upstream Soar feature.
++
++Managed-server integration, 2026-10-24: optional session admission/release
++hooks share an account budget with the Normal Cotton engine and release
++reservations on eviction, timeout and shutdown. The wire format is unchanged.
++Shutdown also joins the sweep and HELLO workers before returning, so managed
++account restarts cannot race delayed reservation release or a pending HELLO.
+diff --git a/internal/cottenmax/engine/server.go b/internal/cottenmax/engine/server.go
+index bc56e10..90084f2 100644
+--- a/internal/cottenmax/engine/server.go
++++ b/internal/cottenmax/engine/server.go
+@@ -34,6 +34,9 @@ type ServerConfig struct {
+ 	IdleTimeout time.Duration
+ 	// MaxSessions caps concurrent sessions. Default 8192.
+ 	MaxSessions int
++	// Optional admission shared with other protocol instances. Hooks must not block.
++	AcquireSession func() bool
++	ReleaseSession func()
+ 	// MaxTotalStreams caps open streams across all sessions. Default 16384.
+ 	MaxTotalStreams int
+ 	// AllowPorts restricts the default dialer to these destination ports. Default 80 and 443.
+@@ -170,15 +173,27 @@ func Serve(ctx context.Context, pc net.PacketConn, cfg ServerConfig) error {
+ 		helloQ:   make(chan helloJob, 256),
+ 		rrl:      make(map[netip.Prefix]*byteBucket),
+ 		sessions: make(map[uint16]*srvSession), hellos: make(map[[pubLen]byte]*helloEntry)}
++	var workers sync.WaitGroup
++	defer func() {
++		cancel()
++		pc.Close()
++		// Close must wait for the sweep to release account reservations and
++		// for pending HELLO workers to stop before a replacement engine starts.
++		workers.Wait()
++	}()
++	workers.Add(1)
+ 	go func() {
++		defer workers.Done()
+ 		<-ctx.Done()
+ 		pc.Close()
+ 	}()
+-	go s.sweep()
++	workers.Add(1)
++	go func() { defer workers.Done(); s.sweep() }()
+ 	// Handshake workers get at most half the cores, so a hello flood can't take the CPU that
+ 	// established sessions' relays need; past that, the bounded queue sheds new hellos.
+ 	for range max(1, runtime.GOMAXPROCS(0)/2) {
+-		go s.helloWorker()
++		workers.Add(1)
++		go func() { defer workers.Done(); s.helloWorker() }()
+ 	}
+ 	buf := make([]byte, 4096)
+ 	for {
+@@ -331,6 +346,10 @@ func (s *Server) handshake(j helloJob) {
+ 			return
+ 		}
+ 		s.mu.Lock()
++		if s.ctx.Err() != nil {
++			s.mu.Unlock()
++			return
++		}
+ 		if h := s.hellos[j.key]; h != nil { // another worker finished this hello first
+ 			s.mu.Unlock()
+ 			s.reply(q, addr, rcodeOK, h.reply)
+@@ -351,6 +370,11 @@ func (s *Server) handshake(j helloJob) {
+ 		}
+ 	}
+ 	key := j.key
++	if s.cfg.AcquireSession != nil && !s.cfg.AcquireSession() {
++		s.mu.Unlock()
++		s.reply(q, addr, rcodeRefused, nil)
++		return
++	}
+ 	cfg := streamConfig{StreamWindow: s.cfg.StreamWindow, SendBuffer: s.cfg.SendBuffer, MaxStreams: s.cfg.MaxStreams}
+ 	ss := &srvSession{session: newSession(false, cfg, down, up), srv: s, sid: sid, lastSeen: time.Now(), created: time.Now()}
+ 	ss.wakeFn = ss.flush
+@@ -414,6 +438,9 @@ func (s *Server) evictUnusedLocked() bool {
+ 		return false
+ 	}
+ 	delete(s.sessions, victim.sid)
++	if s.cfg.ReleaseSession != nil {
++		s.cfg.ReleaseSession()
++	}
+ 	s.forgetHelloLocked(victim.sid)
+ 	go victim.close(ErrClosed)
+ 	return true
+@@ -876,7 +903,11 @@ func (s *Server) sweep() {
+ 			s.mu.Lock()
+ 			for _, ss := range s.sessions {
+ 				ss.close(ErrClosed)
++				if s.cfg.ReleaseSession != nil {
++					s.cfg.ReleaseSession()
++				}
+ 			}
++			clear(s.sessions)
+ 			s.mu.Unlock()
+ 			return
+ 		case now := <-t.C:
+@@ -921,6 +952,9 @@ func (s *Server) sweep() {
+ 					// The sid may have been evicted and reused meanwhile: only remove this session.
+ 					if s.sessions[ss.sid] == ss {
+ 						delete(s.sessions, ss.sid)
++						if s.cfg.ReleaseSession != nil {
++							s.cfg.ReleaseSession()
++						}
+ 						s.forgetHelloLocked(ss.sid)
+ 					}
+ 					s.mu.Unlock()
+diff --git a/internal/cottenmax/server.go b/internal/cottenmax/server.go
+index 20c815e..204f959 100644
+--- a/internal/cottenmax/server.go
++++ b/internal/cottenmax/server.go
+@@ -75,6 +75,9 @@ type ServerConfig struct {
+ 	Secret                  string
+ 	Dial                    func(context.Context, string) (net.Conn, error)
+ 	MaxSessions, MaxStreams int
++	// Optional shared admission hooks for managed multi-protocol accounts.
++	AcquireSession func() bool
++	ReleaseSession func()
+ }
+ 
+ // ValidateServerDomain checks the Max reserved zone and handshake capacity
+@@ -123,6 +126,7 @@ func NewServer(ctx context.Context, cfg ServerConfig) (*Server, error) {
+ 			err := soar.Serve(ctx, p, soar.ServerConfig{
+ 				Zone: zone, PrivateKey: cfg.Key,
+ 				MaxSessions: max(1, cfg.MaxSessions/len(cfg.Domains)), MaxStreams: cfg.MaxStreams,
++				AcquireSession: cfg.AcquireSession, ReleaseSession: cfg.ReleaseSession,
+ 				Dial: func(ctx context.Context, _, signed string) (net.Conn, error) {
+ 					target, err := verifyTarget(cfg.Secret, signed)
+ 					if err != nil {
+diff --git a/internal/udpserver/embedded.go b/internal/udpserver/embedded.go
+index 43b2bdc..1e43a3d 100644
+--- a/internal/udpserver/embedded.go
++++ b/internal/udpserver/embedded.go
+@@ -6,9 +6,11 @@ import (
+ 	"net"
+ 	"strings"
+ 	"sync"
++	"sync/atomic"
+ 	"time"
+ 
+ 	"cottendns-go/internal/config"
++	"cottendns-go/internal/cottenmax"
+ 	"cottendns-go/internal/logger"
+ 	"cottendns-go/internal/security"
+ )
+@@ -32,13 +34,14 @@ type EmbeddedConfig struct {
+ }
+ 
+ type Embedded struct {
+-	s       *Server
+-	ctx     context.Context
+-	cancel  context.CancelFunc
+-	allowed func() bool
+-	mu      sync.RWMutex
+-	once    sync.Once
+-	wg      sync.WaitGroup
++	s        *Server
++	ctx      context.Context
++	cancel   context.CancelFunc
++	allowed  func() bool
++	mu       sync.RWMutex
++	once     sync.Once
++	wg       sync.WaitGroup
++	sessions atomic.Int64
+ }
+ 
+ func NewEmbedded(parent context.Context, in EmbeddedConfig) (*Embedded, error) {
+@@ -146,6 +149,34 @@ func NewEmbedded(parent context.Context, in EmbeddedConfig) (*Embedded, error) {
+ 		return in.ExchangeDNS(lookupCtx, raw)
+ 	}
+ 	e := &Embedded{s: s, ctx: ctx, cancel: cancel, allowed: in.Allowed}
++	acquire := func() bool {
++		for {
++			n := e.sessions.Load()
++			if ctx.Err() != nil || !in.Allowed() || n >= int64(cfg.MaxActiveSessions) {
++				return false
++			}
++			if e.sessions.CompareAndSwap(n, n+1) {
++				return true
++			}
++		}
++	}
++	release := func() { e.sessions.Add(-1) }
++	s.sessions.acquireSession, s.sessions.releaseSession = acquire, release
++	key, err := cottenmax.SharedIdentity(in.Key)
++	if err != nil {
++		cancel()
++		return nil, err
++	}
++	s.cottenMax, err = cottenmax.NewServer(ctx, cottenmax.ServerConfig{
++		Domains: cfg.Domain, Key: key, Secret: in.Key,
++		MaxSessions: cfg.MaxActiveSessions, MaxStreams: min(cfg.MaxStreamsPerSession, cottenmax.MaxStreamsLimit),
++		AcquireSession: acquire, ReleaseSession: release,
++		Dial: s.dialCottenMaxTarget,
++	})
++	if err != nil {
++		cancel()
++		return nil, err
++	}
+ 	s.deferredDNSSession.Start(ctx)
+ 	s.deferredConnectSession.Start(ctx)
+ 	e.wg.Add(1)
+@@ -178,14 +209,13 @@ func (e *Embedded) handleDNS(query []byte, tcp bool) []byte {
+ 
+ // SessionCount reports live native and legacy sessions for this account.
+ func (e *Embedded) SessionCount() int {
+-	e.s.sessions.mu.RLock()
+-	defer e.s.sessions.mu.RUnlock()
+-	return len(e.s.sessions.activeIDs)
++	return int(e.sessions.Load())
+ }
+ 
+ func (e *Embedded) Close() error {
+ 	e.once.Do(func() {
+ 		e.cancel()
++		e.s.cottenMax.Close()
+ 		e.mu.Lock()
+ 		defer e.mu.Unlock()
+ 		e.s.deferredDNSSession.wait()
+diff --git a/internal/udpserver/embedded_max_test.go b/internal/udpserver/embedded_max_test.go
+new file mode 100644
+index 0000000..06e7521
+--- /dev/null
++++ b/internal/udpserver/embedded_max_test.go
+@@ -0,0 +1,79 @@
++package udpserver
++
++import (
++	"context"
++	"errors"
++	"net"
++	"testing"
++	"time"
++
++	"cottendns-go/internal/cottenmax"
++)
++
++func TestEmbeddedMaxSharesNormalSessionBudgetAndCloses(t *testing.T) {
++	in := embeddedSessionLimitConfig(1)
++	e, err := NewEmbedded(context.Background(), in)
++	if err != nil {
++		t.Fatal(err)
++	}
++	defer e.Close()
++	legacy, _, err := e.s.sessions.findOrCreate(legacyInitPayload(1), 0, 0, 8, false)
++	if err != nil || legacy == nil {
++		t.Fatal("normal session", err)
++	}
++	pc, err := net.ListenPacket("udp", "127.0.0.1:0")
++	if err != nil {
++		t.Fatal(err)
++	}
++	defer pc.Close()
++	go func() {
++		buf := make([]byte, 4096)
++		for {
++			n, addr, err := pc.ReadFrom(buf)
++			if err != nil {
++				return
++			}
++			if reply := e.HandleDNS(buf[:n]); len(reply) > 0 {
++				pc.WriteTo(reply, addr)
++			}
++		}
++	}()
++	makeClient := func() *cottenmax.Client {
++		c, err := cottenmax.NewClient(cottenmax.ClientConfig{Domain: in.Domain, Secret: in.Key, Resolvers: []string{pc.LocalAddr().String()}})
++		if err != nil {
++			t.Fatal(err)
++		}
++		return c
++	}
++	blocked := makeClient()
++	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
++	err = blocked.Authenticate(ctx)
++	cancel()
++	blocked.Close()
++	if err == nil {
++		t.Fatal("Max bypassed normal session reservation")
++	}
++	e.s.sessions.Close(legacy.ID, time.Now(), 0)
++	client := makeClient()
++	defer client.Close()
++	ctx, cancel = context.WithTimeout(context.Background(), 5*time.Second)
++	defer cancel()
++	if err = client.Probe(ctx, 1024); err != nil {
++		t.Fatal("Max after normal release", err)
++	}
++	if e.SessionCount() != 1 {
++		t.Fatal("Max missing from account diagnostics", e.SessionCount())
++	}
++	if _, _, err = e.s.sessions.findOrCreate(legacyInitPayload(2), 0, 0, 8, false); !errors.Is(err, ErrSessionTableFull) {
++		t.Fatal("normal bypassed Max reservation", err)
++	}
++	if err = e.Close(); err != nil {
++		t.Fatal(err)
++	}
++	if e.SessionCount() != 0 {
++		t.Fatal("Max session reservation leaked", e.SessionCount())
++	}
++	if reply := e.HandleDNS([]byte{1}); len(reply) != 0 {
++		t.Fatal("closed account answered")
++	}
++}
+diff --git a/internal/udpserver/session.go b/internal/udpserver/session.go
+index 341195c..f3a8827 100644
+--- a/internal/udpserver/session.go
++++ b/internal/udpserver/session.go
+@@ -217,6 +217,8 @@ type sessionStore struct {
+ 	// maxActiveSessions caps how many sessions may be live at once. 0 means fall
+ 	// back to the hard slot ceiling (maxServerSessionSlots).
+ 	maxActiveSessions int
++	acquireSession    func() bool
++	releaseSession    func()
+ 	// maxClientUploadMTU/maxClientDownloadMTU are the operator's ceilings on
+ 	// what a client may request in SESSION_INIT. Zero means no ceiling. Set via
+ 	// setClientMTUCeilings rather than the positional options list, which is
+@@ -342,6 +344,9 @@ func (s *sessionStore) findOrCreateWithDownloadLimit(payload []byte, uploadCompr
+ 	if slot < 0 {
+ 		return nil, false, ErrSessionTableFull
+ 	}
++	if s.acquireSession != nil && !s.acquireSession() {
++		return nil, false, ErrSessionTableFull
++	}
+ 
+ 	record := &sessionRecord{
+ 		Codec:               codec,
+@@ -542,6 +547,9 @@ func (s *sessionStore) Close(sessionID uint16, now time.Time, retention time.Dur
+ 	delete(s.bySig, record.Signature)
+ 	s.byID[sessionID] = nil
+ 	delete(s.activeIDs, sessionID)
++	if s.releaseSession != nil {
++		s.releaseSession()
++	}
+ 	if s.activeCount > 0 {
+ 		s.activeCount--
+ 	}
+@@ -598,6 +606,9 @@ func (s *sessionStore) Cleanup(now time.Time, idleTimeout time.Duration, closedR
+ 		s.byID[sessionID] = nil
+ 		s.liveByID[sessionID].Store(nil)
+ 		delete(s.activeIDs, sessionID)
++		if s.releaseSession != nil {
++			s.releaseSession()
++		}
+ 		if s.activeCount > 0 {
+ 			s.activeCount--
+ 		}
+diff --git a/probe/http.go b/probe/http.go
+index 1403b42..24f20a7 100644
+--- a/probe/http.go
++++ b/probe/http.go
+@@ -25,12 +25,13 @@ import (
+ )
+ 
+ type Config struct {
+-	Domain    string      `json:"domain"`
+-	Key       string      `json:"key"`
+-	Resolvers []string    `json:"-"`
+-	Transport string      `json:"-"`
+-	URL       string      `json:"-"`
+-	TLSConfig *tls.Config `json:"-"`
++	Domain     string      `json:"domain"`
++	Key        string      `json:"key"`
++	Resolvers  []string    `json:"-"`
++	Transport  string      `json:"-"`
++	URL        string      `json:"-"`
++	TLSConfig  *tls.Config `json:"-"`
++	TunnelMode string      `json:"-"`
+ }
+ 
+ // Result preserves the furthest observed stage, including when a later HTTPS
+@@ -131,6 +132,13 @@ func CheckHTTPDetailed(parent context.Context, in Config) (result Result, return
+ 	if in.Transport != "udp" && in.Transport != "tcp" && in.Transport != "auto" {
+ 		return fail("invalid_configuration", "invalid Cotten DNS transport")
+ 	}
++	mode := in.TunnelMode
++	if mode == "" {
++		mode = "legacy"
++	}
++	if mode != "legacy" && mode != "cottenmax" {
++		return fail("invalid_configuration", "invalid Cotten tunnel mode")
++	}
+ 	work, err := os.MkdirTemp("", "whitedns-cotten-check-")
+ 	if err != nil {
+ 		return fail("local_setup_failed", "Cotten probe temporary setup failed")
+@@ -143,7 +151,9 @@ func CheckHTTPDetailed(parent context.Context, in Config) (result Result, return
+ 	address := listener.Addr().String()
+ 	port := listener.Addr().(*net.TCPAddr).Port
+ 	listener.Close()
+-	text := fmt.Sprintf(`PROTOCOL_TYPE = "SOCKS5"
++	text := fmt.Sprintf(`TUNNEL_MODE = %q
++COTTENMAX_SAFE_QNAME = %d
++PROTOCOL_TYPE = "SOCKS5"
+ LISTEN_IP = "127.0.0.1"
+ LISTEN_PORT = %d
+ SOCKS5_AUTH = false
+@@ -171,7 +181,7 @@ RECHECK_INACTIVE_SERVERS_ENABLED = false
+ AUTO_DISABLE_TIMEOUT_SERVERS = false
+ LOG_LEVEL = "ERROR"
+ LOG_DIR = %q
+-`, port, in.Domain, in.Key, in.Transport, work)
++`, mode, max(101, len(in.Domain)+75), port, in.Domain, in.Key, in.Transport, work)
+ 	configPath, resolverPath := filepath.Join(work, "client.toml"), filepath.Join(work, "resolvers.txt")
+ 	if err = os.WriteFile(configPath, []byte(text), 0600); err != nil {
+ 		return fail("local_setup_failed", "Cotten probe configuration could not be written")

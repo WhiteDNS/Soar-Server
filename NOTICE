@@ -1,7 +1,7 @@
 WhiteDNS Soar Server installer
 Copyright 2026 WhiteDNS
 
-Includes Lantern Soar v0.2.2 (Apache-2.0), golang.org/x/crypto and
+Includes Lantern Soar v0.2.3 (Apache-2.0), golang.org/x/crypto and
 golang.org/x/sys (BSD-style), and Go runtime code. The binary distribution
 includes licenses/ with their original notices. Resolver dataset provenance
 is retained in licenses/Soar-data-THIRD-PARTY.md.
@@ -9,7 +9,7 @@ is retained in licenses/Soar-data-THIRD-PARTY.md.
 Soar engine upstream: Lantern / GetLantern
 Source: https://github.com/getlantern/soar
 Website: https://soar.lantern.io/
-Pinned version: https://github.com/getlantern/soar/tree/v0.2.2
+Pinned version: https://github.com/getlantern/soar/tree/v0.2.3
 
 The WhiteDNS copyright above concerns this installer and integration.
 Upstream engine code retains its original authorship and license notices.
@@ -25,6 +25,13 @@ Sources: https://github.com/TaJirax/cottenDNS
 CottenDNS dependencies include BurntSushi/toml, klauspost/compress,
 klauspost/cpuid, klauspost/reedsolomon and pierrec/lz4. Their original
 license texts are shipped in the management panel bundle.
+
+CottenMax also embeds modified Lantern Soar transport code. Its original
+license, modification notice and resolver-data provenance are shipped as
+CottenMax-Soar-LICENSE.txt, CottenMax-NOTICE.txt and
+CottenMax-data-THIRD-PARTY.md in licenses/. The shared diagnostics program
+also links quic-go and QPACK for encrypted resolver transports; their original
+licenses are retained alongside the other dependency notices.
 
 The panel also embeds MasterDnsVPN (MIT), Copyright 2026 Amin Mahmoudi.
 Source: https://github.com/masterking32/MasterDnsVPN

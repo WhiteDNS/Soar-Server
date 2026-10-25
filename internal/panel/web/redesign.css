@@ -457,7 +457,7 @@ dialog::backdrop{background:var(--color-overlay)}
 .sidebar .brand b{font-size:20px;line-height:26px}
 .sidebar .brand small{display:block;font-size:var(--text-xs);line-height:18px;margin-top:2px}
 .sidebar .brand .brandmark{width:34px;height:34px}
-.sidebar-foot p,.sidebar-foot .panel-identity,.sidebar-foot a,.main-footer a{font-size:var(--text-xs);line-height:1.7}
+.sidebar-foot p,.sidebar-foot .panel-identity,.sidebar-foot a{font-size:var(--text-xs);line-height:1.7}
 .top-actions .service-chip,.top-actions .sync{font-size:var(--text-xs)}
 .reading-detail,.chart-title p,.chart-legend,.chart-axis,.connection-caption,.chart-totals span,.system-strip span,.account-usage span{font-size:var(--text-xs);line-height:1.7}
 .settings-card:not(#flood-form)>.settings-section{border:1px solid var(--color-rule);border-radius:var(--radius-card);background:var(--color-paper-3);padding:var(--space-5);margin-block:var(--space-6)}
@@ -515,3 +515,15 @@ input:disabled,textarea:disabled,.select-trigger:disabled{opacity:.55;cursor:not
  .settings-card:not(#flood-form)>.settings-section{padding:var(--space-4)}
  .telegram-card details>.settings-grid{padding:var(--space-4)}
 }
+
+/* A persistent edge control keeps the desktop rail's open/compact choice visible. */
+.sidebar-fold{position:fixed;z-index:45;inset-inline-start:calc(var(--sidebar-width) - 14px);top:calc(50dvh - 28px);width:28px;height:56px;min-width:28px;padding:0;display:grid;place-items:center;border:1px solid var(--color-rule);border-radius:var(--radius-card);background:var(--color-paper-2);color:var(--color-ink-2);box-shadow:0 4px 12px var(--color-shadow)}
+.sidebar-fold .icon{width:20px;height:20px}
+@media(min-width:801px){body.sidebar-collapsed .sidebar-fold{inset-inline-start:calc(var(--sidebar-compact) - 14px)}}
+[dir=rtl] .sidebar-fold .icon{transform:rotate(180deg)}
+body.sidebar-collapsed .sidebar-fold .icon{transform:rotate(180deg)}
+[dir=rtl] body.sidebar-collapsed .sidebar-fold .icon{transform:none}
+.sidebar-fold:hover,.sidebar-fold:focus-visible{color:var(--color-accent);border-color:var(--color-accent);background:var(--color-accent-soft)}
+.sidebar-fold:focus-visible{outline:2px solid var(--color-accent);outline-offset:3px}
+@media(min-width:801px) and (prefers-reduced-motion:no-preference){.sidebar{transition:width 180ms ease}.workspace{transition:margin-inline-start 180ms ease}.sidebar-fold{transition:inset-inline-start 180ms ease,background 120ms ease,color 120ms ease}}
+@media(max-width:800px){.sidebar-fold{display:none}}

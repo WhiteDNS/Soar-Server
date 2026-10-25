@@ -2,11 +2,14 @@ const path=require('node:path');
 
 module.exports=async({page,out,assert})=>{
  const version=await page.evaluate(async()=>(await api('/dashboard')).version),name='WhiteDNS Server Management';
- const versions=async target=>assert.deepEqual(await target.locator('[data-panel-version]').allTextContents(),Array(5).fill(version));
+ const versions=async target=>assert.deepEqual(await target.locator('[data-panel-version]').allTextContents(),Array(4).fill(version));
  const branding=async target=>{
   assert.equal(await target.title(),name);
-  for(const selector of ['.login-foot','.sidebar-foot','.main-footer']){const text=await target.locator(selector).textContent();assert.ok(text.includes(name));assert.doesNotMatch(text,/Soar|Lantern/);}
+  for(const selector of ['.login-foot','.sidebar-foot']){const text=await target.locator(selector).textContent();assert.ok(text.includes(name));assert.doesNotMatch(text,/Soar|Lantern/);}
   assert.doesNotMatch(await target.locator('.login-card .muted').innerText(),/Soar/);
+  assert.equal(await target.locator('a[href="https://github.com/WhiteDNS/Soar-Server"]').count(),1);
+  assert.equal(await target.locator('.sidebar-foot a[href="https://github.com/WhiteDNS/Soar-Server"]').count(),1);
+  assert.equal(await target.locator('.main-footer').count(),0);
  };
  const context=await page.context().browser().newContext(),login=await context.newPage();
  try{
@@ -31,5 +34,5 @@ module.exports=async({page,out,assert})=>{
   }
  }
  await page.setViewportSize({width:1440,height:1100});await page.evaluate(()=>localStorage.setItem('whitedns-panel-language','fa'));await page.reload();await page.locator('#app').waitFor({state:'visible'});
- console.log('PASS: runtime version before/after login across all five displays, neutral product branding, Persian/English and desktop/mobile layout.');
+ console.log('PASS: runtime version before/after login across all four displays, neutral product branding, Persian/English and desktop/mobile layout.');
 };
