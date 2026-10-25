@@ -1,8 +1,8 @@
 diff --git a/internal/cottenmax/engine/NOTICE.cottendns.txt b/internal/cottenmax/engine/NOTICE.cottendns.txt
-index 11c8c2c..04249c5 100644
+index 11c8c2c..74b1ee4 100644
 --- a/internal/cottenmax/engine/NOTICE.cottendns.txt
 +++ b/internal/cottenmax/engine/NOTICE.cottendns.txt
-@@ -92,3 +92,7 @@ without an FEC header; parity fragments obey DNS answer budgets and bounded
+@@ -92,3 +92,9 @@ without an FEC header; parity fragments obey DNS answer budgets and bounded
  queues/history. Replay protection, stream offsets, ACKs and ARQ remain active.
  Disabled FEC retains the prior wire format. This extension requires updated
  CottenDNS client/server code when enabled and is not an upstream Soar feature.
@@ -10,8 +10,10 @@ index 11c8c2c..04249c5 100644
 +Managed-server integration, 2026-10-24: optional session admission/release
 +hooks share an account budget with the Normal Cotton engine and release
 +reservations on eviction, timeout and shutdown. The wire format is unchanged.
++Shutdown also joins the sweep and HELLO workers before returning, so managed
++account restarts cannot race delayed reservation release or a pending HELLO.
 diff --git a/internal/cottenmax/engine/server.go b/internal/cottenmax/engine/server.go
-index bc56e10..066cd10 100644
+index bc56e10..90084f2 100644
 --- a/internal/cottenmax/engine/server.go
 +++ b/internal/cottenmax/engine/server.go
 @@ -34,6 +34,9 @@ type ServerConfig struct {
@@ -24,7 +26,48 @@ index bc56e10..066cd10 100644
  	// MaxTotalStreams caps open streams across all sessions. Default 16384.
  	MaxTotalStreams int
  	// AllowPorts restricts the default dialer to these destination ports. Default 80 and 443.
-@@ -351,6 +354,11 @@ func (s *Server) handshake(j helloJob) {
+@@ -170,15 +173,27 @@ func Serve(ctx context.Context, pc net.PacketConn, cfg ServerConfig) error {
+ 		helloQ:   make(chan helloJob, 256),
+ 		rrl:      make(map[netip.Prefix]*byteBucket),
+ 		sessions: make(map[uint16]*srvSession), hellos: make(map[[pubLen]byte]*helloEntry)}
++	var workers sync.WaitGroup
++	defer func() {
++		cancel()
++		pc.Close()
++		// Close must wait for the sweep to release account reservations and
++		// for pending HELLO workers to stop before a replacement engine starts.
++		workers.Wait()
++	}()
++	workers.Add(1)
+ 	go func() {
++		defer workers.Done()
+ 		<-ctx.Done()
+ 		pc.Close()
+ 	}()
+-	go s.sweep()
++	workers.Add(1)
++	go func() { defer workers.Done(); s.sweep() }()
+ 	// Handshake workers get at most half the cores, so a hello flood can't take the CPU that
+ 	// established sessions' relays need; past that, the bounded queue sheds new hellos.
+ 	for range max(1, runtime.GOMAXPROCS(0)/2) {
+-		go s.helloWorker()
++		workers.Add(1)
++		go func() { defer workers.Done(); s.helloWorker() }()
+ 	}
+ 	buf := make([]byte, 4096)
+ 	for {
+@@ -331,6 +346,10 @@ func (s *Server) handshake(j helloJob) {
+ 			return
+ 		}
+ 		s.mu.Lock()
++		if s.ctx.Err() != nil {
++			s.mu.Unlock()
++			return
++		}
+ 		if h := s.hellos[j.key]; h != nil { // another worker finished this hello first
+ 			s.mu.Unlock()
+ 			s.reply(q, addr, rcodeOK, h.reply)
+@@ -351,6 +370,11 @@ func (s *Server) handshake(j helloJob) {
  		}
  	}
  	key := j.key
@@ -36,7 +79,7 @@ index bc56e10..066cd10 100644
  	cfg := streamConfig{StreamWindow: s.cfg.StreamWindow, SendBuffer: s.cfg.SendBuffer, MaxStreams: s.cfg.MaxStreams}
  	ss := &srvSession{session: newSession(false, cfg, down, up), srv: s, sid: sid, lastSeen: time.Now(), created: time.Now()}
  	ss.wakeFn = ss.flush
-@@ -414,6 +422,9 @@ func (s *Server) evictUnusedLocked() bool {
+@@ -414,6 +438,9 @@ func (s *Server) evictUnusedLocked() bool {
  		return false
  	}
  	delete(s.sessions, victim.sid)
@@ -46,7 +89,7 @@ index bc56e10..066cd10 100644
  	s.forgetHelloLocked(victim.sid)
  	go victim.close(ErrClosed)
  	return true
-@@ -876,7 +887,11 @@ func (s *Server) sweep() {
+@@ -876,7 +903,11 @@ func (s *Server) sweep() {
  			s.mu.Lock()
  			for _, ss := range s.sessions {
  				ss.close(ErrClosed)
@@ -58,7 +101,7 @@ index bc56e10..066cd10 100644
  			s.mu.Unlock()
  			return
  		case now := <-t.C:
-@@ -921,6 +936,9 @@ func (s *Server) sweep() {
+@@ -921,6 +952,9 @@ func (s *Server) sweep() {
  					// The sid may have been evicted and reused meanwhile: only remove this session.
  					if s.sessions[ss.sid] == ss {
  						delete(s.sessions, ss.sid)

@@ -1,7 +1,7 @@
 {
   "base_commit": "7db7b73658c791cce62300d29647e4d369d6e1e4",
   "patch": "cotten-7db7b73658c7-embedded-max.patch",
-  "patch_sha256": "bf04e8f1e06905368d061d0c71c618aa78b9ee83c7eb01c5e3a7fd923d43d9b5",
+  "patch_sha256": "7840ab90028534c2d617f15ab78b8cdcb21daabac073187ef7a4eba45360cf45",
   "files_sha256": {
     ".dockerignore": "f45b0b9d1afead41408a050d1222002cdbd32596dd0fcadbf3618c05f3e6a1e2",
     ".github/workflows/build-go.yml": "9a32a4a28ecea4cf4a2ca84dd9b25270bd5fd4ea8f06efeed49a2f89cc19163f",
@@ -202,7 +202,7 @@
     "internal/cottenmax/dns.go": "a3b710efd509972831c7d233de5650a6d9a13e5f46c454048e3e13f7675948fc",
     "internal/cottenmax/domains.go": "52e03c88aeb695127d50421732bb313a7e6f263eea4e23a963d78e12317b7ca8",
     "internal/cottenmax/engine/LICENSE": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4",
-    "internal/cottenmax/engine/NOTICE.cottendns.txt": "ddcad5db5630a211644ab63ccbc39a9edf72687325809b9ec18703940594f2d7",
+    "internal/cottenmax/engine/NOTICE.cottendns.txt": "a2b83d2bf665832da68b2e1ffec71e3ef0fc1642ea3b1b2bf4fb1efb0aa5887b",
     "internal/cottenmax/engine/SPEC.md": "f880b198ca9bb1aa5ec95ed5002837e4196282b98a0868c9dbc4f8d2441262a5",
     "internal/cottenmax/engine/client.go": "e9167cdc4be96fa754af36a0458fcceffcb5fec63380a5b6400c8768d1a2cee5",
     "internal/cottenmax/engine/cottenmax_qname_guard.go": "f8e6fe8e0cf68992e34e201e592a373159868070d766e1c9bc6101d43c6d301c",
@@ -223,7 +223,7 @@
     "internal/cottenmax/engine/packet_fec_test.go": "079b072f106a631cacbab9eefec01f853d598c0b1299046b3fd05c02dcec7417",
     "internal/cottenmax/engine/ranges.go": "ddb45e0cd2c34e5110cd62f8a49d0e5c6d802304c691ebd0c13bc74530189536",
     "internal/cottenmax/engine/roundtripper.go": "091c71eb344fe404817297cee3ba2ca44f7f115854260d4379e9430ca566af9f",
-    "internal/cottenmax/engine/server.go": "93073a3c8abc0a269871ae9cac801d1edf9a11ebddc83d6bdc3d014317723bb6",
+    "internal/cottenmax/engine/server.go": "dc4858a766b74d9e15f72ca574a41175c95d2ab927945f691565848c19963f29",
     "internal/cottenmax/engine/session.go": "fba098f08316071653e42ab945968410034551c713615e81496d7be9c35fcee0",
     "internal/cottenmax/engine/session_fec.go": "777a3aa179d7394f733db5ea698c4095f578e83b8280320856965eb4e54abc47",
     "internal/cottenmax/engine/session_fec_test.go": "10ec073230d0bd92e3ffb7d1443e3c154047b7c375041a09f9799b12137cbda6",
