@@ -26,6 +26,7 @@ const panelUI = (() => {
   lock:'M5 10h14v11H5z M8 10V7a4 4 0 0 1 8 0v3 M12 14v3',
   menu:'M4 6h16 M4 12h16 M4 18h16',
   rail:'M3 4h18v16H3z M9 4v16 M13 9l3 3-3 3',
+  fold:'M14 7l-5 5 5 5',
   close:'M6 6l12 12 M18 6 6 18',
   arrow:'M19 12H5 m6-6-6 6 6 6',
   more:'M5 12h.01 M12 12h.01 M19 12h.01',
@@ -191,6 +192,7 @@ const panelUI = (() => {
   toggle.setAttribute('aria-expanded',String(mobile?opened:!railCollapsed));
   const label=mobile?panelText('باز کردن منو'):railCollapsed?panelText('گسترش منو'):panelText('جمع کردن منو');
   toggle.setAttribute('aria-label',label);toggle.title=label;toggle.replaceChildren(icon(mobile?'menu':'rail'));
+  const fold=get('sidebar-fold');fold.setAttribute('aria-expanded',String(!railCollapsed));fold.setAttribute('aria-label',label);fold.title=label;
  }
  function closeMenu(){const opened=document.body.classList.contains('menu-open');document.body.classList.remove('menu-open');syncDrawer();if(opened)get('menu-toggle').focus({preventScroll:true});}
  function toggleMenu(){
@@ -200,6 +202,7 @@ const panelUI = (() => {
  }
  window.addEventListener('resize',syncDrawer);syncDrawer();
  get('nav-backdrop').onclick=closeMenu;get('rail-close').onclick=closeMenu;
+ get('sidebar-fold').onclick=toggleMenu;
  document.querySelectorAll('.sidebar a[href^="#"]').forEach(link=>link.addEventListener('click',closeMenu));
  document.addEventListener('keydown',event=>{if(!document.body.classList.contains('menu-open'))return;if(event.key==='Escape'){closeMenu();get('menu-toggle').focus();}if(event.key==='Tab'){const links=[...document.querySelectorAll('.sidebar a,.sidebar button')].filter(el=>el.getClientRects().length);const first=links[0],last=links.at(-1);if(event.shiftKey&&document.activeElement===first){event.preventDefault();last.focus();}else if(!event.shiftKey&&document.activeElement===last){event.preventDefault();first.focus();}}});
  function size(n){if(n==null)return '—';if(n===0)return '0 B';const units=['B','KiB','MiB','GiB','TiB'];const i=Math.max(0,Math.min(4,Math.floor(Math.log(n)/Math.log(1024))));return `${(n/1024**i).toLocaleString('en-US',{maximumFractionDigits:i?2:0})} ${units[i]}`;}

@@ -26,8 +26,11 @@ func TestPanelBrandingAndVersionBeforeLogin(t *testing.T) {
 				t.Fatal("product metadata was not rendered before authentication")
 			}
 			matches := versions.FindAllStringSubmatch(body, -1)
-			if len(matches) != 5 {
-				t.Fatalf("want login, sidebar, dashboard, update and footer versions; got %d", len(matches))
+			if len(matches) != 4 {
+				t.Fatalf("want login, sidebar, dashboard and update versions; got %d", len(matches))
+			}
+			if strings.Count(body, `href="https://github.com/WhiteDNS/Soar-Server"`) != 1 || strings.Contains(body, `class="main-footer"`) {
+				t.Fatal("documentation/source must appear only once in the sidebar")
 			}
 			for _, match := range matches {
 				if match[1] != version {

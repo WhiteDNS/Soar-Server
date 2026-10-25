@@ -36,9 +36,11 @@ module.exports=async({page,out,assert})=>{
     const r=await link.boundingBox();assert.ok(r.x>=rail.x&&r.x+r.width<=rail.x+rail.width+1,'navigation item escapes rail: '+JSON.stringify({r,rail}));
     assert.ok(await link.locator('.nav-label').evaluate(el=>el.scrollWidth<=el.clientWidth+1),'navigation label truncates: '+await link.getAttribute('aria-label'));
    }
-   await page.locator('#menu-toggle').click();
+   await page.locator('#sidebar-fold').click();
+   await page.waitForFunction(()=>document.querySelector('.sidebar').getBoundingClientRect().width<100);
    assert.equal(await page.locator('#menu-toggle').getAttribute('aria-expanded'),'false');
    const compact=await page.locator('.sidebar').boundingBox();assert.ok(compact.width<100,'desktop rail did not collapse');
+   await page.waitForFunction(()=>{const r=document.querySelector('.sidebar').getBoundingClientRect(),b=document.getElementById('sidebar-fold').getBoundingClientRect(),edge=document.documentElement.dir==='rtl'?r.left:r.right;return Math.abs(b.x+b.width/2-edge)<2;});
    await page.locator('nav a[data-page=antiflood]').focus();await page.locator('#rail-tooltip').waitFor({state:'visible'});
    assert.equal(await page.locator('#rail-tooltip').textContent(),await page.locator('nav a[data-page=antiflood]').getAttribute('aria-label'));
    await page.keyboard.press('Escape');await page.locator('#rail-tooltip').waitFor({state:'hidden'});
@@ -46,7 +48,14 @@ module.exports=async({page,out,assert})=>{
    await page.screenshot({path:path.join(out,`design-${language}-compact.png`),animations:'disabled'});
    await page.reload();await page.locator('#app').waitFor({state:'visible'});
    assert.ok((await page.locator('.sidebar').boundingBox()).width<100,'compact preference not persisted');
+   assert.equal(await page.locator('#sidebar-fold').getAttribute('aria-expanded'),'false');
+   await page.locator('#sidebar-fold').focus();await page.keyboard.press('Enter');
+   await page.waitForFunction(()=>document.querySelector('.sidebar').getBoundingClientRect().width>200);
+   assert.equal(await page.locator('#sidebar-fold').getAttribute('aria-expanded'),'true');
+   await page.locator('#sidebar-fold').click();
+   await page.waitForFunction(()=>document.querySelector('.sidebar').getBoundingClientRect().width<100);
    await page.locator('#menu-toggle').click();
+   await page.waitForFunction(()=>document.querySelector('.sidebar').getBoundingClientRect().width>200);
    for(const theme of ['dark','light']){
     if(await page.locator('html').getAttribute('data-theme')!==theme)await page.locator('#theme-toggle').click();
     for(const section of sections){
