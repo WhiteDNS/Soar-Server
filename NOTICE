@@ -26,6 +26,13 @@ CottenDNS dependencies include BurntSushi/toml, klauspost/compress,
 klauspost/cpuid, klauspost/reedsolomon and pierrec/lz4. Their original
 license texts are shipped in the management panel bundle.
 
+CottenMax also embeds modified Lantern Soar transport code. Its original
+license, modification notice and resolver-data provenance are shipped as
+CottenMax-Soar-LICENSE.txt, CottenMax-NOTICE.txt and
+CottenMax-data-THIRD-PARTY.md in licenses/. The shared diagnostics program
+also links quic-go and QPACK for encrypted resolver transports; their original
+licenses are retained alongside the other dependency notices.
+
 The panel also embeds MasterDnsVPN (MIT), Copyright 2026 Amin Mahmoudi.
 Source: https://github.com/masterking32/MasterDnsVPN
 The exact upstream commit and embedding patch are recorded in

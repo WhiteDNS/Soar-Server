@@ -46,6 +46,9 @@ def main() -> None:
     for module, filename in (
         # The shared diagnostics binary can also probe Cotten tunnels.
         ("cottendns-go", "CottenDNS-LICENSE.txt"),
+        ("masterdnsvpn-go", "MasterDNS-LICENSE.txt"),
+        ("github.com/quic-go/quic-go", "quic-go-LICENSE.txt"),
+        ("github.com/quic-go/qpack", "qpack-LICENSE.txt"),
         ("github.com/BurntSushi/toml", "BurntSushi-toml-LICENSE.txt"),
         ("github.com/klauspost/compress", "compress-LICENSE.txt"),
         ("github.com/klauspost/cpuid/v2", "cpuid-LICENSE.txt"),
@@ -58,18 +61,19 @@ def main() -> None:
         ("golang.org/x/text", "x-text-LICENSE.txt"),
     ):
         directory = Path(run("go", "list", "-m", "-f", "{{.Dir}}", module))
-        original = next((directory / name for name in ("LICENSE", "COPYING", "LICENSE.txt") if (directory / name).is_file()), None)
+        original = next((directory / name for name in ("LICENSE", "COPYING", "LICENSE.txt", "LICENSE.md") if (directory / name).is_file()), None)
         if original is None:
             raise RuntimeError(f"Missing original license for {module}")
         shutil.copyfile(original, licenses / filename)
+    for source, label in [("internal/cottenmax/engine/LICENSE", "CottenMax-Soar-LICENSE.txt"), ("internal/cottenmax/engine/NOTICE.cottendns.txt", "CottenMax-NOTICE.txt"), ("internal/cottenmax/engine/data/THIRD_PARTY.md", "CottenMax-data-THIRD-PARTY.md")]:
+        shutil.copyfile(cotten/source, licenses/label)
     soar_dir = Path(run("go", "list", "-m", "-f", "{{.Dir}}", "github.com/getlantern/soar"))
     # The embedded resolver lists retain upstream's third-party notice.
     shutil.copyfile(soar_dir / "data" / "THIRD_PARTY.md", licenses / "Soar-data-THIRD-PARTY.md")
     shutil.copyfile(Path(run("go", "env", "GOROOT")) / "LICENSE", licenses / "Go-LICENSE.txt")
     metadata = (
         f"Setup: {VERSION}\n"
-        "Soar: v0.2.3\n"
-        "Soar commit: f0d55048c7035786265e2b671a45c4faf5b97a92\n"
+        f"Soar: {run('go', 'list', '-m', '-f', '{{.Version}}', 'github.com/getlantern/soar')}\n"
         f"Toolchain: {run('go', 'version')}\n"
         "Target: linux/amd64; CGO_ENABLED=0\n"
         "Module integrity: pinned go.mod + go.sum; Go checksum database verification\n"
