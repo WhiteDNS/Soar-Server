@@ -60,7 +60,9 @@ Use the prepared pinned engine workspace (`.engine-source/patched.go.work`) for 
 
 ```bash
 GOWORK="$PWD/.engine-source/patched.go.work" go test ./... -count=1 -timeout 180s
-GOWORK="$PWD/.engine-source/patched.go.work" go test -race ./internal/panel -run '^TestTelegram' -count=1 -timeout 180s
+GOWORK="$PWD/.engine-source/patched.go.work" go test -race ./internal/panel -run '^TestTelegram' -count=1 -timeout 900s
 ```
+
+The full panel/maintenance CI race suite uses `-timeout 1800s`: the expanded bcrypt-backed administrator fixtures exceeded the former 900-second limit on a slower amd64 runner. The focused Telegram command above has its own smaller scope; all full-suite assertions remain enabled.
 
 `tests/panel-telegram.cjs`, included in the complete browser suite, also checks automatic backup defaults/save fields and persistent delivery-error display. It checks both languages and mobile/desktop layouts. DNS/certificate issuance and Telegram endpoints in the added Go tests are local fixtures; the tests send no real bot messages. See [the Persian operational guide](docs/telegram-emergency-management.fa.md) for setup and recovery limits.

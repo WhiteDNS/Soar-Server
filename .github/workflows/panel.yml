@@ -67,7 +67,9 @@ jobs:
         run: |
           go mod verify
           go test ./... -count=1 -timeout 180s
-          go test -race ./internal/panel ./internal/panelops -count=1 -timeout 900s
+          # The expanded Telegram restore/model-discovery suite adds bcrypt-backed
+          # admin fixtures; slower runners need room to finish every race check.
+          go test -race ./internal/panel ./internal/panelops -count=1 -timeout 1800s
           go vet ./...
           (cd .engine-source/CottenDNS && go test ./... -count=1 -timeout 240s && go vet ./...)
           (cd .engine-source/MasterDnsVPN && go test ./... -count=1 -timeout 240s && go test -race ./internal/udpserver -run TestEmbedded -count=1 -timeout 60s && go vet ./...)
