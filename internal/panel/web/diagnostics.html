@@ -1,0 +1,57 @@
+<section id="page-logs" class="page" hidden>
+ <div class="page-heading"><div><p class="eyebrow">مرکز عیب‌یابی</p><h1>لاگ‌ها و دستیار</h1><p class="muted">اتصال‌ها، موتورهای تونل و پنل را در یک مسیر بررسی کنید.</p></div><div class="diagnostic-actions"><button id="logs-live" type="button" class="secondary" aria-pressed="true">توقف نمایش زنده</button><button id="logs-download" type="button" class="quiet">دانلود گزارش</button></div></div>
+ <div class="diagnostic-workspace">
+  <article class="card diagnostic-console">
+   <div class="section-heading"><h2>گزارش سرویس</h2><span id="logs-state" class="muted" role="status"></span></div>
+   <div class="diagnostic-filters">
+    <label>منبع<select id="logs-source"><option value="">همهٔ منابع</option><option value="soar">Soar</option><option value="cotten">Cotten</option><option value="masterdns">MasterDNS</option><option value="connection">اتصال و DNS</option><option value="panel">پنل</option></select></label>
+    <label>سطح<select id="logs-level"><option value="">همهٔ سطح‌ها</option><option value="error">خطا</option><option value="warn">هشدار</option><option value="info">اطلاعات</option></select></label>
+    <label>حساب<select id="logs-account"><option value="">همهٔ حساب‌ها</option></select></label>
+    <label>بازهٔ زمانی<select id="logs-range"><option value="0">همهٔ گزارش‌ها</option><option value="300000">۵ دقیقهٔ اخیر</option><option value="3600000">یک ساعت اخیر</option></select></label>
+    <label class="diagnostic-search">جست‌وجوی کد یا علت<input id="logs-search" type="search" dir="auto" maxlength="160" placeholder="timeout / engine / stream…"></label>
+   </div>
+   <p id="logs-error" class="error" role="alert" hidden></p>
+   <p id="logs-storage-error" class="error" role="alert" hidden>ذخیرهٔ گزارش روی دیسک ناموفق است؛ گزارش‌های جدید ممکن است پس از راه‌اندازی مجدد از دست بروند.</p>
+   <ol id="diagnostic-entries" class="diagnostic-entries" aria-label="گزارش‌های عیب‌یابی" tabindex="0"></ol>
+   <p id="logs-empty" class="list-empty" hidden>گزارشی با این فیلترها پیدا نشد.</p>
+   <p class="hint">۲۰۰۰ رکورد اخیر نگهداری می‌شود؛ رخدادهای تکراری تجمیع می‌شوند. ذخیرهٔ دیسک هر ۵ ثانیه است. مقصد ترافیک، متن درخواست DNS، رمز و کلید ثبت نمی‌شوند.</p>
+  </article>
+  <article class="card diagnostic-assistant">
+   <div class="section-heading"><div><p class="eyebrow">تحلیل با شواهد</p><h2>دستیار هوش مصنوعی</h2></div><button id="assistant-clear" type="button" class="quiet">گفت‌وگوی تازه</button></div>
+   <details id="assistant-setup"><summary>اتصال به هوش مصنوعی</summary>
+    <form id="assistant-config-form" class="assistant-config-form">
+     <label>ارائه‌دهنده<select id="assistant-provider"></select></label>
+     <label>قالب API<select id="assistant-protocol"><option value="openai">OpenAI compatible</option><option value="gemini">Gemini native</option><option value="anthropic">Anthropic Messages</option></select></label>
+     <label>آدرس پایهٔ API<input id="assistant-base-url" type="url" dir="ltr" required maxlength="512" placeholder="https://gateway.example.com/v1"></label>
+     <label>شناسهٔ مدل<input id="assistant-model" type="text" dir="ltr" required maxlength="160" autocomplete="off"></label>
+     <label>کلید API<input id="assistant-api-key" type="password" dir="ltr" maxlength="4096" autocomplete="new-password"></label>
+     <p id="assistant-key-state" class="hint"></p>
+     <label class="check"><input id="assistant-clear-key" type="checkbox">حذف کلید ذخیره‌شده</label>
+     <label>حداکثر توکن پاسخ<input id="assistant-max-tokens" type="number" min="256" max="16384" value="4096" required></label>
+     <label class="check"><input id="assistant-json-mode" type="checkbox" checked>درخواست پاسخ JSON از مدل</label>
+     <label class="check"><input id="assistant-enabled" type="checkbox">دستیار فعال باشد</label>
+     <p class="hint">برای درگاه‌ها آدرس نصب خودتان را وارد کنید. آدرس محلی به سرور پنل اشاره دارد. اگر مدل JSON را پشتیبانی نمی‌کند، گزینهٔ آن را خاموش کنید.</p>
+     <button class="secondary" type="submit">ذخیرهٔ اتصال</button>
+    </form>
+   </details>
+   <p id="assistant-status" class="hint" role="status"></p>
+   <p id="assistant-error" class="error" role="alert" hidden></p>
+   <div id="assistant-chat" class="assistant-chat" role="log" aria-label="گفت‌وگو با دستیار" aria-live="polite"><p class="assistant-welcome">خطا را بررسی کنید، دربارهٔ علت آن بپرسید و تغییر پیشنهادی را پیش از اعمال ببینید. پاسخ مدل باید با شواهد بررسی شود.</p></div>
+   <div id="assistant-proposal" class="assistant-proposal" hidden>
+    <h3>پیشنهاد تغییر تنظیمات</h3><p id="assistant-proposal-reason"></p><dl id="assistant-diff"></dl>
+    <p class="hint">اعمال تغییر، موتورهای فعال را راه‌اندازی مجدد و جریان‌ها را قطع می‌کند. برای تنظیمات پروفایل Soar، کاربران باید ساب را تازه‌سازی یا پروفایل را دوباره وارد کنند.</p>
+    <p id="assistant-proposal-expiry" class="hint"></p><div class="diagnostic-actions"><button id="assistant-apply" type="button" class="primary">بررسی و تأیید تغییرات</button><button id="assistant-dismiss" type="button" class="quiet">رد پیشنهاد</button></div>
+   </div>
+   <div id="assistant-undo-panel" class="assistant-proposal" hidden><p>تنظیمات تغییر کرد. تا ۱۰ دقیقه، اگر تنظیمات دوباره ویرایش نشده باشند، می‌توانید تغییر را برگردانید.</p><button id="assistant-undo" type="button" class="secondary">بازگردانی تغییر قبلی</button></div>
+   <form id="assistant-chat-form">
+    <label for="assistant-question">سؤال شما</label><textarea id="assistant-question" rows="3" maxlength="2500" required dir="auto" placeholder="چرا اتصال‌ها قطع می‌شوند؟"></textarea>
+    <label class="check"><input id="assistant-include-context" type="checkbox" checked>پیوست گزارش پالایش‌شده و تنظیمات مرتبط</label>
+    <details id="assistant-context-details"><summary>پیش‌نمایش دادهٔ پیوست</summary><button id="assistant-context-refresh" class="quiet" type="button">به‌روزرسانی پیش‌نمایش</button><pre id="assistant-context-preview" dir="ltr"></pre></details>
+    <p class="hint">پیوست شامل ۱۰۰ لاگ اخیر با فیلتر منبع، سطح و حساب، شمارنده‌ها، منابع سرور و تنظیمات مرتبط است. نام حساب، کلید، لینک اشتراک و محتوای ترافیک در پیوست نیست.</p>
+    <p class="hint">با ارسال، متن سؤال و پیوست انتخابی به این مقصد فرستاده می‌شود:</p><p id="assistant-destination" class="assistant-destination" dir="ltr"></p>
+    <label class="check"><input id="assistant-consent" type="checkbox">ارسال به این ارائه‌دهنده و مقصد را تأیید می‌کنم</label>
+    <div class="diagnostic-actions"><button id="assistant-send" class="primary" type="submit">ارسال و تحلیل</button><button id="assistant-cancel" class="quiet" type="button" hidden>لغو درخواست</button></div>
+   </form>
+  </article>
+ </div>
+</section>

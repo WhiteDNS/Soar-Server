@@ -10,3 +10,5 @@ __pycache__/
 go.work
 go.work.sum
 .engine-source/
+assistant.json
+diagnostics.json

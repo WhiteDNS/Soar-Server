@@ -4,7 +4,7 @@ set -Eeuo pipefail
 export LC_ALL=C
 umask 077
 ROOT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
-PANEL_VERSION=0.10.0
+PANEL_VERSION=0.11.0
 DB=/var/lib/soar-panel/panel.db
 SERVICE=/etc/systemd/system/soar-panel.service
 OPS_SERVICE=/etc/systemd/system/soar-panel-ops.service

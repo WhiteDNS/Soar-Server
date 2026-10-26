@@ -41,18 +41,21 @@ func (m *Manager) runAccount(rt *accountRuntime, seed []byte) {
 				totalStreams, sessionStreams := soarStreamLimits(rt.client.StreamLimit)
 				m.diagnostics.soarStarts.Add(1)
 				m.diagnostics.soarRunning.Add(1)
+				m.logEvent("info", "soar", rt.client.ID, "engine_started", nil, 0)
 				err := soar.Serve(rt.ctx, pc, soar.ServerConfig{Zone: zone, PrivateKey: ed25519.NewKeyFromSeed(seed), Dial: func(ctx context.Context, network, address string) (net.Conn, error) {
 					return m.dialForEngine(rt, ctx, network, address, upstreamSoar)
 				}, MaxSessions: rt.client.SoarSessionLimit, MaxTotalStreams: totalStreams, MaxStreams: sessionStreams, Logger: slog.New(engineDiagnosticHandler{&m.diagnostics})})
 				m.diagnostics.soarRunning.Add(-1)
 				m.diagnostics.soarExits.Add(1)
 				if rt.ctx.Err() == nil {
+					m.logEvent("error", "soar", rt.client.ID, "engine_unexpected_exit", err, 0)
 					m.diagnostics.soarUnexpectedExits.Add(1)
 					m.diagnostics.lastEngineIssueUnixMS.Store(time.Now().UnixMilli())
 					if err != nil {
 						m.diagnostics.soarServeErrors.Add(1)
 					}
 				}
+				m.logEvent("info", "soar", rt.client.ID, "engine_stopped", nil, 0)
 			}()
 		}
 		go func() { servers.Wait(); close(soarDone) }()
@@ -66,19 +69,23 @@ func (m *Manager) runAccount(rt *accountRuntime, seed []byte) {
 	rt.cottenMu.Unlock()
 	if engine != nil {
 		if err := engine.Close(); err != nil {
+			m.logEvent("error", "cotten", rt.client.ID, "engine_close_failed", err, 0)
 			m.diagnostics.cottenCloseErrors.Add(1)
 			m.diagnostics.lastEngineIssueUnixMS.Store(time.Now().UnixMilli())
 		}
 		m.diagnostics.cottenRunning.Add(-1)
+		m.logEvent("info", "cotten", rt.client.ID, "engine_stopped", nil, 0)
 	}
 	rt.masterMu.Lock()
 	master := rt.master
 	rt.masterMu.Unlock()
 	if master != nil {
 		if err := master.Close(); err != nil {
+			m.logEvent("error", "masterdns", rt.client.ID, "engine_close_failed", err, 0)
 			m.diagnostics.masterCloseErrors.Add(1)
 		}
 		m.diagnostics.masterRunning.Add(-1)
+		m.logEvent("info", "masterdns", rt.client.ID, "engine_stopped", nil, 0)
 	}
 	<-soarDone
 }
@@ -112,11 +119,13 @@ func (m *Manager) cottenFor(rt *accountRuntime) (*cotten.Server, error) {
 	})
 	if err != nil {
 		m.diagnostics.cottenStartErrors.Add(1)
+		m.logEvent("error", "cotten", rt.client.ID, "engine_start_failed", err, 0)
 		m.diagnostics.lastEngineIssueUnixMS.Store(time.Now().UnixMilli())
 		return nil, err
 	}
 	m.diagnostics.cottenStarts.Add(1)
 	m.diagnostics.cottenRunning.Add(1)
+	m.logEvent("info", "cotten", rt.client.ID, "engine_started", nil, 0)
 	rt.cotten = engine
 	return engine, nil
 }
@@ -214,6 +223,7 @@ func (m *Manager) routeDNS(query []byte, remote net.Addr, tcp bool, reply func([
 				return
 			default:
 				m.diagnostics.masterQueueDrops.Add(1)
+				m.logEvent("warn", "masterdns", rt.client.ID, "dns_queue_full", nil, 0)
 			}
 		} else if cottenQuery && rt.client.hasEngine("cotten") {
 			job := cottenJob{rt: rt, query: append([]byte(nil), query...), reply: reply, tcp: tcp}
@@ -222,6 +232,7 @@ func (m *Manager) routeDNS(query []byte, remote net.Addr, tcp bool, reply func([
 				return
 			default:
 				m.diagnostics.cottenQueueDrops.Add(1)
+				m.logEvent("warn", "cotten", rt.client.ID, "dns_queue_full", nil, 0)
 			}
 		} else if !cottenQuery && !masterQuery && !tcp && rt.client.hasEngine("soar") {
 			q := packet{append([]byte(nil), query...), remote}
@@ -230,6 +241,7 @@ func (m *Manager) routeDNS(query []byte, remote net.Addr, tcp bool, reply func([
 			case <-rt.soarPCs[zone].done:
 			default:
 				m.diagnostics.soarQueueDrops.Add(1)
+				m.logEvent("warn", "soar", rt.client.ID, "dns_queue_full", nil, 0)
 			}
 			return
 		}
@@ -266,6 +278,7 @@ func (m *Manager) ServeTCP(listener net.Listener) error {
 			}
 			if recoverableAcceptError(err) {
 				m.diagnostics.tcpAcceptRetries.Add(1)
+				m.logEvent("warn", "connection", "", "dns_tcp_accept_retry", err, 0)
 				if acceptDelay == 0 {
 					acceptDelay = 5 * time.Millisecond
 				} else {
@@ -374,6 +387,7 @@ func (m *Manager) tunnelDNS(rt *accountRuntime, parent context.Context, query []
 			}
 			if parent.Err() == nil && resolverFailure(err, rt) {
 				rt.resolverResult(endpoint, time.Since(started), false)
+				m.logEvent("warn", engineLogSource(engine), rt.client.ID, "resolver_query_failed", err, time.Since(started))
 			}
 			continue
 		}
@@ -383,6 +397,7 @@ func (m *Manager) tunnelDNS(rt *accountRuntime, parent context.Context, query []
 		stop()
 		if err == nil && len(response) >= 12 && response[0] == query[0] && response[1] == query[1] && response[2]&0x80 != 0 {
 			if code := response[3] & 15; code == 2 || code == 5 {
+				m.logEvent("warn", engineLogSource(engine), rt.client.ID, "resolver_refused_or_servfail", nil, time.Since(started))
 				rt.resolverResult(endpoint, time.Since(started), false)
 				continue
 			}
@@ -391,6 +406,7 @@ func (m *Manager) tunnelDNS(rt *accountRuntime, parent context.Context, query []
 		}
 		if parent.Err() == nil && resolverFailure(err, rt) {
 			rt.resolverResult(endpoint, time.Since(started), false)
+			m.logEvent("warn", engineLogSource(engine), rt.client.ID, "resolver_invalid_response", err, time.Since(started))
 		}
 	}
 	return nil, errors.New("DNS resolver unavailable")

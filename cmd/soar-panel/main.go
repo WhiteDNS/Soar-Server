@@ -321,7 +321,7 @@ func execute(args []string) error {
 		go func() { defer close(botDone); telegram.Run(ctx) }()
 		defer func() { stop(); <-botDone }()
 	}
-	server := &http.Server{Handler: handler, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 90 * time.Second, WriteTimeout: 90 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 16 * 1024}
+	server := &http.Server{Handler: handler, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 90 * time.Second, WriteTimeout: 120 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 16 * 1024}
 	done := make(chan error, 3)
 	go func() { done <- m.Run() }()
 	go func() { done <- m.ServeTCP(tcpDNS) }()
