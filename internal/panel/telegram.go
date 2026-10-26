@@ -20,6 +20,9 @@ import (
 )
 
 type TelegramConfig struct {
+	AutoBackup  bool   `json:"auto_backup"`
+	BackupTime  string `json:"backup_time"`
+	BackupKey   string `json:"backup_key,omitempty"` // Private encryption key; never included in HTTP views or DB backups.
 	Token       string `json:"token"`
 	ChatID      int64  `json:"chat_id"`
 	Enabled     bool   `json:"enabled"`
@@ -34,6 +37,10 @@ type TelegramConfig struct {
 	PairExpires int64  `json:"pair_expires,omitempty"`
 }
 type telegramState struct {
+	ReportError             string            `json:"report_error,omitempty"`
+	BackupError             string            `json:"backup_error,omitempty"`
+	LastBackup              string            `json:"last_backup,omitempty"`
+	BackupStarted           int64             `json:"backup_started,omitempty"`
 	MasterDNSIssues         uint64            `json:"masterdns_issues,omitempty"`
 	MasterDNSRecoveryStarts uint64            `json:"masterdns_recovery_starts,omitempty"`
 	MasterDNSFailed         bool              `json:"masterdns_failed,omitempty"`
@@ -58,6 +65,12 @@ type telegramDisk struct {
 	State  telegramState  `json:"state"`
 }
 type TelegramView struct {
+	ReportError string `json:"report_error"`
+	BackupError string `json:"backup_error"`
+	AutoBackup  bool   `json:"auto_backup"`
+	BackupTime  string `json:"backup_time"`
+	LastReport  string `json:"last_report"`
+	LastBackup  string `json:"last_backup"`
 	Configured  bool   `json:"configured"`
 	Enabled     bool   `json:"enabled"`
 	ChatID      int64  `json:"chat_id"`
@@ -75,28 +88,32 @@ type TelegramView struct {
 	PairExpires int64  `json:"pair_expires,omitempty"`
 }
 type Telegram struct {
-	mu                sync.Mutex // Configuration and public connection status; never held during I/O.
-	opMu              sync.Mutex // Serialize reconfiguration with dispatch and persistent state.
-	cfg               TelegramConfig
-	state             telegramState
-	file              string
-	h                 *HTTP
-	client            *http.Client
-	baseURL           string
-	now               func() time.Time
-	latest            func(context.Context) (PanelRelease, error)
-	releaseVersion    func(context.Context, string) (PanelRelease, error)
-	wake              chan struct{}
-	pollCancel        context.CancelFunc
-	generation        uint64
-	status, lastError string
-	lastContact       int64
-	nextSend          time.Time
-	retryUntil        time.Time
-	sendInterval      time.Duration
-	conversation      *telegramConversation
-	confirmation      *telegramConfirmation
-	recovered         bool
+	mu                       sync.Mutex // Configuration and public connection status; never held during I/O.
+	opMu                     sync.Mutex // Serialize reconfiguration with dispatch and persistent state.
+	cfg                      TelegramConfig
+	state                    telegramState
+	file                     string
+	h                        *HTTP
+	client                   *http.Client
+	baseURL                  string
+	now                      func() time.Time
+	latest                   func(context.Context) (PanelRelease, error)
+	releaseVersion           func(context.Context, string) (PanelRelease, error)
+	wake                     chan struct{}
+	pollCancel               context.CancelFunc
+	generation               uint64
+	status, lastError        string
+	pollError                string // An outgoing success must not hide broken command polling.
+	lastContact              int64
+	nextSend                 time.Time
+	retryUntil               time.Time
+	sendInterval             time.Duration
+	conversation             *telegramConversation
+	confirmation             *telegramConfirmation
+	recovered                bool
+	lastReport, lastBackup   string // Public delivery state, guarded by mu.
+	reportError, backupError string
+	reportRetry, backupRetry time.Time // Scheduler retry deadlines, guarded by opMu.
 }
 type telegramUser struct {
 	ID       int64  `json:"id"`
@@ -109,11 +126,12 @@ type telegramChat struct {
 	Type string `json:"type"`
 }
 type telegramMessage struct {
-	ID    int64        `json:"message_id"`
-	From  telegramUser `json:"from"`
-	Chat  telegramChat `json:"chat"`
-	Text  string       `json:"text"`
-	Reply *struct {
+	Document *telegramDocument `json:"document,omitempty"`
+	ID       int64             `json:"message_id"`
+	From     telegramUser      `json:"from"`
+	Chat     telegramChat      `json:"chat"`
+	Text     string            `json:"text"`
+	Reply    *struct {
 		ID int64 `json:"message_id"`
 	} `json:"reply_to_message"`
 }
@@ -146,7 +164,7 @@ func (e *telegramAPIError) Error() string {
 	return fmt.Sprintf("Telegram request failed (HTTP %d); check chat ID and send /start", e.Code)
 }
 func defaultTelegramConfig() TelegramConfig {
-	return TelegramConfig{Language: "auto", Alerts: true, DailyReport: true, ReportTime: "09:00", Timezone: "Asia/Tehran"}
+	return TelegramConfig{Language: "auto", Alerts: true, DailyReport: true, ReportTime: "09:00", BackupTime: "03:00", Timezone: "Asia/Tehran"}
 }
 func NewTelegram(h *HTTP, file string) (*Telegram, error) {
 	t := &Telegram{h: h, file: file, cfg: defaultTelegramConfig(), baseURL: "https://api.telegram.org", client: &http.Client{Timeout: 40 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return errors.New("Telegram redirect rejected") }}, now: time.Now, latest: LatestStablePanelRelease, releaseVersion: ReleaseForVersion, wake: make(chan struct{}, 1), status: "disconnected", sendInterval: 1100 * time.Millisecond}
@@ -157,6 +175,9 @@ func NewTelegram(h *HTTP, file string) (*Telegram, error) {
 			return nil, errors.New("cannot read Telegram configuration")
 		}
 		t.cfg, t.state = disk.Config, disk.State
+		if t.cfg.BackupTime == "" {
+			t.cfg.BackupTime = "03:00"
+		}
 		if e = validateTelegramConfig(t.cfg, false); e != nil {
 			return nil, e
 		}
@@ -168,11 +189,20 @@ func NewTelegram(h *HTTP, file string) (*Telegram, error) {
 		t.state.ReportStarted = t.now().UnixMilli()
 		t.state.Booted = false // Persist the reporting baseline before polling.
 	}
+	if t.cfg.Enabled && t.cfg.ChatID > 0 && t.cfg.AutoBackup && t.state.BackupStarted == 0 {
+		t.state.BackupStarted = t.now().UnixMilli()
+		t.state.Booted = false
+	}
 	// Runtime counters restart with the process; persisted account/report state does not.
 	t.state.RuntimeKnown = false
 	t.state.CottenFailed = false
 	t.state.CottenIssues = 0
 	t.state.CottenRecoveryStarts = 0
+	t.state.MasterDNSFailed = false
+	t.state.MasterDNSIssues = 0
+	t.state.MasterDNSRecoveryStarts = 0
+	t.lastReport, t.lastBackup = t.state.LastReport, t.state.LastBackup
+	t.reportError, t.backupError = t.state.ReportError, t.state.BackupError
 	if t.cfg.Enabled {
 		t.status = "connecting"
 	}
@@ -183,6 +213,16 @@ func NewTelegram(h *HTTP, file string) (*Telegram, error) {
 var telegramTokenPattern = regexp.MustCompile(`^[0-9]{5,20}:[A-Za-z0-9_-]{20,100}$`)
 
 func validateTelegramConfig(c TelegramConfig, required bool) error {
+	if c.BackupTime != "" {
+		if _, e := time.Parse("15:04", c.BackupTime); e != nil || len(c.BackupTime) != 5 {
+			return errors.New("backup time must use HH:MM")
+		}
+	}
+	if c.BackupKey != "" {
+		if _, e := telegramBackupCipher(c.BackupKey); e != nil {
+			return e
+		}
+	}
 	if required || c.Token != "" {
 		if !telegramTokenPattern.MatchString(c.Token) || c.ChatID < 0 {
 			return errors.New("provide a valid Telegram bot token")
@@ -211,10 +251,17 @@ func (t *Telegram) View() TelegramView {
 	if c.Enabled && c.ChatID == 0 && c.PairToken != "" && t.now().UnixMilli() < c.PairExpires {
 		pairURL = "https://t.me/" + c.Username + "?start=" + c.PairToken
 	}
-	return TelegramView{Configured: c.Token != "", Enabled: c.Enabled, ChatID: c.ChatID, Username: c.Username, Language: c.Language, Alerts: c.Alerts, DailyReport: c.DailyReport, ReportTime: c.ReportTime, Timezone: c.Timezone, Status: status, LastContact: t.lastContact, Error: t.lastError, Paired: c.ChatID > 0, PairURL: pairURL, PairExpires: c.PairExpires}
+	return TelegramView{ReportError: t.reportError, BackupError: t.backupError, AutoBackup: c.AutoBackup, BackupTime: c.BackupTime, LastReport: t.lastReport, LastBackup: t.lastBackup, Configured: c.Token != "", Enabled: c.Enabled, ChatID: c.ChatID, Username: c.Username, Language: c.Language, Alerts: c.Alerts, DailyReport: c.DailyReport, ReportTime: c.ReportTime, Timezone: c.Timezone, Status: status, LastContact: t.lastContact, Error: t.lastError, Paired: c.ChatID > 0, PairURL: pairURL, PairExpires: c.PairExpires}
 }
 func (t *Telegram) save() error {
-	return WritePrivateJSON(t.file, telegramDisk{Config: t.config(), State: t.state})
+	if e := WritePrivateJSON(t.file, telegramDisk{Config: t.config(), State: t.state}); e != nil {
+		return e
+	}
+	t.mu.Lock()
+	t.lastReport, t.lastBackup = t.state.LastReport, t.state.LastBackup
+	t.reportError, t.backupError = t.state.ReportError, t.state.BackupError
+	t.mu.Unlock()
+	return nil
 }
 func (t *Telegram) connection(err error) {
 	t.mu.Lock()
@@ -226,10 +273,28 @@ func (t *Telegram) connection(err error) {
 		t.status = "connected"
 		t.lastError = ""
 		t.lastContact = t.now().UnixMilli()
+		if t.pollError != "" {
+			t.status, t.lastError = "error", t.pollError
+		}
+	}
+}
+
+func (t *Telegram) pollingConnection(generation uint64, err error) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if generation != t.generation {
+		return
+	}
+	if err != nil {
+		t.pollError = err.Error()
+		t.status, t.lastError = "error", t.pollError
+	} else {
+		t.pollError, t.lastError, t.status = "", "", "connected"
+		t.lastContact = t.now().UnixMilli()
 	}
 }
 func (t *Telegram) call(ctx context.Context, c TelegramConfig, method string, body any, out any) error {
-	if e := t.waitAPI(ctx, method == "sendMessage"); e != nil {
+	if e := t.waitAPI(ctx, method == "sendMessage" || method == "sendDocument"); e != nil {
 		return e
 	}
 	raw, e := json.Marshal(body)
@@ -241,6 +306,9 @@ func (t *Telegram) call(ctx context.Context, c TelegramConfig, method string, bo
 		return errors.New("cannot prepare Telegram request")
 	}
 	req.Header.Set("Content-Type", "application/json")
+	return t.request(ctx, req, out)
+}
+func (t *Telegram) request(ctx context.Context, req *http.Request, out any) error {
 	resp, e := t.client.Do(req)
 	if e != nil {
 		if ctx.Err() != nil {
@@ -277,9 +345,41 @@ func (t *Telegram) call(ctx context.Context, c TelegramConfig, method string, bo
 }
 func (t *Telegram) notify(ctx context.Context, c TelegramConfig, text string, keyboard any) (int64, error) {
 	var msg telegramMessage
-	e := t.call(ctx, c, "sendMessage", map[string]any{"chat_id": c.ChatID, "text": text, "reply_markup": keyboard, "link_preview_options": map[string]bool{"is_disabled": true}}, &msg)
-	t.connection(e)
-	return msg.ID, e
+	parts := telegramTextParts(text)
+	for i, part := range parts {
+		var markup any
+		if i == len(parts)-1 {
+			markup = keyboard
+		}
+		body := map[string]any{"chat_id": c.ChatID, "text": part, "link_preview_options": map[string]bool{"is_disabled": true}}
+		// Telegram rejects explicit null reply_markup; omit it for plain messages.
+		if markup != nil {
+			body["reply_markup"] = markup
+		}
+		e := t.call(ctx, c, "sendMessage", body, &msg)
+		t.connection(e)
+		if e != nil {
+			return msg.ID, e
+		}
+	}
+	return msg.ID, nil
+}
+
+// Telegram counts UTF-16 code units. Keep room below its 4096-unit text limit.
+func telegramTextParts(text string) []string {
+	parts, start, units := []string{}, 0, 0
+	for i, r := range text {
+		n := 1
+		if r > 0xffff {
+			n = 2
+		}
+		if units+n > 3900 {
+			parts = append(parts, text[start:i])
+			start, units = i, 0
+		}
+		units += n
+	}
+	return append(parts, text[start:])
 }
 func (t *Telegram) deferAPI(seconds int) {
 	if seconds <= 0 {
@@ -325,6 +425,15 @@ func (t *Telegram) configure(ctx context.Context, c TelegramConfig) error {
 }
 func (t *Telegram) configureLocked(ctx context.Context, c TelegramConfig) error {
 	old := t.config()
+	if c.BackupKey == "" {
+		c.BackupKey = old.BackupKey
+	}
+	if c.BackupTime == "" {
+		c.BackupTime = "03:00"
+	}
+	if c.AutoBackup && c.BackupKey == "" {
+		c.BackupKey = token()
+	}
 	if c.Token == "" {
 		c.Token = old.Token
 	}
@@ -375,6 +484,9 @@ func (t *Telegram) configureLocked(ctx context.Context, c TelegramConfig) error 
 	if c.Enabled && c.ChatID > 0 && c.DailyReport && state.ReportStarted == 0 {
 		state.ReportStarted = t.now().UnixMilli()
 	}
+	if c.Enabled && c.ChatID > 0 && c.AutoBackup && state.BackupStarted == 0 {
+		state.BackupStarted = t.now().UnixMilli()
+	}
 	if e := WritePrivateJSON(t.file, telegramDisk{c, state}); e != nil {
 		return errors.New("cannot save Telegram configuration")
 	}
@@ -385,7 +497,10 @@ func (t *Telegram) configureLocked(ctx context.Context, c TelegramConfig) error 
 	t.cfg = c
 	t.generation++
 	t.lastError = ""
+	t.pollError = ""
 	t.lastContact = 0
+	t.lastReport, t.lastBackup = state.LastReport, state.LastBackup
+	t.reportError, t.backupError = state.ReportError, state.BackupError
 	t.status = "disabled"
 	if c.Enabled {
 		t.status = "connecting"
@@ -394,6 +509,7 @@ func (t *Telegram) configureLocked(ctx context.Context, c TelegramConfig) error 
 	t.state = state
 	t.conversation = nil
 	t.confirmation = nil
+	t.reportRetry, t.backupRetry = time.Time{}, time.Time{}
 	_ = t.h.store.Audit("telegram.configured", "")
 	select {
 	case t.wake <- struct{}{}:
@@ -406,6 +522,9 @@ func (t *Telegram) disconnect() error {
 	defer t.opMu.Unlock()
 	// Persist an empty configuration atomically before revoking the live worker.
 	c := defaultTelegramConfig()
+	// Disconnect revokes bot access, but must never destroy the only key capable
+	// of decrypting backups already sent to the administrator.
+	c.BackupKey = t.config().BackupKey
 	if e := WritePrivateJSON(t.file, telegramDisk{Config: c}); e != nil {
 		return errors.New("cannot disconnect Telegram")
 	}
@@ -417,7 +536,10 @@ func (t *Telegram) disconnect() error {
 	t.generation++
 	t.status = "disconnected"
 	t.lastError = ""
+	t.pollError = ""
 	t.lastContact = 0
+	t.lastReport, t.lastBackup = "", ""
+	t.reportError, t.backupError = "", ""
 	t.mu.Unlock()
 	t.state = telegramState{}
 	t.conversation = nil
@@ -473,6 +595,8 @@ func (h *HTTP) telegramAPI(w http.ResponseWriter, r *http.Request) {
 		jsonReply(w, 200, t.View())
 	case "PUT":
 		var in struct {
+			AutoBackup  *bool   `json:"auto_backup"`
+			BackupTime  *string `json:"backup_time"`
 			Token       *string `json:"token"`
 			Enabled     *bool   `json:"enabled"`
 			Language    *string `json:"language"`
@@ -488,6 +612,12 @@ func (h *HTTP) telegramAPI(w http.ResponseWriter, r *http.Request) {
 		t.opMu.Lock()
 		defer t.opMu.Unlock()
 		c := t.config()
+		if in.AutoBackup != nil {
+			c.AutoBackup = *in.AutoBackup
+		}
+		if in.BackupTime != nil {
+			c.BackupTime = *in.BackupTime
+		}
 		if in.Token != nil {
 			c.Token = *in.Token
 		}
@@ -530,9 +660,12 @@ func (h *HTTP) telegramAPI(w http.ResponseWriter, r *http.Request) {
 	}
 }
 func (t *Telegram) Run(ctx context.Context) {
+	scheduleCtx, stopSchedule := context.WithCancel(ctx)
+	scheduleDone := make(chan struct{})
+	go func() { defer close(scheduleDone); t.runSchedule(scheduleCtx) }()
+	defer func() { stopSchedule(); <-scheduleDone }()
 	backoff := time.Second
 	var registered uint64 = ^uint64(0)
-	nextTick := time.Time{}
 	for ctx.Err() == nil {
 		t.mu.Lock()
 		c, g := t.cfg, t.generation
@@ -546,7 +679,7 @@ func (t *Telegram) Run(ctx context.Context) {
 			continue
 		}
 		if registered != g && c.ChatID > 0 {
-			commands := []map[string]string{{"command": "start", "description": "Open management / مدیریت"}, {"command": "stats", "description": "Current server stats / آمار فعلی سرور"}, {"command": "help", "description": "Help / راهنما"}, {"command": "menu", "description": "Main menu / منو"}, {"command": "settings", "description": "Preferences / ترجیحات"}, {"command": "cancel", "description": "Cancel / لغو"}}
+			commands := []map[string]string{{"command": "start", "description": "Open management / مدیریت"}, {"command": "stats", "description": "Current server stats / آمار سرور"}, {"command": "help", "description": "Help / راهنما"}, {"command": "menu", "description": "Main menu / منو"}, {"command": "settings", "description": "Server settings / تنظیمات سرور"}, {"command": "backup", "description": "Backups / پشتیبان"}, {"command": "restore", "description": "Restore backup / بازیابی"}, {"command": "diagnostics", "description": "Diagnostics / عیب‌یابی"}, {"command": "access", "description": "Panel address / آدرس پنل"}, {"command": "cancel", "description": "Cancel / لغو"}}
 			if e := t.call(ctx, c, "setMyCommands", map[string]any{"commands": commands, "scope": map[string]any{"type": "chat", "chat_id": c.ChatID}}, nil); e != nil {
 				t.connection(e)
 			} else {
@@ -596,7 +729,7 @@ func (t *Telegram) Run(ctx context.Context) {
 			if ctx.Err() != nil {
 				return
 			}
-			t.connection(e)
+			t.pollingConnection(g, e)
 			delay := backoff
 			var apiErr *telegramAPIError
 			if errors.As(e, &apiErr) && apiErr.Retry > 0 {
@@ -615,7 +748,7 @@ func (t *Telegram) Run(ctx context.Context) {
 			continue
 		}
 		backoff = time.Second
-		t.connection(nil)
+		t.pollingConnection(g, nil)
 		persistFailed := false
 		for _, u := range updates {
 			t.opMu.Lock()
@@ -642,12 +775,6 @@ func (t *Telegram) Run(ctx context.Context) {
 			}
 			continue
 		}
-		t.opMu.Lock()
-		if g == t.generation && !t.now().Before(nextTick) {
-			t.tick(ctx)
-			nextTick = t.now().Add(time.Minute)
-		}
-		t.opMu.Unlock()
 	}
 }
 func (t *Telegram) handleUpdate(ctx context.Context, u telegramUpdate) error {
@@ -693,6 +820,9 @@ func (t *Telegram) handleUpdate(ctx context.Context, u telegramUpdate) error {
 		state := t.state
 		if c.DailyReport {
 			state.ReportStarted = t.now().UnixMilli()
+		}
+		if c.AutoBackup {
+			state.BackupStarted = t.now().UnixMilli()
 		}
 		if e := WritePrivateJSON(t.file, telegramDisk{Config: c, State: state}); e != nil {
 			return errors.New("cannot persist Telegram pairing; no access was granted")

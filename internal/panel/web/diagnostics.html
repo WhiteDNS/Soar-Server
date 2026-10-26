@@ -23,7 +23,11 @@
      <label>ارائه‌دهنده<select id="assistant-provider"></select></label>
      <label>قالب API<select id="assistant-protocol"><option value="openai">OpenAI compatible</option><option value="gemini">Gemini native</option><option value="anthropic">Anthropic Messages</option></select></label>
      <label>آدرس پایهٔ API<input id="assistant-base-url" type="url" dir="ltr" required maxlength="512" placeholder="https://gateway.example.com/v1"></label>
-     <label>شناسهٔ مدل<input id="assistant-model" type="text" dir="ltr" required maxlength="160" autocomplete="off"></label>
+     <label>مدل<select id="assistant-model" dir="ltr"><option value="">ابتدا مدل‌ها را دریافت کنید</option></select></label>
+     <button id="assistant-fetch-models" type="button" class="quiet">دریافت مدل‌ها</button>
+     <p id="assistant-models-state" class="hint" role="status" aria-live="polite"></p>
+     <label class="check"><input id="assistant-model-manual" type="checkbox">ورود دستی مدل</label>
+     <label id="assistant-model-custom-field" hidden>شناسهٔ مدل<input id="assistant-model-custom" type="text" dir="ltr" maxlength="160" autocomplete="off" disabled></label>
      <label>کلید API<input id="assistant-api-key" type="password" dir="ltr" maxlength="4096" autocomplete="new-password"></label>
      <p id="assistant-key-state" class="hint"></p>
      <label class="check"><input id="assistant-clear-key" type="checkbox">حذف کلید ذخیره‌شده</label>

@@ -12,6 +12,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -21,6 +22,7 @@ import (
 const testTelegramToken = "123456789:abcdefghijklmnopqrstuvwxyz_123456789"
 
 type telegramFake struct {
+	documents  [][]byte
 	mu         sync.Mutex
 	texts      []string
 	parseModes []string
@@ -49,8 +51,35 @@ func (f *telegramFake) serve(w http.ResponseWriter, r *http.Request) {
 		Offset    int64            `json:"offset"`
 		ParseMode string           `json:"parse_mode"`
 	}
-	if method != "sendPhoto" {
-		_ = json.NewDecoder(r.Body).Decode(&body)
+	if method == "sendDocument" {
+		if e := r.ParseMultipartForm(32 << 20); e != nil {
+			http.Error(w, "bad multipart", 400)
+			return
+		}
+		defer r.MultipartForm.RemoveAll()
+		file, _, e := r.FormFile("document")
+		if e != nil {
+			http.Error(w, "missing document", 400)
+			return
+		}
+		raw, e := io.ReadAll(file)
+		file.Close()
+		if e != nil {
+			http.Error(w, "bad document", 400)
+			return
+		}
+		f.documents = append(f.documents, raw)
+	}
+	if method != "sendPhoto" && method != "sendDocument" {
+		raw, _ := io.ReadAll(r.Body)
+		var fields map[string]json.RawMessage
+		_ = json.Unmarshal(raw, &fields)
+		if method == "sendMessage" && bytes.Equal(bytes.TrimSpace(fields["reply_markup"]), []byte("null")) {
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = io.WriteString(w, `{"ok":false,"error_code":400,"description":"object expected as reply markup"}`)
+			return
+		}
+		_ = json.Unmarshal(raw, &body)
 	}
 	var result any = true
 	switch method {
@@ -66,6 +95,8 @@ func (f *telegramFake) serve(w http.ResponseWriter, r *http.Request) {
 		f.parseModes = append(f.parseModes, body.ParseMode)
 		f.keyboards = append(f.keyboards, body.Markup)
 		result = map[string]any{"message_id": f.nextID}
+	case "sendDocument":
+		result = map[string]any{"message_id": 100}
 	case "sendPhoto":
 		f.photos++
 		result = map[string]any{"message_id": 99}
@@ -110,6 +141,22 @@ func newTelegramTest(t *testing.T) (*Telegram, *telegramFake, *browser) {
 func tgMessage(id int64, text string) telegramUpdate {
 	return telegramUpdate{ID: id, Message: &telegramMessage{From: telegramUser{ID: 12345, Language: "en"}, Chat: telegramChat{ID: 12345, Type: "private"}, Text: text}}
 }
+
+func TestTelegramPlainNotificationsOmitReplyMarkup(t *testing.T) {
+	bot, fake, _ := newTelegramTest(t)
+	if _, e := bot.notify(context.Background(), bot.config(), "Plain scheduled notification", nil); e != nil {
+		t.Fatal(e)
+	}
+	if len(fake.texts) != 1 || fake.texts[0] != "Plain scheduled notification" {
+		t.Fatal("plain notification rejected")
+	}
+	if _, e := bot.notify(context.Background(), bot.config(), "Menu", bot.homeKeyboard()); e != nil {
+		t.Fatal(e)
+	}
+	if len(fake.keyboards[1].Rows) == 0 {
+		t.Fatal("menu keyboard omitted")
+	}
+}
 func tgCallback(id int64, data string) telegramUpdate {
 	return telegramUpdate{ID: id, Callback: &telegramCallback{ID: fmt.Sprint(id), Data: data, From: telegramUser{ID: 12345}, Message: &telegramMessage{Chat: telegramChat{ID: 12345, Type: "private"}}}}
 }
@@ -145,7 +192,7 @@ func TestTelegramAPIAuthenticationSecretLifecycleAndBackups(t *testing.T) {
 		t.Fatal("token not saved privately", e)
 	}
 	info, _ := os.Stat(bot.file)
-	if info.Mode().Perm() != 0600 {
+	if runtime.GOOS != "windows" && info.Mode().Perm() != 0600 {
 		t.Fatal("unsafe config permissions")
 	}
 	if bytes.Contains(backupBytes(t, bot.h.store), []byte(testTelegramToken)) {
@@ -460,6 +507,7 @@ func TestTelegramNotificationsTransitionsPersistenceAndDailySchedule(t *testing.
 		t.Fatal("failed report marked delivered")
 	}
 	f.fail = ""
+	bot.now = func() time.Time { return after.Add(time.Minute) }
 	bot.tick(ctx)
 	if bot.state.LastReport != "2026-10-24" {
 		t.Fatal("report retry failed")

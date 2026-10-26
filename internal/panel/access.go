@@ -32,7 +32,7 @@ type AccessInput struct {
 	Email        string   `json:"email"`
 	GeneratePath bool     `json:"generate_path"`
 	BasePath     string   `json:"base_path"`
-	Password     string   `json:"password"`
+	Password     string   `json:"password,omitempty"`
 }
 type AccessPlan struct {
 	ID      string       `json:"id"`
