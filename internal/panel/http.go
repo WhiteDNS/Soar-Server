@@ -48,11 +48,12 @@ type HTTP struct {
 	inspectBackup func(context.Context, string) (BackupSummary, error)
 	access        *AccessController
 	telegram      *Telegram
+	assistant     *panelAssistant
 }
 
 func NewHTTP(s *Store, m *Manager, trustLoopbackProxy bool) *HTTP {
 	assets, _ := fs.Sub(webFiles, "web")
-	return &HTTP{store: s, manager: m, trustProxy: trustLoopbackProxy, sessions: map[string]loginSession{}, attempts: map[string]loginAttempt{}, assets: http.FileServer(http.FS(assets))}
+	return &HTTP{store: s, manager: m, trustProxy: trustLoopbackProxy, sessions: map[string]loginSession{}, attempts: map[string]loginAttempt{}, assets: http.FileServer(http.FS(assets)), assistant: newPanelAssistant(s)}
 }
 func jsonReply(w http.ResponseWriter, status int, v any) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
@@ -180,7 +181,7 @@ func (h *HTTP) serveHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		switch r.URL.Path {
-		case "/", "/index.html", "/app.js", "/antiflood.js", "/maintenance.js", "/telegram.js", "/i18n.js", "/ltr.css", "/settings.js", "/ui.js", "/tokens.css", "/redesign.css", "/style.css", "/fonts/vazirmatn.ttf", "/fonts/vazirmatn.woff2":
+		case "/", "/index.html", "/app.js", "/diagnostics.js", "/diagnostics.css", "/antiflood.js", "/maintenance.js", "/telegram.js", "/i18n.js", "/ltr.css", "/settings.js", "/ui.js", "/tokens.css", "/redesign.css", "/style.css", "/fonts/vazirmatn.ttf", "/fonts/vazirmatn.woff2":
 			if r.URL.Path == "/" || r.URL.Path == "/index.html" {
 				raw, e := webFiles.ReadFile("web/index.html")
 				if e != nil {
@@ -192,6 +193,8 @@ func (h *HTTP) serveHTTP(w http.ResponseWriter, r *http.Request) {
 					prefix = h.access.Config().BasePath
 				}
 				body := strings.Replace(string(raw), "<head>", "<head><base href=\""+prefix+"\">", 1)
+				diagnostics, _ := webFiles.ReadFile("web/diagnostics.html")
+				body = strings.Replace(body, "{{DIAGNOSTICS_PAGE}}", string(diagnostics), 1)
 				body = strings.NewReplacer("{{PANEL_NAME}}", html.EscapeString(ProductName), "{{PANEL_VERSION}}", html.EscapeString(Version)).Replace(body)
 				w.Header().Set("Content-Type", "text/html; charset=utf-8")
 				if r.Method != "HEAD" {
@@ -216,11 +219,25 @@ func (h *HTTP) serveHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	observed := &diagnosticResponseWriter{ResponseWriter: w}
+	w = observed
+	defer h.logRequest(observed, r)
+	if r.URL.Path == "/api/logs" {
+		h.logsAPI(w, r)
+		return
+	}
+	if strings.HasPrefix(r.URL.Path, "/api/assistant/") {
+		h.assistantAPI(w, r, session)
+		return
+	}
 	if r.URL.Path == "/api/session" && r.Method == "GET" {
 		jsonReply(w, 200, map[string]any{"csrf": session.csrf, "expires_at": session.expires.UnixMilli()})
 		return
 	}
 	if r.URL.Path == "/api/logout" && r.Method == "POST" {
+		h.assistant.mu.Lock()
+		delete(h.assistant.sessions, session.csrf)
+		h.assistant.mu.Unlock()
 		c, _ := r.Cookie("soar_panel_session")
 		h.mu.Lock()
 		delete(h.sessions, c.Value)
@@ -382,7 +399,7 @@ func (h *HTTP) dashboard(w http.ResponseWriter) {
 			online++
 		}
 	}
-	jsonReply(w, 200, map[string]any{"accounts": len(list), "states": states, "upload_bytes": up, "download_bytes": down, "active_streams": connected, "accounts_with_streams": online, "dns_received_bytes": h.manager.dnsIn.Load(), "dns_sent_bytes": h.manager.dnsOut.Load(), "uptime_seconds": int64(time.Since(h.manager.started).Seconds()), "host": h.metrics.sample(), "version": Version, "diagnostics": h.manager.Diagnostics(), "accounting": h.store.AccountingStats()})
+	jsonReply(w, 200, map[string]any{"log_summary": h.manager.logSummary(), "accounts": len(list), "states": states, "upload_bytes": up, "download_bytes": down, "active_streams": connected, "accounts_with_streams": online, "dns_received_bytes": h.manager.dnsIn.Load(), "dns_sent_bytes": h.manager.dnsOut.Load(), "uptime_seconds": int64(time.Since(h.manager.started).Seconds()), "host": h.metrics.sample(), "version": Version, "diagnostics": h.manager.Diagnostics(), "accounting": h.store.AccountingStats()})
 }
 func (h *HTTP) settings(w http.ResponseWriter, r *http.Request) {
 	if r.Method == "GET" {

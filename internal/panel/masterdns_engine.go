@@ -41,11 +41,13 @@ func (m *Manager) masterDNSFor(rt *accountRuntime) (*masterdns.Server, error) {
 	})
 	if err != nil {
 		m.diagnostics.masterStartErrors.Add(1)
+		m.logEvent("error", "masterdns", rt.client.ID, "engine_start_failed", err, 0)
 		m.diagnostics.lastEngineIssueUnixMS.Store(time.Now().UnixMilli())
 		return nil, err
 	}
 	m.diagnostics.masterStarts.Add(1)
 	m.diagnostics.masterRunning.Add(1)
+	m.logEvent("info", "masterdns", rt.client.ID, "engine_started", nil, 0)
 	rt.master = engine
 	return engine, nil
 }

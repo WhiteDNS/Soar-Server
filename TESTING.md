@@ -43,3 +43,11 @@ bash <(curl -fsSL https://raw.githubusercontent.com/WhiteDNS/Soar-Server/main/se
 A successful VPS diagnostic does not establish client-network reachability.
 Iran operator tests, network switching, full-disk/SSH-loss recovery on a real
 VPS, full uninstall and a novice usability trial remain separate acceptance work.
+
+## Panel diagnostics and assistant
+
+`internal/panel/assistant_test.go` exercises all three AI wire formats against local mock servers, destination consent, credential redaction, context filtering, validated proposals, session ownership, approval, replay/expiry rejection, stale settings and undo conflicts, burst coalescing and log persistence. It uses no real provider credentials.
+
+`tests/panel-logs.cjs` runs inside `tests/panel-ui.cjs`. It checks the real panel with a local mock provider, chat and context preview, approval cancellation, apply/undo, reload recovery, safe text rendering, export and both languages/themes at 1440/768/414/375/320 pixels. Set `PANEL_UI_ONLY=logs` for this focused browser check; normal browser runs include it automatically.
+
+Use the prepared pinned engine workspace (`.engine-source/patched.go.work`) for Go checks. The existing Telegram file-permission test requires Unix permission semantics; Windows reports different mode bits. A Windows-only run can skip exactly `TestTelegramAPIAuthenticationSecretLifecycleAndBackups`; keep it enabled on Linux CI. Local tests do not verify real AI account access/quota or restricted-network device connectivity.

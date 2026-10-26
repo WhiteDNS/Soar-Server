@@ -4,9 +4,11 @@
 
 [English installation guide](docs/PANEL.en.md) · [راهنمای فارسی](docs/PANEL.fa.md)
 
+[لاگ تخصصی و دستیار چندارائه‌دهنده‌ای](docs/DIAGNOSTICS-ASSISTANT.fa.md): عیب‌یابی اتصال و موتور، چت با گزارش پالایش‌شده و تغییر تنظیمات با پیش‌نمایش، تأیید و بازگردانی.
+
 [دامنه‌های جایگزین تونل و پنل](docs/DOMAINS.fa.md): حداکثر ۸ دامنه برای هر بخش، بدون ساخت دوبارهٔ حساب‌ها یا تغییر سهمیه. نصب اولیه همچنان فقط یک دامنه می‌خواهد.
 
-پنل مدیریت سرور **WhiteDNS 0.8.0** با موتورهای **Soar، Cotten و MasterDNS** برای **Ubuntu 22.04/24.04/26.04 یا Debian 12/13، معماری amd64/x86_64 یا arm64/aarch64**.
+پنل مدیریت سرور **WhiteDNS 0.11.0** با موتورهای **Soar، Cotten و MasterDNS** برای **Ubuntu 22.04/24.04/26.04 یا Debian 12/13، معماری amd64/x86_64 یا arm64/aarch64**.
 
 **CottenDNS** نیز از [فورک سازگار WhiteDNS](https://github.com/WhiteDNS/CottenDns) و با حفظ نام و مجوز نویسندگان اصلی اضافه شده است.
 
