@@ -63,7 +63,11 @@ jobs:
           echo "PANEL_COTTEN_CLIENT=$RUNNER_TEMP/cotten-client" >> "$GITHUB_ENV"
       - name: Verify MasterDNS startup and settings restart races
         run: go test -race ./internal/panel -run 'TestMasterDNS|TestSettingsSaveRestarts' -count=3 -timeout 180s
-      - name: Verify modules and behavior
+      - name: Verify pinned engine dependencies and cleanup
+        run: |
+          (cd .engine-source/CottenDNS && go test ./... -count=1 -timeout 240s && go vet ./...)
+          (cd .engine-source/MasterDnsVPN && go test ./... -count=1 -timeout 240s && go test ./internal/udpserver -run '^TestCleanupClosedSessionClosesStreamsAndClearsQueues$|^TestFinalizedStreamRejectsLatePackets$' -count=1000 -timeout 90s && go test -race ./internal/udpserver -run 'TestEmbedded|TestCleanupClosedSessionClosesStreamsAndClearsQueues|TestFinalizedStreamRejectsLatePackets' -count=10 -timeout 90s && go vet ./...)
+      - name: Verify panel modules and behavior
         run: |
           go mod verify
           go test ./... -count=1 -timeout 180s
@@ -71,8 +75,8 @@ jobs:
           # admin fixtures; slower runners need room to finish every race check.
           go test -race ./internal/panel ./internal/panelops -count=1 -timeout 1800s
           go vet ./...
-          (cd .engine-source/CottenDNS && go test ./... -count=1 -timeout 240s && go vet ./...)
-          (cd .engine-source/MasterDnsVPN && go test ./... -count=1 -timeout 240s && go test -race ./internal/udpserver -run TestEmbedded -count=1 -timeout 60s && go vet ./...)
+      - name: Verify installers and bootstrap
+        run: |
           bash tests/installer_test.sh
           bash tests/panel_installer_test.sh
           bash tests/panel_bootstrap_test.sh

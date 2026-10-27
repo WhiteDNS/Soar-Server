@@ -1,7 +1,7 @@
 {
   "base_commit": "acbf1c61f90786f41b975d2e2f616afbce292b29",
   "patch": "masterdns-acbf1c61f907-embedded.patch",
-  "patch_sha256": "24a4907e4a31ea7fc350f941dd0516026a6b156fe1b5f38f62a5b100bc025743",
+  "patch_sha256": "e515c5fab44ce8a8196c702ea74785b5252d6928ed92e3c06411f0ef791a5b09",
   "files_sha256": {
     ".github/FUNDING.yml": "2df071819d4247c98084f0b5d75556d891ec01c273e532a353be920db38593c4",
     ".github/workflows/build-go.yml": "79a7a49c8c38117d20ea56f08e0d301a2aebc2654a1e117c7543ce1c3c07457f",
@@ -150,7 +150,8 @@
     "internal/udpserver/session_cleanup_test.go": "6ecdef9d9014d15d6bde8ad778a2bbbb2f9bf58d2961a0d8f21e766527c3bae4",
     "internal/udpserver/session_init_policy_test.go": "d7df6982b3598f0071d25075ac54dff5759dfbd3246376450c8ebed60445f087",
     "internal/udpserver/socks5_upstream.go": "4930d3c301dd5661dd568f418b0e7ed4970b043a1bcc79153eff7cfee8161a54",
-    "internal/udpserver/stream_server.go": "6fdb98c0df32937e7d31755d071244887bfd9c9bc453090c90c4ccc97104323c",
+    "internal/udpserver/stream_server.go": "d3853fce896d95c680614158df423b10b64623f79f7f8a652cf0e59e042907cd",
+    "internal/udpserver/stream_shutdown_test.go": "e1410a09015e8b00b267e90a0f3621940e2dc61451a748008417516a6b1e1969",
     "internal/udpserver/stream_syn_test.go": "38076e168f00e8751a24e8040a50165793fc0d61ca6fdae8943321a46737adfe",
     "internal/udpserver/udp_fallback.go": "ac115ffea9fbd33842352d27705c09e90de6b7f51b7061a7a2ade2d8e1cbffbf",
     "internal/udpserver/udp_fallback_test.go": "808e8c9c13e182df2b3ec9082891e242c9de989a36a282ef09e744ab9c95787f",

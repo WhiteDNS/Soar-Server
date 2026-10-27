@@ -65,4 +65,6 @@ GOWORK="$PWD/.engine-source/patched.go.work" go test -race ./internal/panel -run
 
 The full panel/maintenance CI race suite uses `-timeout 1800s`: the expanded bcrypt-backed administrator fixtures exceeded the former 900-second limit on a slower amd64 runner. The focused Telegram command above has its own smaller scope; all full-suite assertions remain enabled.
 
+Pinned engine checks run before the expensive panel race suite. MasterDNS cleanup is repeated 1000 times, and embedded/cleanup checks run ten times with the race detector. Its deterministic late-enqueue regression protects finalized transmit queues without suppressing protocol resets during closure. The source patch and file digests remain reproducible from the pinned upstream commit.
+
 `tests/panel-telegram.cjs`, included in the complete browser suite, also checks automatic backup defaults/save fields and persistent delivery-error display. It checks both languages and mobile/desktop layouts. DNS/certificate issuance and Telegram endpoints in the added Go tests are local fixtures; the tests send no real bot messages. See [the Persian operational guide](docs/telegram-emergency-management.fa.md) for setup and recovery limits.

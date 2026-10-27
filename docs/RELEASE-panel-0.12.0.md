@@ -21,6 +21,8 @@
 
 ## Upgrade and limits
 
+MasterDNS final session cleanup now seals the transmit queue against late worker callbacks. This prevents a closed stream's queue from being repopulated while retaining protocol reset delivery before finalization. The pinned engine patch and checksums include the fix and its regression test.
+
 Upgrade through Panel updates or the existing installer, then refresh the browser. Accounts, keys, subscription URLs and persisted usage remain valid. Enable automatic backup explicitly in `/backup` or Telegram settings, retrieve the recovery key and keep an independent copy. Backups reflect the current database snapshot; catch-up sends only the latest missed slot. A crash between Telegram accepting a payload and saving its receipt can repeat delivery.
 
 The Telegram recovery route accepts at most 20 MiB per transferred file and 32 MiB after decompression. The bot requires a running panel process and server access to Telegram; it cannot recover a powered-off server or a server without Telegram connectivity. DNS changes at the domain provider remain an external prerequisite for domain migration. Soar profile changes require clients to refresh subscriptions or reimport.
