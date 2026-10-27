@@ -1,8 +1,13 @@
 const http=require('node:http');
 const path=require('node:path');
 module.exports=async({page,out,assert})=>{
- const payloads=[];let tuning=64;
+ const payloads=[];let tuning=64,modelCalls=0,modelFailure=false,delayModels=false,releaseModels;
  const provider=http.createServer((req,res)=>{
+  if(req.url==='/models'){
+   modelCalls++;assert.equal(req.method,'GET');assert.equal(req.headers.authorization,'Bearer fixture-private-key');
+   const reply=()=>{res.writeHead(modelFailure?401:200,{'Content-Type':'application/json'});res.end(JSON.stringify(modelFailure?{error:'private details'}:{data:[{id:'fixture-model',name:'Fixture model'},{id:'fixture-other'}]}));};
+   if(delayModels){releaseModels=reply;return;}reply();return;
+  }
   let raw='';req.on('data',part=>raw+=part);req.on('end',()=>{
    const body=JSON.parse(raw);payloads.push(body);
    const content=JSON.stringify({answer:'Observed timeouts need client-side measurements. <img src=x onerror=alert(1)>',reason:'Try a smaller window and compare failures before and after.',changes:{'soarSettings.maxInflight':tuning}});
@@ -18,9 +23,22 @@ module.exports=async({page,out,assert})=>{
   const config=await page.evaluate(()=>fetch('/api/assistant/config').then(r=>r.json()));assert.ok(config.providers.find(p=>p.id==='9router'));assert.ok(config.providers.find(p=>p.id==='custom'));
   await page.locator('#assistant-provider-trigger').click();await page.getByRole('option',{name:'Custom',exact:true}).click();
   await page.locator('#assistant-base-url').fill('http://127.0.0.1:'+provider.address().port);
-  await page.locator('#assistant-model').fill('fixture-model');await page.locator('#assistant-api-key').fill('fixture-private-key');await page.locator('#assistant-enabled').check();
+  await page.locator('#assistant-api-key').fill('fixture-private-key');await page.locator('#assistant-enabled').check();
+  await page.locator('#assistant-fetch-models').click();await page.waitForFunction(()=>document.querySelector('#assistant-model').options.length===3);
+  assert.equal(modelCalls,1);assert.equal(payloads.length,0,'fetching models sent diagnostics');
+  await page.locator('#assistant-model-trigger').click();await page.getByRole('option',{name:'Fixture model · fixture-model',exact:true}).click();
+  assert.equal(await page.locator('#assistant-model').inputValue(),'fixture-model');
+  modelFailure=true;await page.locator('#assistant-fetch-models').click();await page.waitForFunction(()=>document.querySelector('#assistant-fetch-models').disabled===false);
+  assert.equal(await page.locator('#assistant-model').inputValue(),'fixture-model','failed discovery cleared selected model');modelFailure=false;
+  await page.locator('#assistant-model-manual').check();assert.equal(await page.locator('#assistant-model-custom').inputValue(),'fixture-model');await page.locator('#assistant-model-manual').uncheck();
   await page.locator('#assistant-config-form button[type=submit]').click();await page.waitForFunction(()=>document.querySelector('#assistant-send').disabled===false);
   assert.equal(payloads.length,0,'saving config sent diagnostics');
+  await page.locator('#assistant-setup').evaluate(el=>el.open=true);await page.locator('#assistant-fetch-models').click();await page.waitForFunction(()=>document.querySelector('#assistant-model').options.length===3);assert.equal(await page.locator('#assistant-api-key').inputValue(),'','stored key returned to form');
+  delayModels=true;await page.locator('#assistant-fetch-models').click();await page.waitForFunction(()=>document.querySelector('#assistant-fetch-models').disabled);
+  await new Promise(resolve=>{const poll=()=>releaseModels?resolve():setTimeout(poll,10);poll();});
+  await page.locator('#assistant-base-url').fill('http://127.0.0.1:'+provider.address().port+'/changed');releaseModels();delayModels=false;
+  await page.waitForFunction(()=>document.querySelector('#assistant-model').options.length===1);assert.equal(await page.locator('#assistant-model').inputValue(),'','late model response repopulated changed destination');
+  await page.locator('#assistant-base-url').fill('http://127.0.0.1:'+provider.address().port);await page.locator('#assistant-fetch-models').click();await page.waitForFunction(()=>document.querySelector('#assistant-model').options.length===3);await page.locator('#assistant-model-trigger').click();await page.getByRole('option',{name:'Fixture model · fixture-model',exact:true}).click();await page.locator('#assistant-setup').evaluate(el=>el.open=false);
   await page.locator('#assistant-question').fill('Why are the connections failing?');await page.locator('#assistant-send').click();
   await page.locator('#assistant-error').waitFor({state:'visible'});assert.equal(payloads.length,0,'sent without consent');
   await page.locator('#assistant-context-details summary').click();await page.waitForFunction(()=>document.querySelector('#assistant-context-preview').textContent.includes('captured_at'));

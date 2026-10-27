@@ -83,6 +83,7 @@ func (t *Telegram) tick(ctx context.Context) {
 	if !c.Enabled || c.ChatID == 0 {
 		return
 	}
+	t.scheduled(ctx)
 	if t.recovered {
 		if _, e := t.notify(ctx, c, t.tr("✅ The WhiteDNS panel is running again.", "✅ پنل WhiteDNS دوباره در حال اجراست."), nil); e != nil {
 			return
@@ -91,7 +92,7 @@ func (t *Telegram) tick(ctx context.Context) {
 	}
 	if t.state.PendingAction != "" {
 		action := t.state.PendingAction
-		if action == "update" || action == "restart" {
+		if action == "update" || action == "restart" || action == "restore" {
 			if t.h.ops != nil {
 				job, e := t.h.ops.Status(ctx)
 				if e == nil {
@@ -204,18 +205,6 @@ func (t *Telegram) tick(ctx context.Context) {
 	}
 	t.state.RuntimeKnown = true
 	t.state.RuntimeFailed = failed
-	if c.DailyReport {
-		if day, due := telegramReportDue(t.now(), c, t.state.LastReport, t.state.ReportStarted); due {
-			text, e := t.report()
-			if e != nil {
-				return
-			}
-			if _, e = t.notify(ctx, c, text, nil); e != nil {
-				return
-			}
-			t.state.LastReport = day
-		}
-	}
 	if c.Alerts && t.now().Unix()-t.state.LastReleaseCheck >= int64((6*time.Hour)/time.Second) {
 		r, e := t.latest(ctx)
 		if e == nil {

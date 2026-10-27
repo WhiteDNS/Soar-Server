@@ -515,6 +515,103 @@ index 596e6a6..0f74ae8 100644
  	dialFn := s.dialStreamUpstreamFn
  	timeout := s.socksConnectTimeout
  	if timeout <= 0 {
+diff --git a/internal/udpserver/stream_server.go b/internal/udpserver/stream_server.go
+index b487859..b892131 100644
+--- a/internal/udpserver/stream_server.go
++++ b/internal/udpserver/stream_server.go
+@@ -19,10 +19,11 @@ import (
+ 
+ // Stream_server encapsulates an ARQ instance and its transmit queue for a single stream.
+ type Stream_server struct {
+-	mu        sync.RWMutex
+-	txQueueMu sync.Mutex
+-	cleanupMu sync.Once
+-	rxQueueMu sync.Mutex
++	mu            sync.RWMutex
++	txQueueMu     sync.Mutex
++	txQueueClosed bool // Guarded by txQueueMu; terminal cleanup seals the queue.
++	cleanupMu     sync.Once
++	rxQueueMu     sync.Mutex
+ 
+ 	ID        uint16
+ 	SessionID uint8
+@@ -98,6 +99,11 @@ func (s *Stream_server) PushTXPacket(priority int, packetType uint8, sequenceNum
+ 	pkt.TTL = ttl
+ 
+ 	s.txQueueMu.Lock()
++	if s.txQueueClosed {
++		s.txQueueMu.Unlock()
++		putTXPacketToPool(pkt)
++		return false
++	}
+ 
+ 	switch packetType {
+ 	case Enums.PACKET_STREAM_DATA:
+@@ -188,11 +194,18 @@ func (s *Stream_server) RemoveQueuedDataNack(sequenceNum uint16) bool {
+ }
+ 
+ func (s *Stream_server) ClearTXQueue() {
++	s.clearTXQueue(false)
++}
++
++func (s *Stream_server) clearTXQueue(terminal bool) {
+ 	if s == nil || s.TXQueue == nil {
+ 		return
+ 	}
+ 
+ 	s.txQueueMu.Lock()
++	if terminal {
++		s.txQueueClosed = true
++	}
+ 	s.TXQueue.Clear(func(pkt *serverStreamTXPacket) {
+ 		putTXPacketToPool(pkt)
+ 	})
+@@ -283,7 +296,7 @@ func (s *Stream_server) cleanupResources() {
+ 	if upstream != nil {
+ 		_ = upstream.Close()
+ 	}
+-	s.ClearTXQueue()
++	s.clearTXQueue(true)
+ }
+ 
+ func (s *Stream_server) finalizeAfterARQClose(reason string) {
+diff --git a/internal/udpserver/stream_shutdown_test.go b/internal/udpserver/stream_shutdown_test.go
+new file mode 100644
+index 0000000..0b4404c
+--- /dev/null
++++ b/internal/udpserver/stream_shutdown_test.go
+@@ -0,0 +1,31 @@
++package udpserver
++
++import (
++	"testing"
++
++	"masterdnsvpn-go/internal/arq"
++	Enums "masterdnsvpn-go/internal/enums"
++)
++
++// ARQ workers may already be dispatching when session cleanup cancels them.
++// Once cleanup returns, none of those late packets may repopulate its queue.
++func TestFinalizedStreamRejectsLatePackets(t *testing.T) {
++	server := newTestServerForCleanup()
++	record := newTestSessionRecord(7)
++	stream := record.getOrCreateStream(1, arq.Config{WindowSize: 32, RTO: 1, MaxRTO: 5}, nil, nil)
++	// A protocol reset may still need to be transmitted while the upstream has
++	// closed but ARQ has not finalized; only terminal cleanup seals the queue.
++	stream.closeUpstreamOnly("CLOSED")
++	if !stream.PushTXPacket(Enums.DefaultPacketPriority(Enums.PACKET_STREAM_RST), Enums.PACKET_STREAM_RST, 1, 0, 0, 0, 0, nil) {
++		t.Fatal("protocol reset rejected before final cleanup")
++	}
++	server.cleanupClosedSession(record.ID, record)
++	for _, packet := range []uint8{Enums.PACKET_STREAM_DATA, Enums.PACKET_STREAM_DATA_ACK, Enums.PACKET_STREAM_RST, Enums.PACKET_STREAM_RST_ACK} {
++		if stream.PushTXPacket(Enums.DefaultPacketPriority(packet), packet, 1, 0, 0, 0, 0, nil) {
++			t.Fatalf("closed stream accepted late packet type %d", packet)
++		}
++	}
++	if stream.TXQueue.Size() != 0 {
++		t.Fatal("closed stream queue was repopulated")
++	}
++}
 diff --git a/probe/http.go b/probe/http.go
 new file mode 100644
 index 0000000..f23b525

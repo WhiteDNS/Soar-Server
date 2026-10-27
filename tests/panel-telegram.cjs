@@ -7,6 +7,8 @@ module.exports=async({page,out,assert})=>{
  assert.equal(await page.locator('#telegram-token').getAttribute('type'),'password');
  assert.equal(await page.locator('#telegram-token').inputValue(),'');
  assert.equal(await page.locator('#telegram-report-time').inputValue(),'09:00');
+	assert.equal(await page.locator('#telegram-backup-time').inputValue(),'03:00');
+	assert.equal(await page.locator('#telegram-backup').isChecked(),false);
  assert.equal(await page.locator('#telegram-timezone').inputValue(),'Asia/Tehran');
  assert.equal(await page.locator('#telegram-test').isDisabled(),true);
  // Exercise real validation; subsequent Telegram responses are an isolated UI seam.
@@ -39,6 +41,13 @@ module.exports=async({page,out,assert})=>{
  await page.locator('#telegram-save').click();await page.waitForFunction(()=>!document.getElementById('telegram-save').disabled);
  assert.equal(requests.filter(r=>r.method==='PUT').at(-1).body.token,'');
  assert.ok(requests.filter(r=>r.method==='PUT').every(r=>!Object.hasOwn(r.body,'chat_id')));
+	await page.locator('#telegram-form details').evaluate(el=>el.open=true);
+	await page.locator('#telegram-backup').check();await page.locator('#telegram-backup-time').fill('04:30');
+	await page.locator('#telegram-save').click();await page.waitForFunction(()=>!document.getElementById('telegram-save').disabled);
+	assert.equal(requests.filter(r=>r.method==='PUT').at(-1).body.auto_backup,true);
+	assert.equal(requests.filter(r=>r.method==='PUT').at(-1).body.backup_time,'04:30');
+	saved={...saved,last_report:'2026-10-26',last_backup:'2026-10-26',backup_error:'backup retry pending'};await page.evaluate(()=>window.panelTelegram.refresh());
+	await page.waitForFunction(()=>document.getElementById('telegram-deliveries').textContent.includes('backup retry pending'));
  await page.locator('#telegram-form details').evaluate(el=>el.open=true);
  for(const width of [1440,768,375,320]){
   await page.setViewportSize({width,height:1100});await page.locator('#telegram-form').scrollIntoViewIfNeeded();

@@ -77,6 +77,8 @@ func (a *panelAssistant) view() map[string]any {
 func (h *HTTP) assistantAPI(w http.ResponseWriter, r *http.Request, session loginSession) {
 	a := h.assistant
 	switch r.URL.Path {
+	case "/api/assistant/models":
+		h.assistantModels(w, r)
 	case "/api/assistant/config":
 		if r.Method == "GET" {
 			a.mu.Lock()

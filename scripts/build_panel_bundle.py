@@ -15,7 +15,7 @@ import struct
 import tarfile
 
 ROOT=Path(__file__).resolve().parents[1]
-VERSION="0.11.0"
+VERSION="0.12.0"
 
 def verify_version():
     for path, pattern in [
@@ -66,7 +66,7 @@ def main():
     (bundle/"lib").mkdir(exist_ok=True)
     (bundle/"lib/panel-installer.sh").write_bytes((ROOT/"lib/panel-installer.sh").read_text(encoding="utf8").replace("\r\n","\n").encode("utf8"))
     (bundle/"lib/standalone-install.sh").write_bytes((ROOT/"install.sh").read_text(encoding="utf8").replace("\r\n","\n").encode("utf8"))
-    for name in ["ANTIFLOOD.fa.md", "COTTENMAX-PANEL-VALIDATION.md", "PANEL-0.5.0-VALIDATION.md", f"RELEASE-panel-{VERSION}.md", "COTTEN-TCP-RELIABILITY-2026-10-21.md"]:
+    for name in ["ANTIFLOOD.fa.md", "COTTENMAX-PANEL-VALIDATION.md", "PANEL-0.5.0-VALIDATION.md", f"RELEASE-panel-{VERSION}.md", "COTTEN-TCP-RELIABILITY-2026-10-21.md", "telegram-emergency-management.fa.md", "telegram-management-audit.md", "DIAGNOSTICS-ASSISTANT.fa.md"]:
         (bundle/"docs"/name).write_bytes((ROOT/"docs"/name).read_text(encoding="utf8").replace("\r\n","\n").encode("utf8"))
     shutil.copytree(ROOT/"patches",bundle/"patches",dirs_exist_ok=True)
     licenses=bundle/"licenses";licenses.mkdir(exist_ok=True)

@@ -22,6 +22,8 @@ type telegramKeyboard struct {
 	Rows [][]telegramButton `json:"inline_keyboard"`
 }
 type telegramConversation struct {
+	Setting               string
+	Before                Settings
 	Key, ID, Field, Query string
 	Input                 ClientInput
 	Expires               time.Time
@@ -29,6 +31,12 @@ type telegramConversation struct {
 	Creating              bool
 }
 type telegramConfirmation struct {
+	Before, After            Settings
+	Backup                   []byte
+	Summary                  BackupSummary
+	Access                   AccessInput
+	Config                   TelegramConfig
+	ConfigBefore             TelegramConfig
 	Key, Action, ID, Version string
 	Input                    ClientInput
 	Revision                 uint64
@@ -49,6 +57,8 @@ func (t *Telegram) homeKeyboard() telegramKeyboard {
 		{t.button("👥 Users", "👥 کاربران", "users:0"), t.button("➕ Add user", "➕ افزودن کاربر", "new")},
 		{t.button("📊 Server status", "📊 وضعیت سرور", "status"), t.button("🔄 Restart", "🔄 راه‌اندازی مجدد", "restart")},
 		{t.button("⬆️ Updates", "⬆️ به‌روزرسانی", "updates"), t.button("⚙️ Preferences", "⚙️ ترجیحات", "prefs")},
+		{t.button("⚙️ Server settings", "⚙️ تنظیمات سرور", "server"), t.button("🩺 Diagnostics", "🩺 عیب‌یابی", "diagnostics")},
+		{t.button("💾 Backups", "💾 پشتیبان و بازیابی", "backups"), t.button("🌐 Panel access", "🌐 دسترسی پنل", "access")},
 	}}
 }
 func (t *Telegram) home(ctx context.Context) error {
@@ -66,7 +76,7 @@ func (t *Telegram) errorText(e error) string {
 	}
 	switch {
 	case errors.Is(e, ErrConflict):
-		return "حساب هم‌زمان تغییر کرده است. دوباره آن را باز کنید."
+		return "اطلاعات هم‌زمان تغییر کرده است. فرم را دوباره باز کنید."
 	case errors.Is(e, ErrNotFound):
 		return "حساب پیدا نشد. فهرست را تازه کنید."
 	case strings.Contains(e.Error(), "confirmation"):
@@ -79,16 +89,28 @@ func (t *Telegram) errorText(e error) string {
 }
 func (t *Telegram) message(ctx context.Context, m telegramMessage) error {
 	text := strings.TrimSpace(m.Text)
-	switch strings.Split(text, " ")[0] {
+	command := strings.SplitN(strings.Split(text, " ")[0], "@", 2)[0]
+	switch command {
 	case "/start", "/menu", "/cancel":
 		return t.home(ctx)
 	case "/stats":
 		return t.callback(ctx, "status")
 	case "/help":
-		_, e := t.notify(ctx, t.config(), t.tr("ℹ️ Manage users, view server status with /stats, restart the panel and install official stable updates using the buttons. Confirmations expire after five minutes. /cancel discards the current form. Only this private admin can act. Panel-wide settings remain in the dashboard.", "ℹ️ با دکمه‌ها کاربران را مدیریت کنید، با /stats وضعیت سرور را ببینید، سرویس را دوباره راه‌اندازی و نسخهٔ پایدار رسمی را نصب کنید. تأییدها پس از پنج دقیقه منقضی می‌شوند. /cancel فرم را لغو می‌کند. فقط مدیر خصوصی دسترسی دارد. تنظیمات کلی سرور در داشبورد است."), t.homeKeyboard())
+		_, e := t.notify(ctx, t.config(), t.tr("ℹ️ /menu: users and management · /stats: current state · /settings: server and tunnel settings · /diagnostics: runtimes and logs · /backup: encrypted backup and schedules · /restore: upload and preview a backup · /access: panel domains and HTTPS. Confirmations expire after five minutes. /cancel discards the current form. Keep the backup recovery key outside this server. The bot requires the panel process and server access to Telegram to remain available.", "ℹ️ /menu مدیریت کاربران و سرویس · /stats وضعیت فعلی · /settings تنظیمات سرور و تونل · /diagnostics موتور و لاگ · /backup پشتیبان رمزگذاری‌شده و زمان‌بندی · /restore ارسال و بررسی فایل بازیابی · /access دامنه و HTTPS پنل. تأییدها پس از پنج دقیقه منقضی می‌شوند. /cancel فرم را لغو می‌کند. کلید بازیابی پشتیبان را خارج از این سرور نگه دارید. اجرای پنل و دسترسی سرور به تلگرام برای کار ربات لازم است."), t.homeKeyboard())
 		return e
 	case "/settings":
-		return t.preferences(ctx)
+		return t.serverSettings(ctx)
+	case "/backup":
+		return t.backups(ctx)
+	case "/restore":
+		return t.restorePrompt(ctx)
+	case "/diagnostics":
+		return t.diagnostics(ctx)
+	case "/access":
+		return t.accessMenu(ctx)
+	}
+	if m.Document != nil {
+		return t.receiveBackup(ctx, m)
 	}
 	d := t.conversation
 	if d == nil || d.Field == "" {
@@ -96,6 +118,9 @@ func (t *Telegram) message(ctx context.Context, m telegramMessage) error {
 	}
 	if m.Reply == nil || m.Reply.ID != d.Prompt {
 		return errors.New(t.tr("reply to the current prompt, or use /cancel", "به پیام پرسش فعلی پاسخ دهید یا /cancel را بفرستید"))
+	}
+	if d.Field == "management" {
+		return t.managementReply(ctx, d, text)
 	}
 	if d.Field == "search" {
 		q := text
@@ -117,6 +142,9 @@ func (t *Telegram) message(ctx context.Context, m telegramMessage) error {
 	return t.review(ctx)
 }
 func (t *Telegram) callback(ctx context.Context, data string) error {
+	if handled, e := t.managementCallback(ctx, data); handled {
+		return e
+	}
 	switch {
 	case data == "home":
 		return t.home(ctx)
@@ -233,7 +261,7 @@ func (t *Telegram) callback(ctx context.Context, data string) error {
 		_, e = t.notify(ctx, t.config(), text, t.backKeyboard())
 		return e
 	case data == "restart":
-		return t.confirm(ctx, telegramConfirmation{Action: "restart"}, t.tr("Restart the panel and all Soar/Cotten runtimes? Active connections will drop briefly.", "پنل و موتورهای Soar/Cotten دوباره راه‌اندازی شوند؟ اتصال‌های فعال موقتاً قطع می‌شوند."))
+		return t.confirm(ctx, telegramConfirmation{Action: "restart"}, t.tr("Restart the panel and all Soar/Cotten/MasterDNS runtimes? Active connections will drop briefly.", "پنل و موتورهای Soar/Cotten/MasterDNS دوباره راه‌اندازی شوند؟ اتصال‌های فعال موقتاً قطع می‌شوند."))
 	case data == "updates":
 		return t.updates(ctx)
 	case data == "prefs":
@@ -495,12 +523,22 @@ func (t *Telegram) user(ctx context.Context, id string) error {
 		{t.button("Enable / Disable", "فعال / غیرفعال", "action:toggle:"+id), t.button("🔌 Disconnect", "🔌 قطع اتصال", "action:disconnect:"+id)},
 		{t.button("♻️ Reset usage", "♻️ صفر کردن مصرف", "action:reset:"+id), t.button("🔑 Rotate tunnel key", "🔑 تعویض کلید تونل", "action:rotate:"+id)},
 		{t.button("🔗 Rotate subscription URL", "🔗 تعویض لینک ساب", "action:subscription-rotate:"+id)},
+		{t.button("🛡 Release quarantine", "🛡 رفع مسدودی ضدفلود", "release:"+id)},
 		{t.button("🗑️ Delete", "🗑️ حذف", "action:delete:"+id), t.button("👥 Users", "👥 کاربران", "users:0")}}}
 	counts := t.h.manager.ActiveCounts()
-	_, e = t.notify(ctx, t.config(), t.draftSummary(d)+fmt.Sprintf(t.tr("\nStatus: %s\nCurrent usage: %.2f GiB\nActive TCP streams: %d", "\nوضعیت: %s\nمصرف فعلی: %.2f GiB\nجریان TCP فعال: %d"), t.accountStatus(c), float64(c.Used())/(1<<30), counts[id]), k)
+	text := t.draftSummary(d) + fmt.Sprintf(t.tr("\nStatus: %s\nCurrent usage: %.2f GiB\nActive TCP streams: %d", "\nوضعیت: %s\nمصرف فعلی: %.2f GiB\nجریان TCP فعال: %d"), t.accountStatus(c), float64(c.Used())/(1<<30), counts[id])
+	for _, status := range t.h.manager.flood.snapshot().Accounts {
+		if status.ClientID == id && status.Block.Until > t.now().UnixMilli() {
+			text += fmt.Sprintf(t.tr("\nAnti-flood quarantine until %s · %s", "\nمسدودی ضدفلود تا %s · %s"), time.UnixMilli(status.Block.Until).UTC().Format(time.RFC3339), status.Block.Reason)
+		}
+	}
+	_, e = t.notify(ctx, t.config(), text, k)
 	return e
 }
 func (t *Telegram) confirm(ctx context.Context, c telegramConfirmation, text string) error {
+	if c.Action == "preferences" {
+		c.ConfigBefore = t.config()
+	}
 	c.Key = token()[:12]
 	c.Expires = t.now().Add(5 * time.Minute)
 	t.confirmation = &c
@@ -521,9 +559,10 @@ func (t *Telegram) execute(ctx context.Context, key string) error {
 	t.state.PendingSince = t.now().UnixMilli()
 	t.state.PendingJob = ""
 	if e := t.save(); e != nil {
+		t.state.PendingAction, t.state.PendingSince = "", 0
 		return errors.New("cannot persist action; nothing was executed")
 	}
-	if c.Action == "restart" || c.Action == "update" {
+	if c.Action == "restart" || c.Action == "update" || c.Action == "restore" {
 		if t.h.ops == nil {
 			return t.finishAction(errors.New("maintenance service unavailable; rerun the current panel installer"))
 		}
@@ -537,7 +576,18 @@ func (t *Telegram) execute(ctx context.Context, key string) error {
 				return t.finishAction(errors.New("choose a newer official stable release"))
 			}
 		}
-		job, e := t.h.ops.Start(ctx, MaintenanceRequest{Action: c.Action, Version: c.Version})
+		req := MaintenanceRequest{Action: c.Action, Version: c.Version}
+		if c.Action == "restore" {
+			cfg, e := t.h.store.Settings()
+			if e != nil {
+				return t.finishAction(e)
+			}
+			if cfg.BaseZone != c.Summary.BaseZone {
+				return t.finishAction(BackupMismatch(c.Summary.BaseZone, cfg.BaseZone))
+			}
+			req.Backup, req.SHA256, req.ExpectedZone = c.Backup, c.Summary.SHA256, c.Summary.BaseZone
+		}
+		job, e := t.h.ops.Start(ctx, req)
 		if e != nil {
 			// A socket error may follow acceptance; keep the marker for status recovery.
 			return errors.New("maintenance result is uncertain; check server status before retrying")
@@ -548,6 +598,13 @@ func (t *Telegram) execute(ctx context.Context, key string) error {
 			return errors.New("maintenance accepted; result tracking interrupted, check server status")
 		}
 		_, e = t.notify(ctx, t.config(), t.tr("⏳ Maintenance accepted. Connections may drop briefly. I will report the result when the panel returns.", "⏳ درخواست نگهداری ثبت شد. اتصال‌ها ممکن است موقتاً قطع شوند. پس از بازگشت پنل نتیجه را می‌فرستم."), t.backKeyboard())
+		return e
+	}
+	if handled, e := t.executeManagement(ctx, c); handled {
+		if e = t.finishAction(e); e != nil {
+			return e
+		}
+		_, e = t.notify(ctx, t.config(), t.tr("✅ Action completed.", "✅ عملیات انجام شد."), t.homeKeyboard())
 		return e
 	}
 	changed, e := t.h.applyAccountAction(c.Action, c.ID, c.Input, &c.Revision)
@@ -632,12 +689,11 @@ func (t *Telegram) updates(ctx context.Context) error {
 }
 func (t *Telegram) preferences(ctx context.Context) error {
 	c := t.config()
-	_, e := t.notify(ctx, c, fmt.Sprintf(t.tr("⚙️ Preferences\nLanguage: %s\nAlerts: %t\nDaily report: %t at %s (%s)\nChange report time and timezone in dashboard settings.", "⚙️ ترجیحات\nزبان: %s\nهشدار: %t\nگزارش روزانه: %t ساعت %s (%s)\nزمان و منطقهٔ زمانی گزارش را در تنظیمات داشبورد تغییر دهید."), c.Language, c.Alerts, c.DailyReport, c.ReportTime, c.Timezone), telegramKeyboard{Rows: [][]telegramButton{{t.button("فارسی / English", "فارسی / English", "pref:language")}, {t.button("Toggle alerts", "تغییر وضعیت هشدار", "pref:alerts"), t.button("Toggle daily report", "تغییر گزارش روزانه", "pref:report")}, {t.button("↩️ Menu", "↩️ منو", "home")}}})
+	_, e := t.notify(ctx, c, fmt.Sprintf(t.tr("⚙️ Preferences\nLanguage: %s\nAlerts: %t\nDaily report: %t at %s (%s)\nLast delivered report: %s\nAutomatic backup: %t at %s\nLast delivered backup: %s", "⚙️ ترجیحات\nزبان: %s\nهشدار: %t\nگزارش روزانه: %t ساعت %s (%s)\nآخرین گزارش ارسال‌شده: %s\nپشتیبان خودکار: %t ساعت %s\nآخرین پشتیبان ارسال‌شده: %s"), c.Language, c.Alerts, c.DailyReport, c.ReportTime, c.Timezone, t.state.LastReport, c.AutoBackup, c.BackupTime, t.state.LastBackup), telegramKeyboard{Rows: [][]telegramButton{{t.button("فارسی / English", "فارسی / English", "pref:language")}, {t.button("Toggle alerts", "تغییر وضعیت هشدار", "pref:alerts"), t.button("Toggle daily report", "تغییر گزارش روزانه", "pref:report")}, {t.button("Report time", "ساعت گزارش", "schedule:report_time"), t.button("Timezone", "منطقهٔ زمانی", "schedule:timezone")}, {t.button("Backups", "پشتیبان‌ها", "backups"), t.button("↩️ Menu", "↩️ منو", "home")}}})
 	return e
 }
 func (t *Telegram) preference(ctx context.Context, field string) error {
 	old := t.config()
-	started := t.state.ReportStarted
 	c := old
 	switch field {
 	case "language":
@@ -649,21 +705,11 @@ func (t *Telegram) preference(ctx context.Context, field string) error {
 		c.Alerts = !c.Alerts
 	case "report":
 		c.DailyReport = !c.DailyReport
-		if c.DailyReport && t.state.ReportStarted == 0 {
-			t.state.ReportStarted = t.now().UnixMilli()
-		}
 	default:
 		return errors.New("invalid preference")
 	}
-	t.mu.Lock()
-	t.cfg = c
-	t.mu.Unlock()
-	if e := t.save(); e != nil {
-		t.state.ReportStarted = started
-		t.mu.Lock()
-		t.cfg = old
-		t.mu.Unlock()
-		return errors.New("cannot save preference")
+	if e := t.savePreferences(c); e != nil {
+		return e
 	}
 	return t.preferences(ctx)
 }

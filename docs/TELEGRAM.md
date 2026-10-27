@@ -1,5 +1,9 @@
 # Telegram management / مدیریت با تلگرام
 
+Panel 0.12.0 adds emergency server settings, diagnostics, anti-flood release,
+panel-domain/HTTPS migration, encrypted manual/daily backups and validated restore.
+See [the Persian setup and recovery guide](telegram-emergency-management.fa.md).
+
 ## Connect / اتصال
 
 1. Create a **dedicated bot for this server** using `/newbot` in Telegram's official
@@ -30,7 +34,8 @@ an ID. Disconnect Telegram before pairing a different administrator.
 The token is a secret. The panel never displays a saved token: leave its input
 blank to preserve it. Use **Disable bot** to pause management and notifications
 while keeping the credentials; **Disconnect Telegram** removes credentials and
-bot state without touching server accounts. If a token leaks, revoke/replace it
+bot state without touching server accounts. The local backup recovery key is
+retained so existing encrypted backups remain recoverable. If a token leaks, revoke/replace it
 in BotFather, then save the replacement in the dashboard.
 
 ## Management / مدیریت
@@ -51,7 +56,7 @@ Persian and Arabic digits are accepted for numeric values.
 Creation defaults to both engines and the dashboard's default limits. Review
 all changes before confirming. Confirmations last five minutes and work once;
 forms last fifteen minutes. `/cancel` discards the current form. `/menu` returns
-home; `/stats` returns current server resources, uptime, version, account counts, active TCP streams and usage totals; `/settings` opens preferences; `/help` describes the controls. Concurrent
+home; `/stats` returns current server resources, uptime, version, account counts, active TCP streams and usage totals; `/settings` opens server settings; `/backup`, `/restore`, `/diagnostics` and `/access` open the corresponding management menus. Preferences are available from the main menu; `/help` describes the controls. Concurrent
 web edits invalidate stale account confirmations.
 
 Only the configured sender in the configured **private** chat is authorized.
@@ -69,20 +74,23 @@ Restart restarts `soar-panel.service`, its tunnels and bot, briefly dropping
 connections. Updates install newer **official stable WhiteDNS panel bundles**
 through the existing verified update/backup/readiness/rollback workflow. They do
 not upgrade OS packages, reboot the server or run arbitrary commands. Server-wide
-settings, bulk operations, backup/restore and administrator credentials stay in
-the dashboard.
+settings and backup/restore are available from the bot. Bulk operations and
+administrator credential changes remain in the dashboard.
 
 ## Alerts and daily report / هشدار و گزارش
 
 Preferences are optional; the bot token is the only required input, followed by the one-time connection link.
 Defaults: transition alerts enabled; daily report at **09:00 Asia/Tehran**.
-Change time, IANA timezone, language, alerts or reports in the dashboard. The bot
-also provides language and alert/report toggles.
+Change time, IANA timezone, language, alerts or reports in the dashboard or bot.
+Automatic encrypted backups are opt-in and initially scheduled for 03:00 in the
+same timezone. Keep the recovery key separately outside this server before relying
+on backups. Only the validated, confirmed restore route applies uploaded backups.
 
 Alerts cover account expiry/quota exhaustion, detected runtime failures/recovery
 and newer stable releases. Initial setup establishes a baseline without sending
 historical account alerts. Runtime/account checks run about once a minute;
-release checks run every six hours. Reports describe the **current snapshot**:
+release checks run every six hours. A separate one-second scheduler checks report
+and backup deadlines even when incoming polling fails or blocks. Reports describe the **current snapshot**:
 resources, uptime/version, account state counts, accounts with active streams,
 current upload/download totals and five accounts with highest current usage.
 These are not previous-day traffic statistics. A missed report is retried once

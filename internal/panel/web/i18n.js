@@ -2,6 +2,20 @@
 // Translation is applied to authored UI only. Account names, notes, URLs and input values are never translated.
 const panelI18n = (() => {
  const catalog = {
+ "مدل": "Model",
+ "ابتدا یک مدل انتخاب کنید.": "Choose a model first.",
+ "دریافت مدل‌ها": "Fetch models",
+ "ابتدا مدل‌ها را دریافت کنید": "Fetch models first",
+ "مدل را انتخاب کنید": "Choose a model",
+ "ورود دستی مدل": "Enter model manually",
+ "در حال دریافت مدل‌ها…": "Fetching models…",
+ "مدل‌های دریافت‌شده: ": "Models fetched: ",
+ "دریافت مدل‌ها ناموفق بود؛ دوباره تلاش کنید یا ورود دستی را فعال کنید.": "Could not fetch models; retry or enable manual entry.",
+	"زمان پشتیبان خودکار": "Automatic backup time",
+	"ارسال روزانهٔ پشتیبان رمزگذاری‌شده به تلگرام": "Send a daily encrypted backup to Telegram",
+	"کلید بازیابی را از منوی پشتیبان در ربات دریافت و خارج از سرور نگه دارید.": "Get the recovery key from the bot's Backups menu and store it outside this server.",
+	"آخرین گزارش: ": "Last report: ",
+	"آخرین پشتیبان: ": "Last backup: ",
  "لاگ‌ها و دستیار": "Logs & assistant",
  "مرکز عیب‌یابی": "Diagnostics workspace",
  "اتصال‌ها، موتورهای تونل و پنل را در یک مسیر بررسی کنید.": "Investigate connections, tunnel engines and the panel in one place.",
