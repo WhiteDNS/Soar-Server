@@ -13,7 +13,6 @@ import (
 	"runtime"
 	"soar-server-setup/internal/panel"
 	"soar-server-setup/internal/panelops"
-	"strconv"
 	"strings"
 	"time"
 )
@@ -53,7 +52,7 @@ func run() error {
 	securityScript := flag.String("security-script", "/usr/local/bin/soar-panel-security", "Fixed terminal security wizard")
 	state := flag.String("state", "/var/lib/soar-panel-ops", "Private job/rollback directory")
 	health := flag.String("health-address", "127.0.0.1:2053", "Fixed local management listener")
-	dnsPort := flag.Int("dns-port", 0, "DNS firewall port; 0 reads the running listener or defaults to 53")
+	dnsPort := flag.Int("dns-port", 53, "DNS firewall port from the root-owned service configuration")
 	flag.Parse()
 	if runtime.GOOS != "linux" || os.Geteuid() != 0 {
 		return fmt.Errorf("maintenance service requires Linux root; it exposes only a private group-restricted Unix socket")
@@ -75,14 +74,6 @@ func run() error {
 	}
 	service := &panelops.Service{DB: *db, Binary: *binary, OpsBinary: *opsBinary, SecurityScript: *securityScript, MenuScript: "/usr/local/bin/soar-panel-menu", LockFile: filepath.Join(*state, "maintenance.lock"), StateDir: *state, HealthAddress: *health, UID: uid, GID: gid}
 	firewallCtx, cancelFirewall := context.WithTimeout(context.Background(), 15*time.Second)
-	if *dnsPort == 0 {
-		*dnsPort = 53
-		if live, found, err := panel.ReadListenerConfig(*db); err == nil && found {
-			if _, port, err := net.SplitHostPort(live.DNS); err == nil {
-				*dnsPort, _ = strconv.Atoi(port)
-			}
-		}
-	}
 	e = panelops.PrepareFirewall(firewallCtx, *opsBinary, fmt.Sprintf("dns:%d", *dnsPort))
 	cancelFirewall()
 	if e != nil {
