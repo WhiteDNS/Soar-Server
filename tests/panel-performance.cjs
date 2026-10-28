@@ -35,5 +35,37 @@ module.exports=async({page,out,assert})=>{
  assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1),'navigation introduced mobile overflow');
  await page.setViewportSize({width:1440,height:1100});await open('clients');
  await page.evaluate(()=>{rowObserver.disconnect();delete window.savedRows;delete window.rowObserver;delete window.removedRows;});
- console.log('PASS: stable account DOM, coalesced reads, active-page polling, cached metrics, reduced motion and mobile navigation');
+ // A mutation arriving during a poll must be followed by an awaited fresh read.
+ const countBefore=await page.evaluate(()=>clients.length);
+ const deferred=()=>{let resolve;const promise=new Promise(r=>resolve=r);return {promise,resolve};};
+ const waitForCapture=async(index)=>{let timer;try{await Promise.race([captured[index].promise,new Promise((_,reject)=>{timer=setTimeout(()=>reject(Error('refresh request '+index+' did not arrive')),10000);})]);}finally{clearTimeout(timer);}};
+ const captured=[deferred(),deferred()],release=[deferred(),deferred()];let intercepted=0,created,requested;
+ await page.route('**/api/clients',async route=>{
+  if(route.request().method()!=='GET'||intercepted>=2){await route.continue();return;}
+  const index=intercepted++,response=await route.fetch();captured[index].resolve();await release[index].promise;await route.fulfill({response});
+ });
+ const oldPoll=page.evaluate(()=>refresh({background:true}));
+ try{
+  await waitForCapture(0);
+  created=await page.evaluate(()=>api('/clients','POST',{name:'Refresh sequencing fixture',enabled:false}));
+  let completed=false;requested=page.evaluate(()=>refresh()).then(()=>{completed=true;});
+  release[0].resolve();await waitForCapture(1);
+  await Promise.race([requested,new Promise(resolve=>setTimeout(resolve,30))]);
+  assert.equal(completed,false,'manual refresh finished before the post-mutation response arrived');
+  release[1].resolve();await requested;
+  assert.equal(await page.evaluate(()=>clients.length),countBefore+1,'stale poll replaced the new account snapshot');
+  assert.equal(await page.locator('#clients-body tr').count(),countBefore+1);
+ }finally{
+  release.forEach(gate=>gate.resolve());await oldPoll;if(requested)await requested;
+  await page.unrouteAll({behavior:'wait'});
+  if(created){await page.evaluate(id=>api('/clients/'+id,'DELETE'),created.id);await page.evaluate(()=>refresh());}
+ }
+ // Session responses can beat the deferred feature scripts on a warm cache.
+ // Force that ordering and require the initial deep-linked form to populate.
+ await page.evaluate(()=>location.hash='antiflood');
+ await page.route('**/antiflood.js',async route=>{await new Promise(resolve=>setTimeout(resolve,250));await route.continue();});
+ await page.reload();await page.locator('#app').waitFor({state:'visible'});
+ await page.waitForFunction(()=>document.getElementById('flood-account_rate').value!=='');
+ await page.unrouteAll({behavior:'wait'});await open('clients');await page.evaluate(()=>refresh());
+ console.log('PASS: stable account DOM, coalesced reads, active-page polling, cached metrics, awaited post-mutation refresh, deferred module startup, reduced motion and mobile navigation');
 };

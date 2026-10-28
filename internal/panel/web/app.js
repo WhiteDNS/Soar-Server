@@ -1,6 +1,9 @@
 'use strict';
 const $ = id => document.getElementById(id);
 const apiPath = path => new URL('api'+path,document.baseURI).href;
+// This deferred script starts before the page-specific deferred modules. A
+// cached /session response may arrive first; never enter a half-initialized UI.
+const pageModulesReady=document.readyState==='complete'?Promise.resolve():new Promise(resolve=>document.addEventListener('DOMContentLoaded',resolve,{once:true}));
 const states = {active:panelText("فعال"), disabled:panelText("غیرفعال"), expired:panelText("منقضی"), exhausted:panelText("حجم تمام‌شده")};
 const pages = {logs:panelText("لاگ‌ها و دستیار"),antiflood:panelText("ضدفلاد و کنترل سوءاستفاده"), dashboard:panelText("نمای کلی"), clients:panelText("حساب‌های کاربری"), events:panelText("رویدادهای مدیریت"), settings:panelText("تنظیمات سرور"), backup:panelText("پشتیبان و بازیابی"), updates:panelText("به‌روزرسانی پنل"), security:panelText("دامنه و امنیت"), admin:panelText("حساب مدیر")};
 const events = {'assistant.configured':panelText('تنظیم اتصال هوش مصنوعی'),'assistant.analysis_completed':panelText('تحلیل با هوش مصنوعی'),'assistant.settings_applied':panelText('اعمال پیشنهاد هوش مصنوعی'),'assistant.settings_reverted':panelText('بازگردانی پیشنهاد هوش مصنوعی'),'antiflood.policy_updated':panelText("سیاست ضدفلاد ذخیره شد."),'antiflood.released':panelText("قرنطینه آزاد شد."),'antiflood.quarantined.account_rate':panelText("قرنطینه")+' · '+panelText("نرخ اتصال حساب"),'antiflood.quarantined.target_scan':panelText("قرنطینه")+' · '+panelText("تعداد مقصدهای تازه"),'antiflood.quarantined.dial_failures':panelText("قرنطینه")+' · '+panelText("شکست‌های مکرر اتصال"),'telegram.configured':panelText("ذخیرهٔ تنظیمات تلگرام"),'telegram.paired':panelText("اتصال مدیر تلگرام"),'telegram.disconnected':panelText("حذف اتصال تلگرام"),'telegram.action_completed':panelText("عملیات مدیر تلگرام"),'maintenance.restart_requested':panelText("درخواست راه‌اندازی مجدد پنل"),'admin.credentials_updated':panelText("تغییر اطلاعات ورود مدیر"),'backup.restored':panelText("بازیابی پشتیبان"),'maintenance.update_requested':panelText("درخواست به‌روزرسانی پنل"),'maintenance.restore_requested':panelText("درخواست بازیابی پشتیبان"),'access.updated':panelText("تغییر دامنه و آدرس امن"),'admin.login':panelText("ورود مدیر"),'backup.exported':panelText("دریافت پشتیبان"),'settings.updated':panelText("تغییر تنظیمات"),'client.created':panelText("ساخت حساب"),'client.updated':panelText("ویرایش حساب"),'client.deleted':panelText("حذف حساب"),'client.rotated':panelText("تعویض لینک حساب"),'client.usage_reset':panelText("صفر کردن مصرف"),'client.disconnected':panelText("قطع اتصال‌های باز"),'client.subscription_rotated':panelText("تعویض لینک ساب")};
@@ -10,7 +13,7 @@ const numberFormatter=new Intl.NumberFormat(panelI18n.locale),byteFormatter=new 
 const number = n => numberFormatter.format(n);
 function bytes(n){if(n == null)return '—';if(!n)return '0 B';const units=['B','KiB','MiB','GiB','TiB'];const i=Math.max(0,Math.min(4,Math.floor(Math.log(n)/Math.log(1024))));return `${byteFormatter.format(n/1024**i)} ${units[i]}`;}
 function date(n){return n?dateFormatter.format(new Date(n)):panelText("بدون انقضا");}
-let navigationId=0,dashboardCache=null,dashboardAt=0,clientsLoaded=false,refreshPromise=null,refreshSession='',dataEpoch=0;
+let navigationId=0,dashboardCache=null,dashboardAt=0,clientsLoaded=false,refreshPromise=null,refreshSession='',dataEpoch=0,refreshEpoch=0,refreshFull=false,queuedManualRefresh=null;
 const pendingReads=new Map();
 function setText(el,value){value=String(value);if(el.textContent!==value)el.textContent=value;}
 function status(c){if(!c.enabled)return 'disabled';if(c.expires_at&&Date.now()>=c.expires_at)return 'expired';if(c.quota_bytes&&c.upload_bytes+c.download_bytes>=c.quota_bytes)return 'exhausted';return 'active';}
@@ -35,7 +38,7 @@ async function api(path,method='GET',body){
 }
 async function withButton(button,fn){button.disabled=true;button.setAttribute('aria-busy','true');delete button.dataset.state;try{if(await fn()===true)button.dataset.state='success';}catch(e){button.dataset.state='error';toast(message(e),'error');}finally{button.disabled=false;button.removeAttribute('aria-busy');if(button.dataset.state)setTimeout(()=>delete button.dataset.state,2500);if(button.dataset.clientId){const target=document.querySelector('.account-actions-trigger[data-client-id="'+CSS.escape(button.dataset.clientId)+'"]');if(target?.getClientRects().length)target.focus({preventScroll:true});}}}
 function signOut(){navigationId++;dashboardCache=null;dashboardAt=0;clientsLoaded=false;pendingReads.clear();clientRows.clear();for(const section of document.querySelectorAll('.page')){delete section.dataset.loaded;section.removeAttribute('aria-busy');}panelUI.resetMetrics();window.panelDiagnostics?.clear();window.panelTelegram?.clear();panelUI.closeMenu();const wasSignedIn=!!csrf;selectedClients.clear();resetAdminForm();clients=[];connections={};$('clients-body').replaceChildren();updateSelectionControls();panelUI.closeActionMenu(false);panelUI.closeSelectMenu();csrf='';$('app').hidden=true;$('login-view').hidden=false;for(const d of document.querySelectorAll('dialog[open]'))d.close();if(wasSignedIn)$('login-password').value='';}
-async function enter(token){csrf=token;$('login-view').hidden=true;$('app').hidden=false;$('login-password').value='';navigate();await refresh();window.panelMaintenance?.afterLogin();}
+async function enter(token){await pageModulesReady;csrf=token;$('login-view').hidden=true;$('app').hidden=false;$('login-password').value='';navigate();await refresh();window.panelMaintenance?.afterLogin();}
 $('login-form').addEventListener('submit',async e=>{e.preventDefault();const button=e.submitter;button.disabled=true;$('login-error').textContent='';try{const v=await api('/login','POST',{name:$('login-name').value,password:$('login-password').value});await enter(v.csrf);}catch(err){$('login-error').textContent=message(err);}finally{button.disabled=false;}});
 $('logout').onclick=e=>withButton(e.currentTarget,async()=>{await api('/logout','POST');signOut();});
 function navigate(){
@@ -55,10 +58,23 @@ $('menu-toggle').onclick=()=>panelUI.toggleMenu();
 $('open-clients').onclick=()=>location.hash='clients';
 $('theme-toggle').onclick=()=>panelUI.toggleTheme();
 async function refresh({background=false}={}){
- if(!csrf)return;if(busy){if(refreshSession!==csrf){await refreshPromise;return refresh({background});}return refreshPromise;}
+ if(!csrf)return;
+ if(busy){
+  if(refreshSession!==csrf){await refreshPromise;return refresh({background});}
+  if(!background&&(!refreshFull||refreshEpoch!==dataEpoch)){
+   if(!queuedManualRefresh){
+    const session=csrf,inflight=refreshPromise;
+    const queued=(async()=>{await inflight;if(queuedManualRefresh===queued)queuedManualRefresh=null;if(csrf===session)return refresh();})();
+    queuedManualRefresh=queued;
+   }
+   return queuedManualRefresh;
+  }
+  return refreshPromise;
+ }
  busy=true;const session=csrf,page=currentPage,ticket=navigationId,epoch=dataEpoch;refreshSession=session;let invalidated=false;
  refreshPromise=(async()=>{try{
   const wantDashboard=!background||page==='dashboard'||!dashboardCache,wantClients=!background||page==='clients'||!clientsLoaded;
+  refreshFull=wantDashboard&&wantClients;refreshEpoch=epoch;
   const heartbeat=background&&!wantDashboard&&!wantClients&&!['events','logs','antiflood'].includes(page);
   const [d,c]=await Promise.all([wantDashboard?api('/dashboard'):null,wantClients?api('/clients'):null,heartbeat?api('/session'):null]);if(csrf!==session)return;if(epoch!==dataEpoch){invalidated=true;return;}
   if(d){dashboardCache=d;dashboardAt=performance.now();}
@@ -70,7 +86,7 @@ async function refresh({background=false}={}){
   if(currentPage==='antiflood')await window.panelAntiFlood?.refreshStatus();
   if(csrf!==session)return;
   panelUI.setConnection(true);setText($('sync-state'),panelText("به‌روز · ")+new Date().toLocaleTimeString(panelI18n.locale,{hour:'2-digit',minute:'2-digit'}));$('sync-state').classList.remove('stale');$('page-error').hidden=true;
- }catch(e){if(csrf!==session)return;setText($('sync-state'),panelText("ارتباط برقرار نیست"));$('sync-state').classList.add('stale');panelUI.setConnection(false);$('page-error').textContent=message(e);$('page-error').hidden=false;}finally{busy=false;refreshPromise=null;if(csrf===session&&(invalidated||ticket!==navigationId))queueMicrotask(()=>void refresh({background:true}));}})();
+ }catch(e){if(csrf!==session)return;setText($('sync-state'),panelText("ارتباط برقرار نیست"));$('sync-state').classList.add('stale');panelUI.setConnection(false);$('page-error').textContent=message(e);$('page-error').hidden=false;}finally{busy=false;refreshPromise=null;if(csrf===session&&!queuedManualRefresh&&(invalidated||ticket!==navigationId))queueMicrotask(()=>void refresh({background:true}));}})();
  return refreshPromise;
 }
 $('refresh').onclick=e=>withButton(e.currentTarget,refresh);
@@ -204,7 +220,7 @@ async function loadPage(page=currentPage,ticket=navigationId){
   $('base-zone').value=s.base_zone;$('country').value=s.country;$('resolvers').value=s.resolvers.join('\n');$('allow-ports').value=s.allow_ports.join(', ');$('server-stream-limit').value=s.server_stream_limit??0;soarSettingsForm.load(s.soarSettings);
  }else if(page==='events'){
   const list=await api('/events');if(!csrf||ticket!==navigationId||currentPage!==page)return;
-  const signature=JSON.stringify(list);if($('events-list').dataset.signature===signature)return;$('events-list').dataset.signature=signature;
+  const signature=JSON.stringify([list,list.map(ev=>clients.find(c=>c.id===ev.client_id)?.name||'')]);if($('events-list').dataset.signature===signature)return;$('events-list').dataset.signature=signature;
   $('events-list').replaceChildren(...list.map(ev=>{const li=node('li'),title=node('div',events[ev.action]||ev.action);if(ev.client_id){const c=clients.find(c=>c.id===ev.client_id);title.append(node('small',c?c.name:ev.client_id));}const t=node('time',date(ev.at));t.dateTime=new Date(ev.at).toISOString();li.append(title,t);return li;}));if(!list.length)$('events-list').append(node('li',panelText("هنوز رویدادی ثبت نشده است.")));
  }
 }

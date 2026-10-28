@@ -28,7 +28,10 @@ See the [Persian SSH guide](SERVER-MENU.fa.md) or [English SSH guide](SERVER-MEN
 - Keep the latest dashboard figures visible when returning to the page. Do not
   append duplicate traffic samples when cached data is displayed.
 - Reject responses from an older navigation/session or a read preceding a
-  mutation, so delayed requests cannot restore stale values.
+  mutation, so delayed requests cannot restore stale values. A refresh after
+  saving waits for the new server response even when a poll was already running.
+- Wait for page modules before restoring an authenticated session, so a fast
+  session response cannot leave a directly opened form empty.
 - Add a brief 160 ms opacity/position transition and stable numeral/scrollbar
   spacing. Respect the system's reduced-motion preference. Counters display
   actual server readings without animated intermediate numbers.
