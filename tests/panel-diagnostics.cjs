@@ -4,7 +4,11 @@ module.exports=async({page,out,assert})=>{
  await page.locator('nav a[data-page=dashboard]').click();
  const report=await page.evaluate(async()=>{const r=await fetch('/api/diagnostics');if(!r.ok)throw Error('diagnostics request failed');return r.json()});
  assert.equal(typeof report.runtime.udp_write_errors,'number');assert.equal(typeof report.accounting.commits,'number');
- assert.ok(report.host.file_descriptors_limit>0);assert.ok(report.host.file_descriptors_used>0);
+ if(report.host.platform==='linux'){
+  assert.ok(report.host.file_descriptors_limit>0);assert.ok(report.host.file_descriptors_used>0);
+ }else{
+  assert.equal(report.host.file_descriptors_limit,undefined,'unsupported host metrics must not be fabricated');assert.equal(report.host.file_descriptors_used,undefined);
+ }
  const card=page.locator('.runtime-diagnostics');
  for(const lang of ['fa','en']){
   await page.setViewportSize({width:1440,height:1100});

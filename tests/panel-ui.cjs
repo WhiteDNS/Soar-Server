@@ -22,8 +22,10 @@ let browser;
  await page.evaluate(async()=>{const session=await fetch('/api/session').then(r=>r.json());for(const c of [{name:'اتصال خانواده',enabled:true},{name:'حساب متوقف‌شده',enabled:false},{name:'اشتراک منقضی',enabled:true,expires_at:Date.now()-60000}]){const r=await fetch('/api/clients',{method:'POST',headers:{'Content-Type':'application/json','X-CSRF-Token':session.csrf},body:JSON.stringify({name:c.name,enabled:c.enabled,expires_at:c.expires_at||0,quota_bytes:10*1024**3,stream_limit:16})});if(!r.ok)throw Error('fixture create failed');}});
  await page.locator('#refresh').click();await page.locator('#stat-accounts').filter({hasText:'۴'}).waitFor();await page.screenshot({path:path.join(out,'dashboard-1440.png'),fullPage:true});
  await page.locator('nav a[data-page=clients]').click();await page.locator('#clients-body tr').first().waitFor();assert.equal(await page.locator('#clients-body tr').count(),4);assert.equal(await page.locator('nav a[aria-current=page]').getAttribute('data-page'),'clients');await page.screenshot({path:path.join(out,'clients-1440.png'),fullPage:true});
+ if(process.env.PANEL_UI_ONLY==='egress'){await require('./panel-egress.cjs')({page,out,assert,password});assert.deepEqual(errors,[]);return;}
  await require('./panel-selects.cjs')({page,out,assert});
  await require('./panel-performance.cjs')({page,out,assert});
+ await require('./panel-egress.cjs')({page,out,assert,password});
  await require('./panel-design.cjs')({page,out,assert});
  await require('./panel-session-limits.cjs')({page,out,assert});
  await require('./panel-stream-limits.cjs')({page,url,out,assert});

@@ -1,6 +1,6 @@
 <!doctype html>
 <html lang="fa" dir="rtl" data-theme="dark">
-<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="light dark"><title>{{PANEL_NAME}}</title><link rel="preload" href="fonts/vazirmatn.woff2" as="font" type="font/woff2" crossorigin><link rel="stylesheet" href="tokens.css"><link rel="stylesheet" href="style.css"><link rel="stylesheet" href="redesign.css"><link rel="stylesheet" href="ltr.css"><link rel="stylesheet" href="diagnostics.css"><script src="i18n.js" defer></script><script src="settings.js" defer></script><script src="ui.js" defer></script><script src="app.js" defer></script><script src="maintenance.js" defer></script><script src="telegram.js" defer></script><script src="antiflood.js" defer></script><script src="diagnostics.js" defer></script></head>
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="light dark"><title>{{PANEL_NAME}}</title><link rel="preload" href="fonts/vazirmatn.woff2" as="font" type="font/woff2" crossorigin><link rel="stylesheet" href="tokens.css"><link rel="stylesheet" href="style.css"><link rel="stylesheet" href="redesign.css"><link rel="stylesheet" href="ltr.css"><link rel="stylesheet" href="diagnostics.css"><link rel="stylesheet" href="egress.css"><script src="i18n.js" defer></script><script src="settings.js" defer></script><script src="ui.js" defer></script><script src="app.js" defer></script><script src="maintenance.js" defer></script><script src="telegram.js" defer></script><script src="antiflood.js" defer></script><script src="diagnostics.js" defer></script><script src="egress.js" defer></script></head>
 <body>
 <section id="login-view" class="login-view">
  <div class="login-tools"><button class="language-toggle quiet" type="button" aria-label="Change language">English</button><button id="login-theme" class="icon-button" type="button" aria-label="تغییر تم"></button></div>
@@ -92,6 +92,7 @@
    <p id="telegram-feedback" class="maintenance-feedback" role="status" aria-live="polite"></p>
    <p class="hint">اتصال HTTPS خروجی به تلگرام لازم است. گزارش روزانه مصرف فعلی را نشان می‌دهد. هنگام توقف کامل پنل، ربات تا بازگشت سرویس در دسترس نیست.</p>
   </form>
+  {{EGRESS_SETTINGS}}
   <form id="settings-form" class="card settings-card">
    <fieldset class="settings-section"><legend>سقف جریان‌های سرور</legend><div class="settings-grid"><div class="setting-field"><div class="field-label"><label for="server-stream-limit">سقف جریان TCP سرور</label></div><input id="server-stream-limit" name="server_stream_limit" type="number" min="0" max="2147483647" step="1" value="0" dir="ltr" required><small class="setting-range">۰ = نامحدود؛ بین همهٔ حساب‌ها و هر سه موتور مشترک</small></div></div></fieldset>
    <p class="banner">این تنظیمات مخصوص پروفایل Soar است. Cotten با تنظیمات آمادهٔ اتصال صادر می‌شود. حجم، انقضا، سرعت و سقف اتصال حساب روی موتورهای انتخاب‌شده اعمال می‌شوند. پس از تغییر، ساب را تازه‌سازی کنید.</p>

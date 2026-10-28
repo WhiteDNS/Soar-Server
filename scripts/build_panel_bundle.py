@@ -15,7 +15,7 @@ import struct
 import tarfile
 
 ROOT=Path(__file__).resolve().parents[1]
-VERSION="0.13.0"
+VERSION="0.14.0"
 
 def verify_version():
     for path, pattern in [
@@ -60,7 +60,7 @@ def main():
         subprocess.run(["go","build","-mod=readonly","-trimpath","-buildvcs=false","-ldflags=-s -w","-o",str(binary/name),package],cwd=ROOT,env=env,check=True)
         verify_binary(binary/name, args.arch)
     (bundle/"ARCH").write_text(args.arch+"\n", encoding="ascii")
-    for name in ["panel-install.sh","panel-security.sh","panel-menu.sh","LICENSE","NOTICE","docs/SERVER-MENU.fa.md","docs/SERVER-MENU.en.md","docs/PANEL.fa.md","docs/PANEL.en.md","docs/LOCAL-COTTEN.fa.md","docs/DOMAINS.fa.md","docs/SUBSCRIPTIONS.md","docs/TELEGRAM.md","docs/MASTERDNS.md","docs/PANEL-DESIGN.md","docs/PANEL-TUNING-2026-10-17.fa.md","docs/SOAR-WEB-RELIABILITY-2026-10-18.fa.md"]:
+    for name in ["panel-install.sh","panel-security.sh","panel-menu.sh","LICENSE","NOTICE","docs/EGRESS.fa.md","docs/EGRESS.en.md","docs/SERVER-MENU.fa.md","docs/SERVER-MENU.en.md","docs/PANEL.fa.md","docs/PANEL.en.md","docs/LOCAL-COTTEN.fa.md","docs/DOMAINS.fa.md","docs/SUBSCRIPTIONS.md","docs/TELEGRAM.md","docs/MASTERDNS.md","docs/PANEL-DESIGN.md","docs/PANEL-TUNING-2026-10-17.fa.md","docs/SOAR-WEB-RELIABILITY-2026-10-18.fa.md"]:
         target=bundle/name;target.parent.mkdir(parents=True,exist_ok=True)
         target.write_bytes((ROOT/name).read_text(encoding="utf8").replace("\r\n","\n").encode("utf8"))
     (bundle/"lib").mkdir(exist_ok=True)
