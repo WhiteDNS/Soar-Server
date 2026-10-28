@@ -73,6 +73,7 @@ def main() -> None:
     shutil.copyfile(Path(run("go", "env", "GOROOT")) / "LICENSE", licenses / "Go-LICENSE.txt")
     metadata = (
         f"Setup: {VERSION}\n"
+        f"Source commit: {run('git', 'rev-parse', 'HEAD')}\n"
         f"Soar: {run('go', 'list', '-m', '-f', '{{.Version}}', 'github.com/getlantern/soar')}\n"
         f"Toolchain: {run('go', 'version')}\n"
         "Target: linux/amd64; CGO_ENABLED=0\n"
