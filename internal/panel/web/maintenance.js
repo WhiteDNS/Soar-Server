@@ -8,7 +8,7 @@ window.panelMaintenance=(()=>{
  function jobText(job){if(!job?.id)return panelText("هنوز عملیاتی انجام نشده است.");const kind=job.kind==='restore'?panelText("بازیابی"):panelText("به‌روزرسانی");const states={running:panelText("در حال انجام است؛ ممکن است ارتباط موقتاً قطع شود."),succeeded:panelText("با موفقیت انجام شد."),rolled_back:panelText("کامل نشد؛ نسخه و اطلاعات قبلی برگردانده شد."),failed:panelText("انجام نشد؛ جزئیات را بررسی کنید.")};return kind+' '+(states[job.state]||job.state)+(job.state==='failed'||job.state==='rolled_back'?' '+job.message:'');}
  function showJob(job){for(const el of document.querySelectorAll('[data-maintenance-state]')){el.textContent=jobText(job);el.dataset.kind=['failed','rolled_back'].includes(job?.state)?'error':'info';}}
  async function load(page){
-  const state=await api('/maintenance');available=state.available;$('update-current').textContent=state.version;showJob(state.job);
+  const ticket=navigationId,session=csrf;const state=await api('/maintenance');if(ticket!==navigationId||session!==csrf)return;available=state.available;$('update-current').textContent=state.version;showJob(state.job);
   $('restore-apply').disabled=!available;$('update-install').disabled=!available||!updateVersion;
   if(!available&&page==='backup'){
    const detail=state.error&&!state.error.startsWith('maintenance service unavailable')?message({message:state.error}):'';
@@ -17,7 +17,7 @@ window.panelMaintenance=(()=>{
   if(!available&&page==='updates')info('update-feedback',panelText("سرویس نگهداری در دسترس نیست. نصب‌کنندهٔ همین نسخه را اجرا کنید؛ بررسی نسخه همچنان ممکن است."),true);
   if(page==='security'){
    await loadTunnelDomains();
-   const value=await api('/access');accessConfig=value.config;$('access-current-url').value=new URL('.',document.baseURI).href;
+   const value=await api('/access');if(ticket!==navigationId||session!==csrf)return;accessConfig=value.config;$('access-current-url').value=new URL('.',document.baseURI).href;
    $('access-state').textContent=accessConfig.https?panelText("ارتباط با HTTPS برقرار است؛ گواهی خودکار تمدید می‌شود."):panelText("ارتباط فعلی HTTP است. برای محافظت از رمز و اطلاعات، HTTPS را فعال کنید.");
    $('access-domain').value=accessConfig.domain||'';$('access-email').value=accessConfig.email||'';$('access-email').readOnly=!!accessConfig.https;
    $('access-aliases').value=(accessConfig.aliases||[]).join('\n');$('access-keep-old').checked=true;$('access-random-path').checked=false;

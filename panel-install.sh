@@ -4,7 +4,7 @@ set -Eeuo pipefail
 export LC_ALL=C
 umask 077
 ROOT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
-PANEL_VERSION=0.12.0
+PANEL_VERSION=0.13.0
 DB=/var/lib/soar-panel/panel.db
 SERVICE=/etc/systemd/system/soar-panel.service
 OPS_SERVICE=/etc/systemd/system/soar-panel-ops.service
@@ -23,7 +23,7 @@ check_host_arch(){
 check_bundle(){
  local file
  [[ -f "$ROOT_DIR/SHA256SUMS" ]] || die 'Incomplete panel bundle. Download and extract the full archive.'
- for file in ARCH panel-install.sh panel-security.sh lib/panel-installer.sh lib/standalone-install.sh bin/linux-$BUNDLE_ARCH/soar-panel bin/linux-$BUNDLE_ARCH/soar-panel-ops bin/linux-$BUNDLE_ARCH/soar-check; do
+ for file in ARCH panel-install.sh panel-security.sh panel-menu.sh lib/panel-installer.sh lib/standalone-install.sh bin/linux-$BUNDLE_ARCH/soar-panel bin/linux-$BUNDLE_ARCH/soar-panel-ops bin/linux-$BUNDLE_ARCH/soar-check; do
   [[ -f "$ROOT_DIR/$file" ]] && awk -v path="$file" '{sub(/^\*/,"",$2)} $2==path{n++}END{exit n!=1}' "$ROOT_DIR/SHA256SUMS" || die "Missing bundle file or checksum: $file"
  done
  (cd "$ROOT_DIR" && sha256sum --check --status SHA256SUMS) || die 'Bundle checksum failed. Do not install this copy.'
@@ -44,6 +44,9 @@ source "$ROOT_DIR/lib/panel-installer.sh"
 panel_dependencies
 exec 9>/run/lock/soar-panel-install.lock
 flock -n 9 || die 'Another panel installation is running. Wait for it to finish.'
+install -d -m 0700 /var/lib/soar-panel-ops
+exec 8>/var/lib/soar-panel-ops/maintenance.lock
+flock -n 8 || die 'Another panel maintenance operation is running. Wait for it to finish.'
 printf '\nWhiteDNS Server Management %s - STABLE\n' "$PANEL_VERSION"
 printf 'Direct profiles require a Soar-enabled WhiteDNS app; subscriptions require WhiteDNS 1.6.8+.\n'
 printf 'The Soar tunneling engine is developed by Lantern: https://soar.lantern.io/\n'
@@ -69,8 +72,7 @@ printf 'Keep all existing MasterDNS/Cotton records unchanged. Each panel account
 zone=;parent_zone=;ns_host=;public_ip=;listen_ip=;test_resolvers=1.1.1.1,8.8.8.8
 panel_collect_dns
 panel_require_records
-panel_port_available t "$listen_ip" 53 || die 'TCP/53 belongs to another service. Use another local IPv4 or a dedicated VPS; keep the existing service running.'
-panel_port_available u "$listen_ip" 53 || die 'UDP/53 belongs to another service. Choose another local IPv4 or a dedicated VPS; keep the existing service running.'
+panel_collect_dns_port
 printf '\n[3/7] Administrator account\n'
 password='';pwfile=''
 cleanup(){ [[ -z $pwfile ]] || rm -f -- "$pwfile"; [[ -z ${probe_profile:-} ]] || rm -f -- "$probe_profile"; [[ -z ${probe_master_profile:-} ]] || rm -f -- "$probe_master_profile"; unset password password2; }
@@ -100,7 +102,7 @@ if [[ -f $SERVICE ]] && ! grep -q -- --allow-insecure-http "$SERVICE";then acces
 while :; do
 panel_ask panel_access 'Access mode (1 or 2)' "$access_default"
 panel_ask panel_port 'Management TCP port' 2053
-if ! [[ $panel_port =~ ^[1-9][0-9]{0,4}$ ]] || ((panel_port>65535)); then printf 'Enter a TCP port from 1 to 65535.\n';continue;fi
+if ! [[ $panel_port =~ ^[1-9][0-9]{0,4}$ ]] || ((panel_port>65535 || panel_port==dns_port)); then printf 'Enter a TCP port from 1 to 65535, different from the DNS listener.\n';continue;fi
 case "$panel_access" in
  1) panel_bind="$listen_ip:$panel_port";panel_options=--allow-insecure-http;panel_url="http://$public_ip:$panel_port";;
  2) panel_bind="127.0.0.1:$panel_port";panel_options=--trust-loopback-proxy;panel_url="http://127.0.0.1:$panel_port";;
@@ -117,9 +119,9 @@ else
  printf 'SSH instructions will be shown at the end. See docs/PANEL.fa.md for HTTPS.\n'
 fi
 printf '\n[5/7] Review before activation\n'
-printf 'DNS listener: %s:53/UDP\nPanel listener: %s\nPanel URL: %s\nDatabase: %s\n' "$listen_ip" "$panel_bind" "$panel_url" "$DB"
-printf 'If UFW is active, allow inbound UDP/53 and TCP/53 for both tunnel engines. Existing rules are kept.\n'
-printf 'Open UDP/53 and TCP/53 in your provider firewall and forward it through NAT to %s.\n' "$listen_ip"
+printf 'DNS listener: %s:%s UDP/TCP\nPanel listener: %s\nPanel URL: %s\nDatabase: %s\n' "$listen_ip" "$dns_port" "$panel_bind" "$panel_url" "$DB"
+printf 'If UFW is active, allow inbound UDP/%s and TCP/%s for all tunnel engines. Existing rules are kept.\n' "$dns_port" "$dns_port"
+printf 'Route public UDP/53 and TCP/53 through your provider/router or DNS frontend to %s:%s.\n' "$listen_ip" "$dns_port"
 printf 'Service user: soar-panel; new-install destination ports: 80/443. Existing port policy is kept.\n'
 printf 'New-install bootstrap DNS: %s; discovery hint: Iran (editable). Existing saved settings are kept.\n' "$test_resolvers"
 printf 'These resolvers are starting points, not a guarantee of reachability in every network.\n'
@@ -138,7 +140,7 @@ backup="/root/soar-panel-backup-$(date -u +%Y%m%dT%H%M%SZ)-$$"
 ops_active=0;systemctl is-active --quiet soar-panel-ops.service && ops_active=1
 activated=0;transaction_ready=0;probe_id=
 firewall_added=()
-transaction_files=("$SERVICE" "$OPS_SERVICE" "$INSTALLED_BIN" /usr/local/bin/soar-panel-ops /usr/local/bin/soar-panel-security "$CHECK_BIN" "$DB" /var/lib/soar-panel/access.json /var/lib/soar-panel/public-ip)
+transaction_files=("$SERVICE" "$OPS_SERVICE" "$INSTALLED_BIN" /usr/local/bin/soar-panel-ops /usr/local/bin/soar-panel-security /usr/local/bin/soar-panel-menu "$CHECK_BIN" "$DB" /var/lib/soar-panel/access.json /var/lib/soar-panel/public-ip /etc/systemd/system/soar-panel.service.d/90-management.conf /etc/systemd/system/soar-panel-ops.service.d/90-management.conf)
 rollback(){
  result=$?
  if (( result && ! activated ));then
@@ -165,6 +167,7 @@ chmod 0600 /var/lib/soar-panel/public-ip
 install -m 0755 "$BIN" /usr/local/bin/soar-panel
 install -m 0755 "$OPS_BIN" /usr/local/bin/soar-panel-ops
 install -m 0755 "$ROOT_DIR/panel-security.sh" /usr/local/bin/soar-panel-security
+install -m 0755 "$ROOT_DIR/panel-menu.sh" /usr/local/bin/soar-panel-menu
 install -m 0755 "$ROOT_DIR/bin/linux-$BUNDLE_ARCH/soar-check" "$CHECK_BIN"
 fresh_install=0
 if [[ ! -f $DB ]];then
@@ -190,7 +193,7 @@ Wants=soar-panel-ops.service
 Type=simple
 User=soar-panel
 Group=soar-panel
-ExecStart=/usr/local/bin/soar-panel run --db /var/lib/soar-panel/panel.db --dns-listen $listen_ip:53 --listen $panel_bind $panel_options
+ExecStart=/usr/local/bin/soar-panel run --db /var/lib/soar-panel/panel.db --dns-listen $listen_ip:$dns_port --listen $panel_bind $panel_options
 Restart=on-failure
 RestartSec=3
 TimeoutStopSec=10
@@ -220,7 +223,7 @@ Wants=network-online.target
 Type=simple
 User=root
 Group=soar-panel
-ExecStart=/usr/local/bin/soar-panel-ops --health-address $panel_bind
+ExecStart=/usr/local/bin/soar-panel-ops --health-address $panel_bind --dns-port $dns_port
 Restart=on-failure
 RestartSec=3
 RuntimeDirectory=soar-panel-ops
@@ -238,20 +241,26 @@ WantedBy=multi-user.target
 UNIT
 install -d -m 0700 /var/lib/soar-panel-ops
 (( ! old_active )) || systemctl stop soar-server.service
+# The installer has just written both reviewed listeners. Retire only our own
+# previous menu overrides; other administrator-created drop-ins remain intact.
+rm -f -- /etc/systemd/system/soar-panel.service.d/90-management.conf /etc/systemd/system/soar-panel-ops.service.d/90-management.conf
 systemctl daemon-reload
 panel_open_firewall || die 'Cannot apply the reviewed firewall rules.'
 systemctl restart soar-panel-ops.service
 systemctl is-active --quiet soar-panel-ops.service || die 'Maintenance service failed to start.'
 systemctl start soar-panel.service
 panel_wait_health || die 'Panel failed readiness checks. See journalctl -u soar-panel -n 40.'
-ss -H -lun | awk -v target="$listen_ip:53" '$4==target{found=1}END{exit !found}' || die 'The expected UDP/53 listener was not found.'
-ss -H -ltn | awk -v target="$listen_ip:53" '$4==target{found=1}END{exit !found}' || die 'The expected TCP/53 listener was not found.'
+ss -H -lun | awk -v target="$listen_ip:$dns_port" '$4==target{found=1}END{exit !found}' || die 'The expected UDP DNS listener was not found.'
+ss -H -ltn | awk -v target="$listen_ip:$dns_port" '$4==target{found=1}END{exit !found}' || die 'The expected TCP DNS listener was not found.'
 panel_run_checks || die 'Connection checks cancelled; rolling back.'
 panel_remove_probe || die 'Cannot remove the temporary test account or restart the panel.'
 systemctl enable soar-panel.service
 systemctl enable soar-panel-ops.service
 (( ! old_active )) || systemctl disable soar-server.service
 activated=1
+if [[ ! -e /usr/local/bin/whitedns && ! -L /usr/local/bin/whitedns ]]; then
+ ln -s /usr/local/bin/soar-panel-menu /usr/local/bin/whitedns
+fi
 panel_url=$(panel_access_url)
 printf '\n[7/7] Open the panel and create the first account\n'
 if (( connection_verified )); then printf '[OK] Installation and server-side tunnel checks completed.\n'
@@ -272,8 +281,11 @@ printf 'Verify the phone opens websites and its public IP matches this server.\n
 printf 'If it does not connect, check NS/A records, UDP/53, TCP/53 and client resolver reachability.\n'
 printf 'Service: systemctl status soar-panel\nLogs: journalctl -u soar-panel -n 40 --no-pager\n'
 printf 'Private rollback backup: %s\n' "$backup"
+printf 'Server management menu: sudo soar-panel menu (or sudo whitedns)\n'
 printf 'Guide: https://github.com/WhiteDNS/Soar-Server/blob/panel-v0.7.0/docs/PANEL.fa.md\n'
 printf '\nConfigure a domain, automatic HTTPS and a random login path now or later.\n'
+flock -u 8
+flock -u 9
 read -r -p 'Open the optional domain/HTTPS setup now? [y/N]: ' secure_now || secure_now=n
 if [[ $secure_now == y || $secure_now == Y ]];then
  /usr/local/bin/soar-panel-security || printf '[WARN] HTTPS setup did not complete; the previous panel address was retained. Retry: sudo soar-panel-security\n'

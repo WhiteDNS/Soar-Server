@@ -128,12 +128,12 @@ const panelUI = (() => {
   actionMenu.hidden=false;if(nativePopover)actionMenu.showPopover();positionActionMenu();
   const items=actionMenu.querySelectorAll('[role=menuitem]');items[last?items.length-1:0].focus({preventScroll:true});
  }
- function accountActions(client,onAction){
+ function accountActions(client,onAction,resolveClient=()=>client){
   const button=document.createElement('button');button.type='button';button.className='account-actions-trigger';button.dataset.clientId=client.id;
   button.setAttribute('aria-haspopup','menu');button.setAttribute('aria-expanded','false');button.setAttribute('aria-controls',actionMenu.id);button.setAttribute('aria-label',panelText("عملیات بیشتر برای ")+client.name);
   const text=document.createElement('span');text.textContent=panelText("بیشتر");button.append(icon('more'),text,icon('chevron'));
-  button.onclick=()=>openActionMenu(button,client,onAction);
-  button.onkeydown=e=>{if(e.key==='ArrowDown'||e.key==='ArrowUp'){e.preventDefault();openActionMenu(button,client,onAction,e.key==='ArrowUp');}};
+  button.onclick=()=>openActionMenu(button,resolveClient(),onAction);
+  button.onkeydown=e=>{if(e.key==='ArrowDown'||e.key==='ArrowUp'){e.preventDefault();openActionMenu(button,resolveClient(),onAction,e.key==='ArrowUp');}};
   return button;
  }
  actionMenu.addEventListener('keydown',e=>{
@@ -206,7 +206,7 @@ const panelUI = (() => {
  document.querySelectorAll('.sidebar a[href^="#"]').forEach(link=>link.addEventListener('click',closeMenu));
  document.addEventListener('keydown',event=>{if(!document.body.classList.contains('menu-open'))return;if(event.key==='Escape'){closeMenu();get('menu-toggle').focus();}if(event.key==='Tab'){const links=[...document.querySelectorAll('.sidebar a,.sidebar button')].filter(el=>el.getClientRects().length);const first=links[0],last=links.at(-1);if(event.shiftKey&&document.activeElement===first){event.preventDefault();last.focus();}else if(!event.shiftKey&&document.activeElement===last){event.preventDefault();first.focus();}}});
  function size(n){if(n==null)return '—';if(n===0)return '0 B';const units=['B','KiB','MiB','GiB','TiB'];const i=Math.max(0,Math.min(4,Math.floor(Math.log(n)/Math.log(1024))));return `${(n/1024**i).toLocaleString('en-US',{maximumFractionDigits:i?2:0})} ${units[i]}`;}
- function text(id,value){get(id).textContent=value;}
+ function text(id,value){const el=get(id);if(el.textContent!==String(value))el.textContent=value;}
  function svgEl(tag,attrs){const el=document.createElementNS(ns,tag);for(const [key,val] of Object.entries(attrs))el.setAttribute(key,val);return el;}
  let samples=[],last=null;
  function chart(id,keys,fixedMax,spark=false){
@@ -224,14 +224,14 @@ const panelUI = (() => {
   });
   container.append(svg);
  }
- function setConnection(ok){const chip=get('service-chip');chip.dataset.live=String(ok);chip.textContent=ok?panelText("پنل در دسترس"):panelText("بررسی ارتباط");}
- function renderDashboard(d){
-  setConnection(true);const h=d.host,now=performance.now(),up=d.dns_received_bytes,down=d.dns_sent_bytes;
+ function setConnection(ok){const chip=get('service-chip');chip.dataset.live=String(ok);const value=ok?panelText("پنل در دسترس"):panelText("بررسی ارتباط");if(chip.textContent!==value)chip.textContent=value;}
+ function renderDashboard(d,now=performance.now()){
+  setConnection(true);const h=d.host,up=d.dns_received_bytes,down=d.dns_sent_bytes;
   if(last&&(last.uptime>d.uptime_seconds||up<last.up||down<last.down)){samples=[];last=null;}
   const dt=last?(now-last.at)/1000:0;
   const ram=h.memory_total?100*h.memory_used/h.memory_total:null,disk=h.disk_total?100*h.disk_used/h.disk_total:null;
-  const sample={at:now,cpu:h.cpu_percent,ram,disk,streams:d.active_streams,send:dt>0?(down-last.down)/dt:null,receive:dt>0?(up-last.up)/dt:null};
-  samples.push(sample);samples=samples.filter(s=>now-s.at<=600000).slice(-120);last={at:now,up,down,uptime:d.uptime_seconds};
+  let sample=samples.at(-1);const fresh=!last||now>last.at;
+  if(fresh){sample={at:now,cpu:h.cpu_percent,ram,disk,streams:d.active_streams,send:dt>0?(down-last.down)/dt:null,receive:dt>0?(up-last.up)/dt:null};samples.push(sample);samples=samples.filter(s=>now-s.at<=600000).slice(-120);last={at:now,up,down,uptime:d.uptime_seconds};}
   text('cpu-reading',h.cpu_percent==null?'—':readingFmt.format(h.cpu_percent));text('ram-reading',ram==null?'—':readingFmt.format(ram));text('disk-reading',disk==null?'—':readingFmt.format(disk));text('streams',String(d.active_streams));text('connection-count',String(d.active_streams));
   text('ram-label',h.memory_total?size(h.memory_used)+' / '+size(h.memory_total):panelText("اطلاعات حافظه در دسترس نیست"));
   text('disk-label',h.disk_total?size(h.disk_used)+' / '+size(h.disk_total):panelText("اطلاعات دیسک در دسترس نیست"));
@@ -247,13 +247,15 @@ const panelUI = (() => {
   text('diag-fds',ratio(h.file_descriptors_used,h.file_descriptors_limit));text('diag-conntrack',ratio(h.conntrack_used,h.conntrack_limit));text('diag-accounting',ratio(accounting.requests,accounting.commits));text('diag-accept-retries',metric(diagnostics.tcp_accept_retries));
   text('stat-accounts',fmt.format(d.accounts));text('stat-active',fmt.format(d.states.active)+panelText(" حساب فعال"));text('stat-up',size(d.upload_bytes));text('stat-down',size(d.download_bytes));
   const states={active:panelText("فعال"),disabled:panelText("غیرفعال"),expired:panelText("منقضی"),exhausted:panelText("حجم تمام‌شده")};
-  get('status-breakdown').replaceChildren(...Object.entries(states).map(([key,label])=>{const row=document.createElement('div'),badge=document.createElement('span'),value=document.createElement('strong');badge.className='badge '+key;badge.textContent=label;value.textContent=fmt.format(d.states[key]);row.append(badge,value);return row;}));
-  for(const [id,key,max] of [['cpu-spark','cpu',100],['ram-spark','ram',100],['disk-spark','disk',100],['streams-spark','streams',0]])chart(id,[key],max,true);
-  chart('traffic-chart',['send','receive']);chart('connections-chart',['streams']);
+  for(const [key,label] of Object.entries(states)){let row=get('status-breakdown').querySelector('[data-state="'+key+'"]');if(!row){row=document.createElement('div');row.dataset.state=key;const badge=document.createElement('span'),value=document.createElement('strong');badge.className='badge '+key;badge.textContent=label;row.append(badge,value);get('status-breakdown').append(row);}const value=row.lastElementChild;if(value.textContent!==fmt.format(d.states[key]))value.textContent=fmt.format(d.states[key]);}
+  if(fresh){for(const [id,key,max] of [['cpu-spark','cpu',100],['ram-spark','ram',100],['disk-spark','disk',100],['streams-spark','streams',0]])chart(id,[key],max,true);
+  chart('traffic-chart',['send','receive']);chart('connections-chart',['streams']);}
   const elapsed=Math.floor((samples.at(-1).at-samples[0].at)/1000);
   text('chart-window',elapsed<60?panelText("نمونه‌های این نشست"):fmt.format(Math.floor(elapsed/60))+panelText(" دقیقهٔ اخیر"));
   text('chart-start',new Date(Date.now()-(now-samples[0].at)).toLocaleTimeString(panelI18n.locale,{hour:'2-digit',minute:'2-digit'}));
   text('chart-now',panelText("اکنون"));
  }
- return {icon,renderDashboard,setConnection,closeMenu,toggleMenu,accountActions,closeActionMenu,closeSelectMenu,syncSelects,accountMenuOpen:()=>!!actionTrigger,toggleTheme(){setTheme(document.documentElement.dataset.theme==='dark'?'light':'dark');}};
+ let pageAnimation;
+ function transitionPage(section){pageAnimation?.cancel();if(matchMedia('(prefers-reduced-motion: reduce)').matches||!section.animate)return;pageAnimation=section.animate([{opacity:.82,transform:'translateY(6px)'},{opacity:1,transform:'translateY(0)'}],{duration:160,easing:'cubic-bezier(.2,.7,.2,1)'});}
+ return {icon,renderDashboard,setConnection,transitionPage,resetMetrics(){samples=[];last=null;},closeMenu,toggleMenu,accountActions,closeActionMenu,closeSelectMenu,syncSelects,accountMenuOpen:()=>!!actionTrigger,toggleTheme(){setTheme(document.documentElement.dataset.theme==='dark'?'light':'dark');}};
 })();

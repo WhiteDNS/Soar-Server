@@ -1,0 +1,33 @@
+const path=require('node:path');
+
+module.exports=async({page,out,assert})=>{
+ const open=async name=>{await page.evaluate(name=>location.hash=name,name);await page.locator('#page-'+name).waitFor({state:'visible'});};
+ await open('clients');await page.evaluate(()=>refresh());
+ await page.evaluate(()=>{window.savedRows=[...document.querySelectorAll('#clients-body tr')];window.removedRows=0;window.rowObserver=new MutationObserver(records=>{for(const record of records)window.removedRows+=record.removedNodes.length;});window.rowObserver.observe(document.getElementById('clients-body'),{childList:true});});
+ await page.evaluate(()=>refresh());
+ assert.equal(await page.evaluate(()=>savedRows.every((row,i)=>row===document.querySelectorAll('#clients-body tr')[i])&&removedRows===0),true,'polling rebuilt account rows');
+ const reads=[];const track=request=>{if(/\/api\/(clients|dashboard)$/.test(request.url()))reads.push(request.url());};
+ page.on('request',track);
+ await page.evaluate(()=>Promise.all([api('/clients'),api('/clients'),api('/clients')]));
+ assert.equal(reads.filter(url=>url.endsWith('/api/clients')).length,1,'simultaneous identical GETs were not coalesced');
+ await open('settings');await page.waitForFunction(()=>!document.getElementById('page-settings').hasAttribute('aria-busy'));reads.length=0;
+ await page.evaluate(()=>refresh({background:true}));
+ assert.equal(reads.length,0,'inactive dashboard/table fetched during background settings refresh');
+ assert.equal(await page.evaluate(()=>removedRows),0,'hidden table was rebuilt');page.off('request',track);
+ await open('dashboard');await page.evaluate(()=>refresh());const before=await page.locator('#stat-accounts').textContent();
+ await page.route('**/api/dashboard',async route=>{await new Promise(resolve=>setTimeout(resolve,300));await route.continue();});
+ await open('clients');await open('dashboard');
+ assert.equal(await page.locator('#stat-accounts').textContent(),before,'tab switch replaced cached account metrics with placeholders');
+ await page.screenshot({path:path.join(out,'smooth-navigation-desktop.png'),fullPage:true,animations:'disabled'});
+ await page.unrouteAll({behavior:'wait'});await page.evaluate(()=>refresh());
+ await page.emulateMedia({reducedMotion:'reduce'});await open('clients');
+ assert.equal(await page.locator('#page-clients').evaluate(section=>section.getAnimations().length),0,'reduced-motion preference ignored');
+ await page.emulateMedia({reducedMotion:'no-preference'});
+ await page.setViewportSize({width:375,height:1000});await open('dashboard');await page.evaluate(()=>refresh());
+ await page.waitForFunction(()=>{const r=document.querySelector('.sidebar').getBoundingClientRect();return r.left>=innerWidth-1||r.right<=1;});
+ await page.screenshot({path:path.join(out,'smooth-navigation-mobile.png'),fullPage:true,animations:'disabled'});
+ assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1),'navigation introduced mobile overflow');
+ await page.setViewportSize({width:1440,height:1100});await open('clients');
+ await page.evaluate(()=>{rowObserver.disconnect();delete window.savedRows;delete window.rowObserver;delete window.removedRows;});
+ console.log('PASS: stable account DOM, coalesced reads, active-page polling, cached metrics, reduced motion and mobile navigation');
+};

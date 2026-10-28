@@ -98,6 +98,22 @@ panel_require_records() {
  done
  printf '[OK] A/NS and parent conflict checks passed. Child SOA is checked AFTER service startup.\n'
 }
+panel_collect_dns_port() {
+ local previous
+ previous=$(systemctl show soar-panel.service -p ExecStart --value 2>/dev/null | sed -n 's/.*--dns-listen [^ ;]*:\([0-9]*\).*/\1/p') || previous=
+ dns_port=${previous:-53}
+ while :; do
+  panel_ask dns_port 'Local tunnel DNS UDP/TCP port' "$dns_port"
+  if ! [[ $dns_port =~ ^[1-9][0-9]{0,4}$ ]] || (( dns_port > 65535 )); then printf 'Use a port from 1 to 65535.\n'; dns_port=53; continue; fi
+  if panel_port_available t "$listen_ip" "$dns_port" && panel_port_available u "$listen_ip" "$dns_port"; then break; fi
+  printf 'The port is occupied. Choose another port or a different local address. Existing services are kept.\n'
+ done
+ if [[ $dns_port != 53 ]]; then
+  printf 'Custom DNS port: recursive DNS still requires public UDP/TCP 53.\n'
+  printf 'Configure your DNS frontend/router to forward the tunnel zone to %s:%s, or public port 53 to this listener.\n' "$listen_ip" "$dns_port"
+  printf 'An NS record cannot specify a custom port. This installer does not replace your frontend or add NAT rules.\n'
+ fi
+}
 panel_port_available() {
  local protocol=$1 address=$2 port=$3 snapshot row endpoint host pid managed
  snapshot=$(ss -H -l"$protocol"np "sport = :$port") || return 1
@@ -127,7 +143,7 @@ panel_wait_health() {
 }
 panel_open_firewall() {
  local status port
- local -a ports=(53/udp 53/tcp)
+ local -a ports=("${dns_port:-53}/udp" "${dns_port:-53}/tcp")
  [[ $panel_access != 1 ]] || ports+=("$panel_port/tcp")
  if command -v ufw >/dev/null; then
   status=$(ufw status) || { printf '[WARN] Cannot inspect UFW.\n';return 1; }
@@ -142,7 +158,7 @@ panel_open_firewall() {
    done
   fi
  fi
- printf 'Provider firewall/NAT must also forward public UDP/53 and TCP/53 to %s:53.\n' "$listen_ip"
+ printf 'Provider firewall/NAT or your DNS frontend must route public UDP/TCP 53 to %s:%s.\n' "$listen_ip" "${dns_port:-53}"
 }
 # Back up only after the running panel is stopped, so bbolt is consistent.
 panel_snapshot() {
@@ -212,19 +228,19 @@ panel_verify_connection() {
   panel_wait_health || return 1
  fi
  printf '\nTest A: local DNS listener, authenticated account and outbound HTTPS\n'
- "$CHECK_BIN" -zone "$probe_zone" -pubkey "$probe_key" -resolver "$listen_ip" -tcp off -timeout 40s || return 1
+ "$CHECK_BIN" -zone "$probe_zone" -pubkey "$probe_key" -resolver "$listen_ip:${dns_port:-53}" -tcp off -timeout 40s || return 1
  printf '\nTest B: public DNS delegation after startup\n'
  panel_dns ready || return 1
  printf '\nTest C: authenticated HTTPS through recursive DNS (%s)\n' "$test_resolvers"
  "$CHECK_BIN" -zone "$probe_zone" -pubkey "$probe_key" -resolver "$test_resolvers" -tcp auto -timeout 60s || return 1
  printf '\nTest D: Cotten authenticated HTTPS over local UDP DNS\n'
- "$CHECK_BIN" -cotten-profile-file "$probe_profile" -resolver "$listen_ip" -tcp off -timeout 40s || return 1
+ "$CHECK_BIN" -cotten-profile-file "$probe_profile" -resolver "$listen_ip:${dns_port:-53}" -tcp off -timeout 40s || return 1
  printf '\nTest E: Cotten authenticated HTTPS over local TCP DNS\n'
- "$CHECK_BIN" -cotten-profile-file "$probe_profile" -resolver "$listen_ip" -tcp only -timeout 40s || return 1
+ "$CHECK_BIN" -cotten-profile-file "$probe_profile" -resolver "$listen_ip:${dns_port:-53}" -tcp only -timeout 40s || return 1
  printf '\nTest F: Cotten authenticated HTTPS through recursive DNS\n'
  "$CHECK_BIN" -cotten-profile-file "$probe_profile" -resolver "$test_resolvers" -tcp auto -timeout 60s || return 1
  printf '\nTest G: MasterDNS authenticated HTTPS over local UDP DNS\n'
- "$CHECK_BIN" -masterdns-profile-file "$probe_master_profile" -resolver "$listen_ip" -tcp off -timeout 40s || return 1
+ "$CHECK_BIN" -masterdns-profile-file "$probe_master_profile" -resolver "$listen_ip:${dns_port:-53}" -tcp off -timeout 40s || return 1
  printf '\nTest H: MasterDNS authenticated HTTPS through recursive UDP DNS\n'
  "$CHECK_BIN" -masterdns-profile-file "$probe_master_profile" -resolver "$test_resolvers" -tcp off -timeout 60s || return 1
  printf '[OK] Server-side tunnel checks passed. Test the phone on its own network next.\n'

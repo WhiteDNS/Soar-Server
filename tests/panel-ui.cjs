@@ -23,6 +23,7 @@ let browser;
  await page.locator('#refresh').click();await page.locator('#stat-accounts').filter({hasText:'۴'}).waitFor();await page.screenshot({path:path.join(out,'dashboard-1440.png'),fullPage:true});
  await page.locator('nav a[data-page=clients]').click();await page.locator('#clients-body tr').first().waitFor();assert.equal(await page.locator('#clients-body tr').count(),4);assert.equal(await page.locator('nav a[aria-current=page]').getAttribute('data-page'),'clients');await page.screenshot({path:path.join(out,'clients-1440.png'),fullPage:true});
  await require('./panel-selects.cjs')({page,out,assert});
+ await require('./panel-performance.cjs')({page,out,assert});
  await require('./panel-design.cjs')({page,out,assert});
  await require('./panel-session-limits.cjs')({page,out,assert});
  await require('./panel-stream-limits.cjs')({page,url,out,assert});

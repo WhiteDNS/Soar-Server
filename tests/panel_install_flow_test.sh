@@ -203,10 +203,10 @@ check_stages() (
  : >"$work/tunnel.log"
  fail_tunnel=0
  panel_verify_connection || return 1
- grep -q -- '-resolver 10.0.0.2 -tcp off' "$work/tunnel.log"
+ grep -q -- '-resolver 10.0.0.2:53 -tcp off' "$work/tunnel.log"
  grep -q -- '-resolver 1.1.1.1,8.8.8.8 -tcp auto' "$work/tunnel.log"
- grep -q -- '-cotten-profile-file .* -resolver 10.0.0.2 -tcp only' "$work/tunnel.log"
- grep -q -- '-masterdns-profile-file .* -resolver 10.0.0.2 -tcp off' "$work/tunnel.log"
+ grep -q -- '-cotten-profile-file .* -resolver 10.0.0.2:53 -tcp only' "$work/tunnel.log"
+ grep -q -- '-masterdns-profile-file .* -resolver 10.0.0.2:53 -tcp off' "$work/tunnel.log"
  [[ $(wc -l <"$work/tunnel.log") == 7 ]]
 )
 expect_rc 0 'local and recursive authenticated tunnel tests are both required' check_stages
@@ -238,4 +238,18 @@ maintenance_readiness() (
  if panel_wait_health; then return 1;fi
 )
 expect_rc 0 'healthy panel cannot hide a maintenance service that is not ready' maintenance_readiness
+custom_dns_port() (
+ dns_port=5353;firewall_added=()
+ : >"$work/ufw.log"
+ panel_open_firewall || return 1
+ grep -q '^allow 5353/udp ' "$work/ufw.log" && grep -q '^allow 5353/tcp ' "$work/ufw.log" || return 1
+ if grep -q '^allow 53/' "$work/ufw.log";then return 1;fi
+ CHECK_BIN=mock_custom_check
+ mock_custom_check(){ printf '%s\n' "$*" >>"$work/custom-tunnel.log"; }
+ panel_dns(){ return 0; }
+ probe_expires=9999999999;probe_zone=example.org;probe_key=test-key;probe_profile=test;probe_master_profile=test
+ panel_verify_connection || return 1
+ [[ $(grep -c -- '-resolver 10.0.0.2:5353 ' "$work/custom-tunnel.log") == 4 ]]
+)
+expect_rc 0 'custom DNS port reaches all three local engine probes and both firewall protocols' custom_dns_port
 printf '%s installer flow assertions passed, plus firewall, URL and rollback content checks.\n' "$passed"

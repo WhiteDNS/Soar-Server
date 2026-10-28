@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"strconv"
 	"strings"
 )
 
@@ -33,6 +34,13 @@ func ensureHostFirewall(ctx context.Context, kind string) error {
 }
 
 func firewallPorts(kind string) ([]string, string, error) {
+	if strings.HasPrefix(kind, "dns:") {
+		port, err := strconv.ParseUint(strings.TrimPrefix(kind, "dns:"), 10, 16)
+		if err != nil || port == 0 {
+			return nil, "", fmt.Errorf("invalid DNS firewall port")
+		}
+		return []string{fmt.Sprintf("%d/udp", port), fmt.Sprintf("%d/tcp", port)}, "soar-panel-dns", nil
+	}
 	switch kind {
 	case "dns":
 		return []string{"53/udp", "53/tcp"}, "soar-panel-dns", nil

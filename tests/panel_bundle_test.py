@@ -23,6 +23,10 @@ def main():
     native = {"x86_64": "amd64", "aarch64": "arm64", "arm64": "arm64"}.get(platform.machine())
     assert platform.system() == "Linux" and arch == native, "use the matching native Linux runner"
     binaries = bundle / "bin" / ("linux-" + arch)
+    for name in ("panel-menu.sh", "panel-security.sh", "panel-install.sh"):
+        subprocess.run(["bash", "-n", str(bundle / name)], check=True, timeout=10)
+    menu_help = subprocess.check_output(["bash", str(bundle / "panel-menu.sh"), "--help"], text=True, timeout=10)
+    assert "sudo whitedns" in menu_help and "sudo soar-panel" in menu_help
     for name in ("soar-panel", "soar-panel-ops", "soar-check"):
         command = "-version" if name == "soar-check" else "version"
         result = subprocess.check_output([str(binaries / name), command], text=True, timeout=10).strip()
