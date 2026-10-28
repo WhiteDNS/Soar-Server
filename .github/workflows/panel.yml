@@ -1,36 +1,41 @@
-name: Verify management panel
+name: Build and release WhiteDNS
 on:
-  pull_request:
-  push:
-    branches: [main, feature/soar-panel, feature/subscriptions-i18n]
-    tags: ['panel-v*']
   workflow_dispatch:
     inputs:
-      finish_release:
-        description: Wait for the specified PR, merge it, and publish its verified panel release
-        type: boolean
-        default: false
-      release_pr:
-        description: Same-repository PR number to release (only with finish_release)
-        type: string
-        default: ''
-      release_base:
-        description: Expected main commit before merging (full SHA)
-        type: string
-        default: ''
+      target:
+        description: Product to build and release from main
+        type: choice
+        options: [panel, standalone]
+        default: panel
+        required: true
 permissions:
   contents: read
+concurrency:
+  group: whitedns-manual-release
+  cancel-in-progress: false
 jobs:
+  plan:
+    runs-on: ubuntu-24.04
+    outputs:
+      build: ${{ steps.plan.outputs.build }}
+      version: ${{ steps.plan.outputs.version }}
+      matrix: ${{ steps.plan.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Check the version before allocating build runners
+        id: plan
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TARGET: ${{ inputs.target }}
+        run: python3 scripts/publish_release.py --plan
   verify:
-    if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.finish_release) }}
+    needs: plan
+    if: needs.plan.outputs.build == 'true'
     strategy:
       fail-fast: false
-      matrix:
-        include:
-          - os: ubuntu-24.04
-            arch: amd64
-          - os: ubuntu-24.04-arm
-            arch: arm64
+      matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -78,11 +83,14 @@ jobs:
       - name: Verify installers and bootstrap
         run: |
           bash tests/installer_test.sh
+          bash tests/bootstrap_test.sh
+          bash -n install.sh setup.sh
           bash tests/panel_installer_test.sh
           bash tests/panel_bootstrap_test.sh
           bash tests/panel_menu_test.sh
           bash tests/panel_security_test.sh
       - name: Build offline Linux bundle
+        if: inputs.target == 'panel'
         id: bundle
         run: |
           version=$(python3 scripts/build_panel_bundle.py --print-version)
@@ -92,13 +100,16 @@ jobs:
           python3 tests/panel_bundle_test.py --bundle "$directory" --version "$version"
           echo "directory=$directory" >> "$GITHUB_OUTPUT"
       - uses: actions/setup-node@v4
+        if: inputs.target == 'panel'
         with:
           node-version: '24'
       - name: Install isolated browser test tools
+        if: inputs.target == 'panel'
         run: |
           npm install --prefix "$RUNNER_TEMP/panel-tools" --ignore-scripts --no-audit --no-fund playwright@1.58.2
           node "$RUNNER_TEMP/panel-tools/node_modules/playwright/cli.js" install --with-deps chromium
       - name: Test browser workflows and responsive layout
+        if: inputs.target == 'panel'
         env:
           PANEL_BINARY: ${{ github.workspace }}/${{ steps.bundle.outputs.directory }}/bin/linux-${{ matrix.arch }}/soar-panel
           PANEL_PLAYWRIGHT: ${{ runner.temp }}/panel-tools/node_modules/playwright
@@ -107,77 +118,55 @@ jobs:
           node tests/panel-ui.cjs
           node tests/panel-limits-ui.cjs
       - uses: actions/upload-artifact@v4
+        if: inputs.target == 'panel'
         with:
           name: soar-panel-linux-${{ matrix.arch }}
           path: dist/soar-panel-*.tar.gz*
           if-no-files-found: error
       - uses: actions/upload-artifact@v4
-        if: always()
+        if: always() && inputs.target == 'panel'
         with:
           name: panel-screenshots-${{ matrix.arch }}
           path: ${{ runner.temp }}/panel-screenshots/*.png
           if-no-files-found: ignore
-  release:
-    if: startsWith(github.ref, 'refs/tags/panel-v')
-    needs: verify
-    runs-on: ubuntu-24.04
-    permissions:
-      contents: write
-    concurrency:
-      group: panel-release-${{ github.ref }}
-      cancel-in-progress: false
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
-        with:
-          pattern: soar-panel-linux-*
-          merge-multiple: true
-          path: release-artifacts
-      - name: Publish verified panel assets
+      - name: Build the standalone server bundle
+        if: inputs.target == 'standalone'
         env:
-          GH_TOKEN: ${{ github.token }}
+          RELEASE_VERSION: ${{ needs.plan.outputs.version }}
         run: |
-          version=$(python3 scripts/build_panel_bundle.py --print-version)
-          assets=()
-          for arch in amd64 arm64; do
-            asset="soar-panel-$version-linux-$arch.tar.gz"
-            mapfile -t archives < <(find release-artifacts -type f -name "$asset")
-            test "${#archives[@]}" -eq 1
-            archive="${archives[0]}"
-            checksum="$archive.sha256"
-            (cd "$(dirname "$archive")" && sha256sum --check "$asset.sha256")
-            assets+=("$archive" "$checksum")
-          done
-          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
-            gh release upload "$GITHUB_REF_NAME" "${assets[@]}"
-          else
-            gh release create "$GITHUB_REF_NAME" "${assets[@]}" --verify-tag \
-              --title "WhiteDNS Server Management $version" --notes-file "docs/RELEASE-panel-$version.md"
-          fi
-  finish-release:
-    if: ${{ github.event_name == 'workflow_dispatch' && inputs.finish_release }}
+          python3 scripts/build_bundle.py
+          bash "dist/soar-server-setup-$RELEASE_VERSION-linux-amd64/install.sh" --check-bundle
+      - uses: actions/upload-artifact@v4
+        if: inputs.target == 'standalone'
+        with:
+          name: soar-server-linux-amd64
+          path: |
+            dist/soar-server-setup-*.tar.gz
+            dist/soar-server-setup-*.sha256
+          if-no-files-found: error
+  release:
+    needs: [plan, verify]
+    if: needs.plan.outputs.build == 'true'
     runs-on: ubuntu-24.04
-    timeout-minutes: 120
     permissions:
       contents: write
-      pull-requests: write
-      actions: write
-    concurrency:
-      group: finish-panel-release-${{ inputs.release_pr }}
-      cancel-in-progress: false
     steps:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
-      - name: Complete the authorized PR and panel release
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: ${{ inputs.target == 'panel' && 'soar-panel-linux-*' || 'soar-server-linux-*' }}
+          merge-multiple: true
+          path: release-artifacts
+      - name: Publish the artifacts verified in this run
         env:
           GH_TOKEN: ${{ github.token }}
-          RELEASE_PR: ${{ inputs.release_pr }}
-          RELEASE_BASE_SHA: ${{ inputs.release_base }}
-        run: python3 scripts/finish_panel_release.py
+          RELEASE_TARGET: ${{ inputs.target }}
+        run: python3 scripts/publish_release.py --artifacts release-artifacts
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: panel-release-verification-${{ inputs.release_pr }}
+          name: release-verification
           path: release-verification.json
           if-no-files-found: ignore
