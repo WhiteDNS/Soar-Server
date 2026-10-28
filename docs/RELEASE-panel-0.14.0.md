@@ -18,7 +18,7 @@ Publication uses the single manually triggered build-and-release workflow.
 - Green/black settings and report views, both languages/themes and mobile
   layouts. Heavy journals are queried on demand instead of background polling.
 
-See [Persian](EGRESS.fa.md) and [English](EGRESS.en.md) instructions before
+See the complete [Persian](https://github.com/WhiteDNS/Soar-Server/blob/main/docs/EGRESS.fa.md) and [English](https://github.com/WhiteDNS/Soar-Server/blob/main/docs/EGRESS.en.md) instructions before
 enabling destination logging or changing outbound routes. Reporting is based
 on connection start time and whole-connection payload bytes. It is not packet
 capture, a C2 detector, or a guarantee against provider suspension. Proxy and
