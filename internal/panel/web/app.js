@@ -59,7 +59,8 @@ async function refresh({background=false}={}){
  busy=true;const session=csrf,page=currentPage,ticket=navigationId,epoch=dataEpoch;refreshSession=session;let invalidated=false;
  refreshPromise=(async()=>{try{
   const wantDashboard=!background||page==='dashboard'||!dashboardCache,wantClients=!background||page==='clients'||!clientsLoaded;
-  const [d,c]=await Promise.all([wantDashboard?api('/dashboard'):null,wantClients?api('/clients'):null]);if(csrf!==session)return;if(epoch!==dataEpoch){invalidated=true;return;}
+  const heartbeat=background&&!wantDashboard&&!wantClients&&!['events','logs','antiflood'].includes(page);
+  const [d,c]=await Promise.all([wantDashboard?api('/dashboard'):null,wantClients?api('/clients'):null,heartbeat?api('/session'):null]);if(csrf!==session)return;if(epoch!==dataEpoch){invalidated=true;return;}
   if(d){dashboardCache=d;dashboardAt=performance.now();}
   if(c){clients=c.clients;connections=c.connections;clientsLoaded=true;setText($('nav-count'),number(clients.length));}
   if(currentPage==='dashboard'&&dashboardCache)renderDashboard(dashboardCache,dashboardAt);
@@ -68,7 +69,7 @@ async function refresh({background=false}={}){
   if(currentPage==='logs')await window.panelDiagnostics?.refresh();
   if(currentPage==='antiflood')await window.panelAntiFlood?.refreshStatus();
   if(csrf!==session)return;
-  setText($('sync-state'),panelText("به‌روز · ")+new Date().toLocaleTimeString(panelI18n.locale,{hour:'2-digit',minute:'2-digit'}));$('sync-state').classList.remove('stale');$('page-error').hidden=true;
+  panelUI.setConnection(true);setText($('sync-state'),panelText("به‌روز · ")+new Date().toLocaleTimeString(panelI18n.locale,{hour:'2-digit',minute:'2-digit'}));$('sync-state').classList.remove('stale');$('page-error').hidden=true;
  }catch(e){if(csrf!==session)return;setText($('sync-state'),panelText("ارتباط برقرار نیست"));$('sync-state').classList.add('stale');panelUI.setConnection(false);$('page-error').textContent=message(e);$('page-error').hidden=false;}finally{busy=false;refreshPromise=null;if(csrf===session&&(invalidated||ticket!==navigationId))queueMicrotask(()=>void refresh({background:true}));}})();
  return refreshPromise;
 }

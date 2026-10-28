@@ -13,6 +13,12 @@ module.exports=async({page,out,assert})=>{
  await open('settings');await page.waitForFunction(()=>!document.getElementById('page-settings').hasAttribute('aria-busy'));reads.length=0;
  await page.evaluate(()=>refresh({background:true}));
  assert.equal(reads.length,0,'inactive dashboard/table fetched during background settings refresh');
+ await page.route('**/api/session',route=>route.abort('failed'));
+ await page.evaluate(()=>refresh({background:true}));
+ assert.equal(await page.locator('#sync-state').evaluate(el=>el.classList.contains('stale')),true,'idle forms incorrectly report a fresh sync without checking the server');
+ await page.unroute('**/api/session');await page.evaluate(()=>refresh({background:true}));
+ assert.equal(await page.locator('#sync-state').evaluate(el=>el.classList.contains('stale')),false,'connection did not recover after a successful lightweight heartbeat');
+ assert.equal(await page.locator('#service-chip').getAttribute('data-live'),'true','connection chip remained offline after recovery');
  assert.equal(await page.evaluate(()=>removedRows),0,'hidden table was rebuilt');page.off('request',track);
  await open('dashboard');await page.evaluate(()=>refresh());const before=await page.locator('#stat-accounts').textContent();
  await page.route('**/api/dashboard',async route=>{await new Promise(resolve=>setTimeout(resolve,300));await route.continue();});

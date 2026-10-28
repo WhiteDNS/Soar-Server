@@ -23,6 +23,8 @@ See the [Persian SSH guide](SERVER-MENU.fa.md) or [English SSH guide](SERVER-MEN
   table on every poll. Preserve row controls, selections and keyboard focus.
 - Reuse number/date formatters, coalesce simultaneous identical reads and stop
   polling/repainting inactive dashboard and account views.
+- Keep a lightweight authenticated heartbeat on idle forms so disconnection,
+  session expiry and connection recovery remain visible without heavy polling.
 - Keep the latest dashboard figures visible when returning to the page. Do not
   append duplicate traffic samples when cached data is displayed.
 - Reject responses from an older navigation/session or a read preceding a
