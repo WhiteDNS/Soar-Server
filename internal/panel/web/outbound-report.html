@@ -1,0 +1,18 @@
+<article class="card outbound-report" aria-labelledby="outbound-heading">
+ <div class="section-heading"><h2 id="outbound-heading">گزارش ترافیک خروجی</h2><span id="outbound-state" class="hint" role="status"></span></div>
+ <form id="outbound-query" class="outbound-filters">
+  <label>از تاریخ و ساعت<input id="outbound-from" type="datetime-local" step="1" required dir="ltr"></label>
+  <label>تا تاریخ و ساعت<input id="outbound-until" type="datetime-local" step="1" required dir="ltr"></label>
+  <label>موتور<select id="outbound-engine"><option value="">همهٔ موتورها</option><option value="soar">Soar</option><option value="cotten">Cotten</option><option value="masterdns">MasterDNS</option></select></label>
+  <label>شناسهٔ حساب<input id="outbound-account" type="text" dir="ltr" maxlength="64" autocomplete="off"></label>
+  <label>مسیر<select id="outbound-route"><option value="">همهٔ مسیرها</option><option value="direct">مستقیم</option><option value="socks5">SOCKS5</option><option value="http">HTTP CONNECT</option><option value="https">HTTPS CONNECT</option></select></label>
+  <label>وضعیت<select id="outbound-status"><option value="">همهٔ وضعیت‌ها</option><option value="active">فعال</option><option value="completed">پایان‌یافته</option><option value="failed">ناموفق</option><option value="denied">ردشده</option><option value="interrupted">پایان نامشخص</option></select></label>
+  <div class="settings-actions outbound-query-actions"><button type="submit" class="secondary">نمایش گزارش</button><button id="outbound-csv" type="button" class="quiet">دانلود CSV</button><button id="outbound-json" type="button" class="quiet">دانلود JSON</button></div>
+ </form>
+ <p id="outbound-summary" class="hint" role="status"></p>
+ <p id="outbound-warning" class="error" role="alert" hidden></p>
+ <div class="outbound-table-wrap" tabindex="0" role="region" aria-label="جدول گزارش خروجی"><table class="outbound-table"><thead><tr><th>شروع / پایان</th><th>موتور / حساب</th><th>مقصد / IP</th><th>پروتکل / پورت</th><th>مسیر</th><th>آپلود / دانلود</th><th>وضعیت / علت</th></tr></thead><tbody id="outbound-body"></tbody></table></div>
+ <div class="settings-actions"><button id="outbound-previous" type="button" class="quiet" disabled>صفحهٔ قبل</button><button id="outbound-next" type="button" class="quiet" disabled>صفحهٔ بعد</button><span id="outbound-page" class="hint"></span></div>
+ <p class="hint">زمان‌ها به وقت دستگاه مدیر هستند؛ CSV زمان UTC دارد. بازه بر اساس شروع اتصال فیلتر می‌شود و حجم، کل payload اتصال است؛ شمارش درخواست HTTP یا محتوای رمزگشایی‌شده نیست. دانلود شامل همهٔ رکوردهای باقی‌ماندهٔ همان بازه است. این جدول خودکار بازخوانی نمی‌شود.</p>
+ <p class="hint">برای اتصال‌های پایان‌نامشخص، حجم گزارش‌شده حداقلِ ثبت‌شده است؛ پس از توقف ناگهانی، صفر به‌معنی نبود ترافیک نیست.</p>
+</article>

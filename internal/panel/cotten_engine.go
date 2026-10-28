@@ -363,6 +363,7 @@ func (m *Manager) tunnelDNS(rt *accountRuntime, parent context.Context, query []
 	}
 	m.mu.RLock()
 	resolvers := m.cfg.cottenResolvers()
+	route := m.egress.route(engine)
 	m.mu.RUnlock()
 	ctx, cancel := context.WithTimeout(parent, 6*time.Second)
 	defer cancel()
@@ -379,7 +380,11 @@ func (m *Manager) tunnelDNS(rt *accountRuntime, parent context.Context, query []
 		}
 		attempt, stop := context.WithTimeout(ctx, budget)
 		started := time.Now()
-		response, err := m.exchangeDNSFor(rt, attempt, "udp", endpoint, query, engine)
+		network := "udp"
+		if route.Mode == "http" || route.Mode == "https" {
+			network = "tcp"
+		}
+		response, err := m.exchangeDNSFor(rt, attempt, network, endpoint, query, engine)
 		if err != nil {
 			stop()
 			if errors.Is(err, errAntiFlood) || errors.Is(err, ErrDenied) {

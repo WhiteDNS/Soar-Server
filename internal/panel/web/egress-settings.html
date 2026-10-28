@@ -1,0 +1,42 @@
+<form id="egress-form" class="card settings-card egress-settings" aria-labelledby="egress-heading">
+ <div class="section-heading"><div><p class="eyebrow">مسیر خروجی موتورها</p><h2 id="egress-heading">پراکسی خروجی و گزارش ترافیک</h2></div></div>
+ <p class="hint">هر موتور مسیر مستقل دارد. با قطع پراکسی، اتصال متوقف می‌شود و مستقیم خارج نمی‌شود. محدودیت پورت مستقیم از تنظیمات سرور می‌آید؛ استثنای پورت فقط روی پراکسی اعمال می‌شود.</p>
+ <div id="egress-routes" class="egress-routes"><fieldset class="egress-route"><legend>Soar</legend>
+<label for="egress-soar-mode">مسیر</label><select id="egress-soar-mode"><option value="direct">مستقیم</option><option value="socks5">SOCKS5</option><option value="http">HTTP CONNECT</option><option value="https">HTTPS CONNECT</option></select>
+<label for="egress-soar-address">آدرس پراکسی</label><input id="egress-soar-address" dir="ltr" maxlength="260" placeholder="127.0.0.1:1080" spellcheck="false" autocomplete="off">
+<label for="egress-soar-username">نام کاربری پراکسی</label><input id="egress-soar-username" dir="ltr" maxlength="255" autocomplete="off" spellcheck="false">
+<label for="egress-soar-password">رمز پراکسی</label><input id="egress-soar-password" type="password" dir="ltr" maxlength="255" autocomplete="new-password" spellcheck="false">
+<small>برای حفظ رمز ذخیره‌شده، خالی بگذارید. تغییر آدرس یا نام کاربری به ورود دوبارهٔ رمز نیاز دارد.</small>
+<label class="checkbox"><input id="egress-soar-clear" type="checkbox">حذف احراز هویت ذخیره‌شده</label>
+<label for="egress-soar-ports">پورت‌های مجاز روی پراکسی</label><input id="egress-soar-ports" dir="ltr" maxlength="2048" placeholder="80,443,1000-2000" autocomplete="off" spellcheck="false">
+<label class="checkbox"><input id="egress-soar-unrestricted" type="checkbox">بدون محدودیت پورت روی پراکسی</label>
+</fieldset>
+<fieldset class="egress-route"><legend>Cotten</legend>
+<label for="egress-cotten-mode">مسیر</label><select id="egress-cotten-mode"><option value="direct">مستقیم</option><option value="socks5">SOCKS5</option><option value="http">HTTP CONNECT</option><option value="https">HTTPS CONNECT</option></select>
+<label for="egress-cotten-address">آدرس پراکسی</label><input id="egress-cotten-address" dir="ltr" maxlength="260" placeholder="127.0.0.1:1080" spellcheck="false" autocomplete="off">
+<label for="egress-cotten-username">نام کاربری پراکسی</label><input id="egress-cotten-username" dir="ltr" maxlength="255" autocomplete="off" spellcheck="false">
+<label for="egress-cotten-password">رمز پراکسی</label><input id="egress-cotten-password" type="password" dir="ltr" maxlength="255" autocomplete="new-password" spellcheck="false">
+<small>برای حفظ رمز ذخیره‌شده، خالی بگذارید. تغییر آدرس یا نام کاربری به ورود دوبارهٔ رمز نیاز دارد.</small>
+<label class="checkbox"><input id="egress-cotten-clear" type="checkbox">حذف احراز هویت ذخیره‌شده</label>
+<label for="egress-cotten-ports">پورت‌های مجاز روی پراکسی</label><input id="egress-cotten-ports" dir="ltr" maxlength="2048" placeholder="80,443,1000-2000" autocomplete="off" spellcheck="false">
+<label class="checkbox"><input id="egress-cotten-unrestricted" type="checkbox">بدون محدودیت پورت روی پراکسی</label>
+</fieldset>
+<fieldset class="egress-route"><legend>MasterDNS</legend>
+<label for="egress-masterdns-mode">مسیر</label><select id="egress-masterdns-mode"><option value="direct">مستقیم</option><option value="socks5">SOCKS5</option><option value="http">HTTP CONNECT</option><option value="https">HTTPS CONNECT</option></select>
+<label for="egress-masterdns-address">آدرس پراکسی</label><input id="egress-masterdns-address" dir="ltr" maxlength="260" placeholder="127.0.0.1:1080" spellcheck="false" autocomplete="off">
+<label for="egress-masterdns-username">نام کاربری پراکسی</label><input id="egress-masterdns-username" dir="ltr" maxlength="255" autocomplete="off" spellcheck="false">
+<label for="egress-masterdns-password">رمز پراکسی</label><input id="egress-masterdns-password" type="password" dir="ltr" maxlength="255" autocomplete="new-password" spellcheck="false">
+<small>برای حفظ رمز ذخیره‌شده، خالی بگذارید. تغییر آدرس یا نام کاربری به ورود دوبارهٔ رمز نیاز دارد.</small>
+<label class="checkbox"><input id="egress-masterdns-clear" type="checkbox">حذف احراز هویت ذخیره‌شده</label>
+<label for="egress-masterdns-ports">پورت‌های مجاز روی پراکسی</label><input id="egress-masterdns-ports" dir="ltr" maxlength="2048" placeholder="80,443,1000-2000" autocomplete="off" spellcheck="false">
+<label class="checkbox"><input id="egress-masterdns-unrestricted" type="checkbox">بدون محدودیت پورت روی پراکسی</label>
+</fieldset></div>
+ <fieldset class="settings-section"><legend>نگهداری گزارش مقصدها</legend>
+  <label class="checkbox"><input id="outbound-logging" type="checkbox">ثبت گزارش خروجی فعال باشد</label>
+  <p class="hint">ثبت مقصد اختیاری و پیش‌فرض خاموش است. در صورت فعال‌سازی، موتور، شناسهٔ حساب، IP و پورت مقصد، زمان و حجم payload ثبت می‌شود؛ محتوای ترافیک و رمز پراکسی ثبت یا برای دستیار ارسال نمی‌شود.</p>
+  <div class="settings-grid"><label>نگهداری (ساعت)<input id="outbound-retention" type="number" min="1" max="720" step="1" value="24" required dir="ltr"></label><label>سقف فضای گزارش (MiB)<input id="outbound-storage" type="number" min="4" max="256" step="1" value="32" required dir="ltr"></label></div>
+ </fieldset>
+ <p class="hint">SOCKS5 از TCP و UDP پشتیبانی می‌کند؛ HTTP CONNECT فقط TCP دارد و UDP را رد می‌کند. DNS مقصدها از همان پراکسی عبور می‌کند. برای حذف نیاز به DNS راه‌اندازی پراکسی، آدرس IP پراکسی را وارد کنید.</p>
+ <p class="hint">پراکسی لوکال به‌تنهایی مسیر نهایی Xray یا sing-box را مشخص نمی‌کند؛ قوانین خروجی آن سرویس را جداگانه تنظیم کنید. SOCKS5 و HTTP احراز هویت را رمزگذاری نمی‌کنند؛ HTTPS اتصال به پراکسی را رمزگذاری می‌کند.</p>
+ <div class="settings-actions"><button id="egress-save" type="submit" class="primary" disabled>ذخیرهٔ مسیر خروجی</button><p id="egress-feedback" class="hint" role="status">ذخیرهٔ موفق، موتورهای فعال را دوباره راه‌اندازی می‌کند؛ حساب‌ها، کلیدها و مصرف حفظ می‌شوند.</p></div>
+</form>

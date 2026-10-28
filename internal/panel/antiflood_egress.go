@@ -32,14 +32,23 @@ func (l *floodLease) releaseTarget() {
 // PublicOnly as defense in depth. All candidate addresses share the same account
 // admission; each actual socket attempt consumes target/network admission.
 func (m *Manager) guardedDial(ctx context.Context, network, address string, resolver bool, l *floodLease) (net.Conn, error) {
+	return m.guardedDialRoute(ctx, network, address, resolver, l, EngineEgress{Mode: "direct"}, nil, nil)
+}
+
+func (m *Manager) guardedDialRoute(ctx context.Context, network, address string, resolver bool, l *floodLease, route EngineEgress, flow *outboundFlow, resolved []netip.Addr) (net.Conn, error) {
 	dial := m.dialOverride
-	if dial != nil && m.lookupOverride == nil {
+	if !route.proxy() && dial != nil && m.lookupOverride == nil {
 		// Existing in-process interop tests supply their own local dialer. No
 		// shipped command can set either of these hooks.
 		return dial(ctx, network, address)
 	}
 	if dial == nil {
 		dial = (&net.Dialer{Control: soar.PublicOnly}).DialContext
+	}
+	if route.proxy() {
+		dial = func(ctx context.Context, network, target string) (net.Conn, error) {
+			return dialProxy(ctx, route, network, target)
+		}
 	}
 	host, port, err := net.SplitHostPort(address)
 	if err != nil {
@@ -48,6 +57,11 @@ func (m *Manager) guardedDial(ctx context.Context, network, address string, reso
 	var ips []netip.Addr
 	if ip, e := netip.ParseAddr(host); e == nil {
 		ips = []netip.Addr{ip}
+	} else if route.proxy() {
+		if len(resolved) == 0 {
+			return nil, errUpstreamProxy
+		}
+		ips = resolved
 	} else {
 		lookup := m.lookupOverride
 		if lookup == nil {
@@ -68,7 +82,7 @@ func (m *Manager) guardedDial(ctx context.Context, network, address string, reso
 		}
 		seen[ip] = true
 		pinned := net.JoinHostPort(ip.String(), port)
-		if m.dialOverride == nil {
+		if route.proxy() || m.dialOverride == nil {
 			if e := soar.PublicOnly(network, pinned, nil); e != nil {
 				last = errDestinationPort
 				continue
@@ -95,6 +109,11 @@ func (m *Manager) guardedDial(ctx context.Context, network, address string, reso
 		}
 		attempt, stop := context.WithTimeout(ctx, budget)
 		conn, e := dial(attempt, network, pinned)
+		result := "connected"
+		if e != nil {
+			result = diagnosticReason(e)
+		}
+		flow.attempt(ip.String(), result)
 		stop()
 		if !resolver && !errors.Is(e, context.Canceled) {
 			if q := m.flood.outcome(l, e != nil, time.Now()); q {

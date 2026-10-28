@@ -151,6 +151,10 @@ func diagnosticReason(err error) string {
 		return "server_stream_limit"
 	case errors.Is(err, errDestinationPort):
 		return "destination_policy"
+	case errors.Is(err, errUpstreamProxy):
+		return "proxy_unavailable"
+	case errors.Is(err, errProxyUDP):
+		return "proxy_udp_unsupported"
 	case errors.Is(err, errAntiFlood):
 		return "antiflood"
 	case errors.As(err, &dns):

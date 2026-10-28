@@ -88,6 +88,9 @@ func inspectBackupTransaction(tx *bolt.Tx, summary *BackupSummary) error {
 	if err := cfg.Validate(); err != nil {
 		return err
 	}
+	if _, err := readEgress(tx); err != nil {
+		return err
+	}
 	if _, err := readFloodBlocks(tx.Bucket(meta)); err != nil {
 		return err
 	}
@@ -175,15 +178,22 @@ func inspectBackupTransaction(tx *bolt.Tx, summary *BackupSummary) error {
 	})
 }
 
-// Keep current administrator credentials when applying a full account restore.
+// Keep current administrator credentials and machine-local egress policy on
+// restore. In particular an older backup must not silently re-enable direct
+// outbound traffic on a server configured to require a proxy.
 // Access URLs and TLS certificates are machine-local and live outside the DB.
 func PreserveRestoreAdmin(candidate, current string) error {
 	old, e := bolt.Open(current, 0600, &bolt.Options{ReadOnly: true, Timeout: time.Second})
 	if e != nil {
 		return e
 	}
-	var admin []byte
-	e = old.View(func(tx *bolt.Tx) error { admin = bytes.Clone(tx.Bucket(meta).Get([]byte("admin"))); return nil })
+	var admin, egress []byte
+	e = old.View(func(tx *bolt.Tx) error {
+		admin = bytes.Clone(tx.Bucket(meta).Get([]byte("admin")))
+		egress = bytes.Clone(tx.Bucket(meta).Get([]byte("egress")))
+		_, err := readEgress(tx)
+		return err
+	})
 	old.Close()
 	if e != nil {
 		return e
@@ -196,6 +206,15 @@ func PreserveRestoreAdmin(candidate, current string) error {
 	return db.Update(func(tx *bolt.Tx) error {
 		if e := tx.Bucket(meta).Put([]byte("admin"), admin); e != nil {
 			return e
+		}
+		if egress != nil {
+			if err := tx.Bucket(meta).Put([]byte("egress"), egress); err != nil {
+				return err
+			}
+		} else {
+			if err := tx.Bucket(meta).Delete([]byte("egress")); err != nil {
+				return err
+			}
 		}
 		return addEvent(tx, "backup.restored", "")
 	})

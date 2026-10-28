@@ -181,7 +181,7 @@ func (h *HTTP) serveHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		switch r.URL.Path {
-		case "/", "/index.html", "/app.js", "/diagnostics.js", "/diagnostics.css", "/antiflood.js", "/maintenance.js", "/telegram.js", "/i18n.js", "/ltr.css", "/settings.js", "/ui.js", "/tokens.css", "/redesign.css", "/style.css", "/fonts/vazirmatn.ttf", "/fonts/vazirmatn.woff2":
+		case "/egress.js", "/egress.css", "/", "/index.html", "/app.js", "/diagnostics.js", "/diagnostics.css", "/antiflood.js", "/maintenance.js", "/telegram.js", "/i18n.js", "/ltr.css", "/settings.js", "/ui.js", "/tokens.css", "/redesign.css", "/style.css", "/fonts/vazirmatn.ttf", "/fonts/vazirmatn.woff2":
 			if r.URL.Path == "/" || r.URL.Path == "/index.html" {
 				raw, e := webFiles.ReadFile("web/index.html")
 				if e != nil {
@@ -195,6 +195,10 @@ func (h *HTTP) serveHTTP(w http.ResponseWriter, r *http.Request) {
 				body := strings.Replace(string(raw), "<head>", "<head><base href=\""+prefix+"\">", 1)
 				diagnostics, _ := webFiles.ReadFile("web/diagnostics.html")
 				body = strings.Replace(body, "{{DIAGNOSTICS_PAGE}}", string(diagnostics), 1)
+				egress, _ := webFiles.ReadFile("web/egress-settings.html")
+				outbound, _ := webFiles.ReadFile("web/outbound-report.html")
+				body = strings.Replace(body, "{{EGRESS_SETTINGS}}", string(egress), 1)
+				body = strings.Replace(body, "{{OUTBOUND_REPORT}}", string(outbound), 1)
 				body = strings.NewReplacer("{{PANEL_NAME}}", html.EscapeString(ProductName), "{{PANEL_VERSION}}", html.EscapeString(Version)).Replace(body)
 				w.Header().Set("Content-Type", "text/html; charset=utf-8")
 				if r.Method != "HEAD" {
@@ -222,6 +226,14 @@ func (h *HTTP) serveHTTP(w http.ResponseWriter, r *http.Request) {
 	observed := &diagnosticResponseWriter{ResponseWriter: w}
 	w = observed
 	defer h.logRequest(observed, r)
+	if r.URL.Path == "/api/egress" {
+		h.egressAPI(w, r)
+		return
+	}
+	if r.URL.Path == "/api/outbound" {
+		h.outboundAPI(w, r)
+		return
+	}
 	if r.URL.Path == "/api/logs" {
 		h.logsAPI(w, r)
 		return
