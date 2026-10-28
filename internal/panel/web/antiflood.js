@@ -40,7 +40,7 @@ window.panelAntiFlood=(()=>{
  function policyForm(policy){savedPolicy={...policy};$('flood-mode').value=policy.mode;for(const [key] of fields)$('flood-'+key).value=policy[key];$('flood-dirty').hidden=true;panelUI.syncSelects();}
  function accountName(id){return clients.find(c=>c.id===id)?.name||id;}
  function render(data){
-  $('flood-summary').replaceChildren(...[['ردشده',data.denied],['مشاهده‌شده',data.observed],['قرنطینه‌ها',data.quarantines],['جریان باز',data.active]].map(([label,value])=>{const metric=node('div',null,'flood-metric');metric.append(node('span',tr(label)),node('strong',number(value)));return metric;}));
+  [['ردشده',data.denied],['مشاهده‌شده',data.observed],['قرنطینه‌ها',data.quarantines],['جریان باز',data.active]].forEach(([label,value],index)=>{let metric=$('flood-summary').children[index];if(!metric){metric=node('div',null,'flood-metric');metric.append(node('span',tr(label)),node('strong'));$('flood-summary').append(metric);}setText(metric.lastElementChild,number(value));});
   $('flood-runtime-mode').dataset.mode=data.policy.mode;
   $('flood-storage-error').hidden=!data.persistence_errors;
   const active=data.accounts.filter(a=>a.block.until>Date.now());
@@ -59,8 +59,8 @@ window.panelAntiFlood=(()=>{
   $('flood-reasons').replaceChildren(...Object.entries(data.reasons).map(([reason,count])=>node('li',(reasons[reason]||reason)+' · '+number(count))));
   $('flood-runtime-mode').textContent={off:tr('خاموش'),monitor:tr('فقط مشاهده'),enforce:tr('فعال؛ محدودسازی و قرنطینه')}[data.policy.mode];
  }
- async function load(){const data=await api('/antiflood');policyForm(data.policy);render(data);}
- async function refreshStatus(){if(currentPage==='antiflood')render(await api('/antiflood'));}
+ async function load(){const ticket=navigationId,session=csrf,data=await api('/antiflood');if(ticket!==navigationId||session!==csrf||currentPage!=='antiflood')return;policyForm(data.policy);render(data);}
+ async function refreshStatus(){if(currentPage!=='antiflood')return;const ticket=navigationId,session=csrf,data=await api('/antiflood');if(ticket===navigationId&&session===csrf&&currentPage==='antiflood')render(data);}
  $('flood-refresh').onclick=e=>withButton(e.currentTarget,refreshStatus);
  $('flood-form').onsubmit=e=>{e.preventDefault();withButton(e.submitter,async()=>{
   const mode=$('flood-mode').value;

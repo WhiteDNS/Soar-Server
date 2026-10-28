@@ -22,7 +22,7 @@ module.exports=async({page,out,assert})=>{
    await page.evaluate(language=>{localStorage.setItem('whitedns-panel-language',language);localStorage.setItem('whitedns-panel-sidebar','expanded');},language);
    await page.reload();await page.locator('#app').waitFor({state:'visible'});
    await page.setViewportSize({width:1680,height:1000});
-   await page.waitForFunction(()=>{const r=document.querySelector('.sidebar').getBoundingClientRect();return r.x>=-1&&r.right<=innerWidth+1;});
+   await page.waitForFunction(()=>{const sidebar=document.querySelector('.sidebar'),r=sidebar.getBoundingClientRect(),width=parseFloat(getComputedStyle(sidebar).getPropertyValue('--sidebar-width'));return r.x>=-1&&r.right<=innerWidth+1&&Math.abs(r.width-width)<1&&!sidebar.inert&&document.getElementById('menu-toggle').getAttribute('aria-expanded')==='true';});
    assert.equal(await page.locator('#menu-toggle').getAttribute('aria-expanded'),'true');
    const rail=await page.locator('.sidebar').boundingBox();
    const brandSpacing=await page.locator('.brand').evaluate(el=>{const box=el.getBoundingClientRect(),text=el.lastElementChild.getBoundingClientRect(),title=getComputedStyle(el.querySelector('b')),caption=getComputedStyle(el.querySelector('small'));return {top:text.top-box.top,bottom:box.bottom-text.bottom,title:parseFloat(title.fontSize),caption:parseFloat(caption.fontSize)};});

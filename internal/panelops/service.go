@@ -11,9 +11,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
-	"net"
 	"net/http"
 	"os"
 	"os/exec"
@@ -30,6 +28,7 @@ import (
 
 type Service struct {
 	DB, Binary, OpsBinary, SecurityScript, StateDir, HealthAddress string
+	MenuScript, LockFile                                           string
 	UID, GID                                                       int
 	mu                                                             sync.Mutex
 	job                                                            panel.MaintenanceJob
@@ -70,6 +69,11 @@ func (s *Service) Initialize() error {
 		s.Fetch = s.fetchBundle
 	}
 	if s.job.State == "running" {
+		unlock, err := acquireMaintenanceLock(s.LockFile)
+		if err != nil {
+			return err
+		}
+		defer unlock()
 		job := s.job
 		if job.Backup != "" {
 			ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
@@ -103,42 +107,7 @@ func systemControl(ctx context.Context, action string) error {
 	return errors.New("invalid maintenance service action")
 }
 func (s *Service) checkHealth(ctx context.Context) error {
-	cfg, e := panel.ReadAccessConfig(filepath.Join(filepath.Dir(s.DB), "access.json"))
-	if e != nil {
-		return e
-	}
-	prefix := cfg.BasePath
-	if prefix == "" {
-		prefix = "/"
-	}
-	request, e := http.NewRequestWithContext(ctx, "GET", "http://"+s.HealthAddress+prefix+"api/health", nil)
-	if e != nil {
-		return e
-	}
-	transport := &http.Transport{Proxy: nil}
-	if cfg.HTTPS {
-		host, _, e := net.SplitHostPort(s.HealthAddress)
-		if e != nil {
-			return e
-		}
-		request, e = http.NewRequestWithContext(ctx, "GET", "https://"+cfg.Domain+prefix+"api/health", nil)
-		if e != nil {
-			return e
-		}
-		transport.DialContext = func(ctx context.Context, _, _ string) (net.Conn, error) {
-			return (&net.Dialer{}).DialContext(ctx, "tcp", net.JoinHostPort(host, "443"))
-		}
-	}
-	client := &http.Client{Timeout: 3 * time.Second, Transport: transport}
-	r, e := client.Do(request)
-	if e != nil {
-		return e
-	}
-	defer r.Body.Close()
-	if r.StatusCode != 204 {
-		return fmt.Errorf("panel health returned HTTP %d", r.StatusCode)
-	}
-	return nil
+	return panel.CheckManagementHealth(ctx, s.DB, s.HealthAddress)
 }
 func (s *Service) inspect(ctx context.Context, path string) (panel.BackupSummary, error) {
 	return InspectChild(ctx, s.Binary, path)
@@ -212,6 +181,16 @@ func (s *Service) Begin(request panel.MaintenanceRequest) (panel.MaintenanceJob,
 	if request.Action == "restore" && (len(request.Backup) < 8192 || len(request.Backup) > panel.MaxBackupBytes || len(request.SHA256) != 64) {
 		return panel.MaintenanceJob{}, errors.New("invalid panel backup")
 	}
+	unlock, err := acquireMaintenanceLock(s.LockFile)
+	if err != nil {
+		return panel.MaintenanceJob{}, err
+	}
+	started := false
+	defer func() {
+		if !started {
+			unlock()
+		}
+	}()
 	s.mu.Lock()
 	if s.job.State == "running" {
 		s.mu.Unlock()
@@ -229,7 +208,8 @@ func (s *Service) Begin(request panel.MaintenanceRequest) (panel.MaintenanceJob,
 	if e != nil {
 		return job, e
 	}
-	go func() { time.Sleep(time.Second); s.perform(request, job) }()
+	started = true
+	go func() { defer unlock(); time.Sleep(time.Second); s.perform(request, job) }()
 	return job, nil
 }
 func (s *Service) perform(request panel.MaintenanceRequest, job panel.MaintenanceJob) {
@@ -252,7 +232,7 @@ func (s *Service) perform(request panel.MaintenanceRequest, job panel.Maintenanc
 	}
 	work := filepath.Join(s.StateDir, job.ID)
 	defer func() {
-		for _, name := range []string{"restore.db", "release.tar.gz", "soar-panel", "soar-panel-ops", "soar-panel-security"} {
+		for _, name := range []string{"restore.db", "release.tar.gz", "soar-panel", "soar-panel-ops", "soar-panel-security", "soar-panel-menu"} {
 			_ = os.Remove(filepath.Join(work, name))
 		}
 		s.pruneJobs()
@@ -339,6 +319,12 @@ func (s *Service) perform(request panel.MaintenanceRequest, job panel.Maintenanc
 			return
 		}
 	}
+	if s.MenuScript != "" {
+		if e := copyAtomic(s.MenuScript, filepath.Join(backup, "soar-panel-menu"), 0600, -1, -1); e != nil {
+			fail(e)
+			return
+		}
+	}
 	job.Backup = backup
 	job.Message = "Activating validated maintenance candidate"
 	s.Save(job)
@@ -369,6 +355,12 @@ func (s *Service) perform(request panel.MaintenanceRequest, job panel.Maintenanc
 		}
 		if s.SecurityScript != "" {
 			if e := copyAtomic(filepath.Join(work, "soar-panel-security"), s.SecurityScript, 0755, -1, -1); e != nil {
+				fail(e)
+				return
+			}
+		}
+		if s.MenuScript != "" {
+			if e := copyAtomic(filepath.Join(work, "soar-panel-menu"), s.MenuScript, 0755, -1, -1); e != nil {
 				fail(e)
 				return
 			}
@@ -424,6 +416,14 @@ func (s *Service) rollback(ctx context.Context, backup string) error {
 		path := filepath.Join(backup, "soar-panel-security")
 		if _, e := os.Stat(path); e == nil {
 			if e = copyAtomic(path, s.SecurityScript, 0755, -1, -1); e != nil {
+				return e
+			}
+		}
+	}
+	if backup != "" && s.MenuScript != "" {
+		path := filepath.Join(backup, "soar-panel-menu")
+		if _, e := os.Stat(path); e == nil {
+			if e = copyAtomic(path, s.MenuScript, 0755, -1, -1); e != nil {
 				return e
 			}
 		}
@@ -561,10 +561,13 @@ func extractBinariesArch(archive, destination, version, arch string) error {
 		if e != nil {
 			return e
 		}
-		for _, name := range []string{"soar-panel", "soar-panel-ops", "soar-panel-security"} {
+		for _, name := range []string{"soar-panel", "soar-panel-ops", "soar-panel-security", "soar-panel-menu"} {
 			want := root + "/bin/linux-" + arch + "/" + name
 			if name == "soar-panel-security" {
 				want = root + "/panel-security.sh"
+			}
+			if name == "soar-panel-menu" {
+				want = root + "/panel-menu.sh"
 			}
 			if header.Name != want {
 				continue
@@ -587,7 +590,7 @@ func extractBinariesArch(archive, destination, version, arch string) error {
 			found[name] = true
 		}
 	}
-	if len(found) != 3 {
+	if len(found) != 4 {
 		return errors.New("release is missing maintenance binaries")
 	}
 	return nil

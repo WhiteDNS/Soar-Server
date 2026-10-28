@@ -67,7 +67,7 @@ window.panelDiagnostics=(()=>{
   if(!value.enabled||value.load_error)$('assistant-setup').open=true;
   if(value.load_error)errorBox('assistant-error',Error(tr('فایل تنظیمات هوش مصنوعی خوانده نشد؛ اتصال را دوباره ذخیره کنید.')));
  }
- async function load(){const ticket=generation;await refresh(true);const [value,conversation]=await Promise.all([api('/assistant/config'),api('/assistant/conversation')]);if(ticket!==generation||!csrf)return;showConfig(value);if(!controller){if(conversation.messages?.length){$('assistant-chat').replaceChildren();for(const m of conversation.messages)appendTurn(m.role,m.content);}renderProposal(conversation.proposal);undo=conversation.undo;$('assistant-undo-panel').hidden=!undo;}}
+ async function load(){const ticket=generation,route=navigationId;await refresh(true);const [value,conversation]=await Promise.all([api('/assistant/config'),api('/assistant/conversation')]);if(ticket!==generation||route!==navigationId||currentPage!=='logs'||!csrf)return;showConfig(value);if(!controller){if(conversation.messages?.length){$('assistant-chat').replaceChildren();for(const m of conversation.messages)appendTurn(m.role,m.content);}renderProposal(conversation.proposal);undo=conversation.undo;$('assistant-undo-panel').hidden=!undo;}}
  $('assistant-provider').addEventListener('change',()=>{
   const preset=config?.providers.find(p=>p.id===$('assistant-provider').value);if(!preset)return;
   $('assistant-protocol').value=preset.protocol;$('assistant-base-url').value=preset.base_url;$('assistant-model').value='';$('assistant-api-key').value='';$('assistant-clear-key').checked=true;

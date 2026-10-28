@@ -141,6 +141,10 @@ maintenance service should rerun the guided installer once.
 
 ## Troubleshooting
 
+For the complete interactive SSH management menu, run `sudo whitedns` or
+`sudo soar-panel menu`. It includes password recovery, domain/certificate setup,
+ports, backups, updates, logs and uninstall. See [server menu](SERVER-MENU.en.md).
+
 Use the full URL including its random path. To inspect service status:
 
 ```bash

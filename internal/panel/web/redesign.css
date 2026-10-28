@@ -527,3 +527,16 @@ body.sidebar-collapsed .sidebar-fold .icon{transform:rotate(180deg)}
 .sidebar-fold:focus-visible{outline:2px solid var(--color-accent);outline-offset:3px}
 @media(min-width:801px) and (prefers-reduced-motion:no-preference){.sidebar{transition:width 180ms ease}.workspace{transition:margin-inline-start 180ms ease}.sidebar-fold{transition:inset-inline-start 180ms ease,background 120ms ease,color 120ms ease}}
 @media(max-width:800px){.sidebar-fold{display:none}}
+
+/* Stable live metrics and lightweight page changes; no animated counters. */
+html{scrollbar-gutter:stable}
+@media(max-width:800px){html{scrollbar-gutter:auto}}
+.page{min-block-size:calc(100dvh - 230px)}
+.stat>strong,.resource b,.resource-reading,.flood-metric strong,#streams,#connection-count,#send-rate,#receive-rate,.usage,.table-footer,#nav-count,#sync-state{font-variant-numeric:tabular-nums lining-nums}
+.stat>strong{display:block;min-block-size:1.5em;line-height:1.5;white-space:nowrap}
+#cpu-reading,#ram-reading,#disk-reading{display:inline-block;min-inline-size:4.5ch;text-align:end}
+#nav-count{min-inline-size:2.5ch;text-align:center}
+#sync-state{min-block-size:1.5em;white-space:nowrap}
+#page-dashboard:not([data-loaded]) .stat>strong{color:transparent;background:var(--color-rule);border-radius:6px;inline-size:65%;opacity:.45}
+.page[aria-busy=true]:not([data-loaded]){cursor:progress}
+@media(prefers-reduced-motion:reduce){.page{scroll-behavior:auto}}

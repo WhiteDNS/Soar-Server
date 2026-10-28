@@ -170,7 +170,7 @@ func TestExtractorDoesNotInstallTraversalSymlinkOrDuplicate(t *testing.T) {
 				tarw := tar.NewWriter(z)
 				_ = tarw.WriteHeader(&tar.Header{Name: "../../escaped", Typeflag: tar.TypeReg, Mode: 0755, Size: 4})
 				_, _ = io.WriteString(tarw, "evil")
-				for _, name := range []string{"soar-panel", "soar-panel-ops", "soar-panel-security"} {
+				for _, name := range []string{"soar-panel", "soar-panel-ops", "soar-panel-security", "soar-panel-menu"} {
 					if variant == "missing" && name == "soar-panel-ops" {
 						continue
 					}
@@ -191,6 +191,9 @@ func TestExtractorDoesNotInstallTraversalSymlinkOrDuplicate(t *testing.T) {
 						header := &tar.Header{Name: root + "/bin/linux-" + bundleArch + "/" + name, Typeflag: tar.TypeReg, Size: 4, Mode: 0755}
 						if name == "soar-panel-security" {
 							header.Name = root + "/panel-security.sh"
+						}
+						if name == "soar-panel-menu" {
+							header.Name = root + "/panel-menu.sh"
 						}
 						if variant == "symlink" {
 							header.Typeflag = tar.TypeSymlink

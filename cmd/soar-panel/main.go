@@ -27,6 +27,9 @@ func main() {
 	}
 }
 func execute(args []string) error {
+	if handled, err := managementCommand(args); handled {
+		return err
+	}
 	if len(args) == 1 && args[0] == "version" {
 		fmt.Println(panel.Version)
 		return nil
@@ -56,6 +59,7 @@ func execute(args []string) error {
 	opsSocket := f.String("ops-socket", "/run/soar-panel-ops/control.sock", "Private maintenance service socket")
 	domain := f.String("domain", "", "Panel HTTPS domain (configure-access only)")
 	email := f.String("email", "", "Optional certificate account email")
+	panelAliases := f.String("panel-aliases", "", "Comma separated additional HTTPS domains (configure-access only)")
 	randomPath := f.Bool("random-path", false, "Generate a new private access path")
 	probeID := f.String("probe-id", "", "Temporary installation account to remove (offline installer only)")
 	updateResolvers := f.Bool("update-resolvers", false, "Save selected bootstrap resolvers when finishing a fresh installation")
@@ -90,10 +94,25 @@ func execute(args []string) error {
 		}
 		return json.NewEncoder(os.Stdout).Encode(v)
 	}
-	if args[0] == "access-url" || args[0] == "health" {
+	if args[0] == "access-domains" || args[0] == "access-info" || args[0] == "access-url" || args[0] == "health" {
 		cfg, e := panel.ReadAccessConfig(*accessFile)
 		if e != nil {
 			return e
+		}
+		if args[0] == "access-info" {
+			return json.NewEncoder(os.Stdout).Encode(cfg)
+		}
+		if args[0] == "access-domains" {
+			if e := panel.ValidateAccess(cfg); e != nil {
+				return e
+			}
+			if cfg.HTTPS {
+				fmt.Println(cfg.Domain)
+				for _, host := range cfg.Aliases {
+					fmt.Println(host)
+				}
+			}
+			return nil
 		}
 		path := cfg.BasePath
 		if path == "" {
@@ -101,19 +120,18 @@ func execute(args []string) error {
 		}
 		origin := "http://" + *bind
 		if args[0] == "health" {
-			client := &http.Client{Timeout: 5 * time.Second, Transport: &http.Transport{Proxy: nil}}
-			r, e := client.Get(origin + path + "api/health")
-			if e != nil {
-				return e
-			}
-			r.Body.Close()
-			if r.StatusCode != 204 {
-				return fmt.Errorf("panel readiness HTTP %d", r.StatusCode)
-			}
-			return nil
+			return panel.CheckManagementHealth(context.Background(), *db, *bind)
 		}
 		if cfg.HTTPS {
 			origin = "https://" + cfg.Domain
+		} else if live, found, err := panel.ReadListenerConfig(*db); err != nil {
+			return err
+		} else if found && live.TLS {
+			_, port, err := net.SplitHostPort(live.Management)
+			if err != nil {
+				return err
+			}
+			origin = "https://" + net.JoinHostPort(live.ServerName, port)
 		}
 		fmt.Println(origin + path)
 		return nil
@@ -143,6 +161,14 @@ func execute(args []string) error {
 		if host == cfg.Domain {
 			aliases = append(aliases, cfg.Aliases...)
 		}
+		f.Visit(func(option *flag.Flag) {
+			if option.Name == "panel-aliases" {
+				aliases = nil
+				if strings.TrimSpace(*panelAliases) != "" {
+					aliases = normalizedDomains(*panelAliases)
+				}
+			}
+		})
 		plan, e := a.Prepare("http://"+*bind, "terminal", panel.AccessInput{Domain: host, Aliases: aliases, HTTPS: host != "", Email: mail, GeneratePath: *randomPath, BasePath: cfg.BasePath}, panel.NewOpsClient(*opsSocket).AllowHTTPS)
 		if e != nil {
 			return e
@@ -313,6 +339,9 @@ func execute(args []string) error {
 		return e
 	}
 	defer access.Close()
+	if e = panel.WriteListenerConfig(*db, listener.Addr().String(), pc.LocalAddr().String(), *cert, *domain); e != nil {
+		return e
+	}
 	telegram, telegramErr := panel.NewTelegram(handler, filepath.Join(filepath.Dir(*db), "telegram.json"))
 	if telegramErr != nil {
 		log.Printf("Telegram disabled: %v", telegramErr)

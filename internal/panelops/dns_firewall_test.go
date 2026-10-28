@@ -84,3 +84,19 @@ func TestHTTPSFirewallPreservesRulesAndPropagatesStatusFailure(t *testing.T) {
 		t.Fatal("reported firewall success after status failed")
 	}
 }
+
+func TestCustomDNSFirewallPortAndInvalidActions(t *testing.T) {
+	ports, comment, err := firewallPorts("dns:5353")
+	if err != nil || !reflect.DeepEqual(ports, []string{"5353/udp", "5353/tcp"}) || comment != "soar-panel-dns" {
+		t.Fatal(ports, comment, err)
+	}
+	args, err := firewallUnitArgs("/usr/local/bin/soar-panel-ops", "dns:5353")
+	if err != nil || args[len(args)-1] != "firewall-dns:5353" {
+		t.Fatal(args, err)
+	}
+	for _, kind := range []string{"dns:0", "dns:-1", "dns:65536", "dns:5353;id", "dns:", "https:8443"} {
+		if _, _, err := firewallPorts(kind); err == nil {
+			t.Fatal("invalid firewall action accepted", kind)
+		}
+	}
+}

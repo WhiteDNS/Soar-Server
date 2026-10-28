@@ -80,6 +80,8 @@ jobs:
           bash tests/installer_test.sh
           bash tests/panel_installer_test.sh
           bash tests/panel_bootstrap_test.sh
+          bash tests/panel_menu_test.sh
+          bash tests/panel_security_test.sh
       - name: Build offline Linux bundle
         id: bundle
         run: |

@@ -13,17 +13,21 @@ import (
 	"runtime"
 	"soar-server-setup/internal/panel"
 	"soar-server-setup/internal/panelops"
+	"strings"
 	"time"
 )
 
 func main() {
-	if len(os.Args) == 2 && (os.Args[1] == "firewall-dns" || os.Args[1] == "firewall-https") {
+	if len(os.Args) == 2 && (os.Args[1] == "firewall-dns" || strings.HasPrefix(os.Args[1], "firewall-dns:") || os.Args[1] == "firewall-https") {
 		if runtime.GOOS != "linux" || os.Geteuid() != 0 {
 			log.Fatal("firewall preparation requires Linux root")
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), 12*time.Second)
 		defer cancel()
 		kind := "dns"
+		if strings.HasPrefix(os.Args[1], "firewall-dns:") {
+			kind = strings.TrimPrefix(os.Args[1], "firewall-")
+		}
 		if os.Args[1] == "firewall-https" {
 			kind = "https"
 		}
@@ -48,9 +52,13 @@ func run() error {
 	securityScript := flag.String("security-script", "/usr/local/bin/soar-panel-security", "Fixed terminal security wizard")
 	state := flag.String("state", "/var/lib/soar-panel-ops", "Private job/rollback directory")
 	health := flag.String("health-address", "127.0.0.1:2053", "Fixed local management listener")
+	dnsPort := flag.Int("dns-port", 53, "DNS firewall port from the root-owned service configuration")
 	flag.Parse()
 	if runtime.GOOS != "linux" || os.Geteuid() != 0 {
 		return fmt.Errorf("maintenance service requires Linux root; it exposes only a private group-restricted Unix socket")
+	}
+	if err := installManagementMenu("/usr/local/bin/soar-panel-menu", "/usr/local/bin/whitedns"); err != nil {
+		return fmt.Errorf("install server menu: %w", err)
 	}
 	owner, e := user.Lookup("soar-panel")
 	if e != nil {
@@ -64,9 +72,9 @@ func run() error {
 	if e != nil {
 		return e
 	}
-	service := &panelops.Service{DB: *db, Binary: *binary, OpsBinary: *opsBinary, SecurityScript: *securityScript, StateDir: *state, HealthAddress: *health, UID: uid, GID: gid}
+	service := &panelops.Service{DB: *db, Binary: *binary, OpsBinary: *opsBinary, SecurityScript: *securityScript, MenuScript: "/usr/local/bin/soar-panel-menu", LockFile: filepath.Join(*state, "maintenance.lock"), StateDir: *state, HealthAddress: *health, UID: uid, GID: gid}
 	firewallCtx, cancelFirewall := context.WithTimeout(context.Background(), 15*time.Second)
-	e = panelops.PrepareFirewall(firewallCtx, *opsBinary, "dns")
+	e = panelops.PrepareFirewall(firewallCtx, *opsBinary, fmt.Sprintf("dns:%d", *dnsPort))
 	cancelFirewall()
 	if e != nil {
 		return e
