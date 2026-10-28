@@ -1,0 +1,16 @@
+Generated with the built-in image_gen tool.
+
+Use case: ads-marketing.
+Create one finished premium Telegram release poster for WhiteDNS Server Panel version 0.14.0, portrait 4:5 composition, crisp high-resolution typography. This is a product release announcement for Persian-speaking server administrators.
+Palette strictly black, dark charcoal, vivid leaf green and warm white. Absolutely no blue, cyan, teal, purple, or blue gradients.
+Design: restrained, polished software-brand editorial art direction, generous spacing, large WhiteDNS wordmark at the top, an oversized 0.14.0 release number, subtle green routing paths connecting three engine nodes to a proxy node and a compact report motif. Use elegant geometric lines and a small dimensional black server form with green edge light, with the illustration taking the middle third. No fake dashboard screenshots, invented statistics, shield/security guarantees, extra logos, QR codes or decorative tiny text.
+All copy below must be rendered exactly and legibly. Persian letters must join correctly, Persian lines flow right-to-left. Text hierarchy: WhiteDNS, then SERVER PANEL in smaller uppercase, then 0.14.0 as a strong focal point.
+Exact headline: "کنترل بیشتر روی ترافیک خروجی"
+Three spacious feature lines below the illustration, each with a subtle green geometric symbol:
+"پراکسی مستقل برای هر موتور"
+"تنظیم پورت‌های Upstream"
+"گزارش خروجی با بازهٔ زمانی دلخواه"
+Small technical line: "SOCKS5 · HTTP CONNECT · HTTPS CONNECT"
+Small final line: "Soar · Cotten · MasterDNS"
+Footer: "CSV / JSON" and "github.com/WhiteDNS/Soar-Server"
+Keep all text inside comfortable safe margins, make the Persian headline and three feature lines easily readable on a phone. Sharp flat type, clean contrast, no warped typography, no watermark.

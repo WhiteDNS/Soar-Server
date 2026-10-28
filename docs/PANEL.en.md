@@ -8,7 +8,10 @@ code with a workflow inspired by 3x-ui; Xray is not installed.
 Supported servers: Ubuntu 22.04/24.04/26.04 or Debian 12/13, amd64/x86_64 or arm64/aarch64,
 with root/sudo and systemd. No Docker, Go, Node or external database is required.
 
-Panel 0.8.0 provides separate archives for each architecture. The installer rejects mismatched bundles before installation. On every run, the public bootstrap resolves GitHub's latest stable panel release and downloads the matching architecture archive and checksum. It stops before installation if discovery, download or verification fails; it never silently installs an older version.
+Panel 0.14.0 provides separate archives for each architecture. The installer rejects mismatched bundles before installation. On every run, the public bootstrap resolves GitHub's latest stable panel release and downloads the matching architecture archive and checksum. It stops before installation if discovery, download or verification fails; it never silently installs an older version.
+
+For the 0.14.0 engine proxies, proxy port policies and destination reports, follow
+the [complete upstream and outbound reporting guide](EGRESS.en.md) ([فارسی](EGRESS.fa.md)).
 
 ## 1. Prepare a server and DNS
 
@@ -176,3 +179,44 @@ Local 0.5.0 supports up to eight independent tunnel domains and eight HTTPS pane
 Panel 0.8.0 adds MasterDnsVPN. Select MasterDNS, a pair including it, or All three engines in the account editor. Refresh the existing subscription in WhiteDNS; direct MasterDNS links and QR codes are also available. The account uses the existing DNS delegation with an isolated MasterDNS domain and key.
 
 Quota, rate, expiry and TCP stream budgets are shared across the selected engines. The separate MasterDNS session limit is 1–255, default 255; sessions are not device counts. Existing account selections stay unchanged. MasterDNS transports TCP over UDP DNS; arbitrary UDP/QUIC is not added. See [MasterDNS integration](MASTERDNS.md).
+
+## Engine upstream proxies and port rules — 0.14.0+
+
+Open **Server settings → Upstream proxies & traffic reports**. Each engine has
+its own route. CottenMax uses Cotten's setting; setting Soar alone does not
+route the other engines through that proxy.
+
+For an existing local SOCKS5 inbound, choose **SOCKS5**, enter its actual address
+such as `127.0.0.1:1080`, and enter both authentication fields if required.
+This is an example, not a proxy installed by the panel. Start with destination
+ports `80,443`; lists such as `80,443,1000-2000` and **Unrestricted ports on the
+proxy route** are also available. These exceptions do not open direct ports.
+HTTP/HTTPS CONNECT supports TCP only. A failed proxy never falls back to direct.
+
+Click **Save outbound routes**. Active engines restart and their existing
+connections close briefly; accounts, keys, subscriptions and usage are preserved.
+Reconnect a client through each configured engine and check its actual public
+exit IP. Xray/sing-box outbound routing is configured in that service separately.
+
+## Destination reports and downloads — 0.14.0+
+
+Logging is **off by default**. In the same settings card, select **Enable outbound
+traffic logging**, choose retention (initially 24 hours) and storage (initially
+32 MiB), then save. Reproduce the traffic after logging has been enabled.
+
+Open **Logs & assistant → Outbound traffic report**, enter exact start/end dates
+and times, choose engine/account/route/status filters and click **Show report**.
+Use **Download CSV** or **Download JSON** for all retained matches, including
+rows outside the displayed page. Apply the current form filters with Show report
+first if you want the table and download to match.
+
+Dates use your device timezone; CSV uses UTC. Filtering uses **connection start
+time** and volumes are the **whole connection payload**, not just bytes inside
+the chosen interval. Reports do not continuously refresh. Advance the end time
+and show the report again for newer results. History cannot be reconstructed
+before logging was enabled or after eviction. No traffic content or proxy
+password is logged.
+
+The [full English guide](EGRESS.en.md) covers protocol/address/password examples,
+DNS routing, port ranges, all report fields/states, retention and partial records,
+backup/restore, troubleshooting and reverting settings. [راهنمای کامل فارسی](EGRESS.fa.md).
