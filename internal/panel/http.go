@@ -14,6 +14,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"reflect"
 	"sort"
 	"strings"
 	"sync"
@@ -370,22 +371,23 @@ func (h *HTTP) authAttempt(w http.ResponseWriter, r *http.Request) (string, bool
 	ip, _, _ := net.SplitHostPort(r.RemoteAddr)
 	now := time.Now()
 	h.mu.Lock()
-	a := h.attempts[ip]
-	if now.After(a.until) {
+	// Expire first: stale entries must not count toward the table cap below.
+	for key, v := range h.attempts {
+		if now.After(v.until) {
+			delete(h.attempts, key)
+		}
+	}
+	a, known := h.attempts[ip]
+	if !known {
 		a = loginAttempt{until: now.Add(5 * time.Minute)}
 	}
-	if a.count >= 8 || len(h.attempts) >= 1024 && h.attempts[ip].until.IsZero() {
+	if a.count >= 8 || len(h.attempts) >= 1024 && !known {
 		h.mu.Unlock()
 		errorReply(w, 429, errors.New("too many login attempts; retry after five minutes"))
 		return ip, false
 	}
 	a.count++
 	h.attempts[ip] = a
-	for key, v := range h.attempts {
-		if now.After(v.until) {
-			delete(h.attempts, key)
-		}
-	}
 	h.mu.Unlock()
 	return ip, true
 }
@@ -435,17 +437,28 @@ func (h *HTTP) settings(w http.ResponseWriter, r *http.Request) {
 		errorReply(w, 400, e)
 		return
 	}
-	if e := h.store.saveSettings(in.Settings, in.ServerStreamLimit); e != nil {
-		errorReply(w, 400, e)
+	previous, e := h.store.Settings()
+	if e != nil {
+		errorReply(w, 500, errors.New("cannot read settings"))
 		return
 	}
-	if e := h.manager.RestartEngines(); e != nil {
-		errorReply(w, 500, errors.New("saved settings; runtime synchronization failed"))
+	if e := h.store.saveSettings(in.Settings, in.ServerStreamLimit); e != nil {
+		errorReply(w, 400, e)
 		return
 	}
 	saved, e := h.store.Settings()
 	if e != nil {
 		errorReply(w, 500, errors.New("cannot read saved settings"))
+		return
+	}
+	// A save that changes nothing must not drop every tunnel; Reconcile still
+	// lets a retry repair a runtime that failed to synchronize earlier.
+	sync := h.manager.RestartEngines
+	if reflect.DeepEqual(previous, saved) {
+		sync = h.manager.Reconcile
+	}
+	if e := sync(); e != nil {
+		errorReply(w, 500, errors.New("saved settings; runtime synchronization failed"))
 		return
 	}
 	jsonReply(w, 200, saved)

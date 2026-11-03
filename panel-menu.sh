@@ -128,6 +128,8 @@ menu_transaction() (
  if (( ops_active )); then systemctl start soar-panel-ops.service; menu_wait_ops; fi
  if (( panel_active )); then systemctl start soar-panel.service; menu_wait; fi
  committed=1
+ # Each snapshot holds the whole database; keep only the newest five automatic ones.
+ ls -1dt "$BACKUPS"/snapshot-* 2>/dev/null | tail -n +6 | while IFS= read -r path; do rm -rf -- "$path"; done || true
  printf '\nCompleted. Private recovery snapshot: %s\n' "$snapshot"
 )
 menu_backup_action(){

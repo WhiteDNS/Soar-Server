@@ -154,6 +154,7 @@ func (m *Manager) startCottenWorkers() {
 				case <-m.ctx.Done():
 					return
 				case job := <-m.cottenJobs:
+					job.rt.dnsQueued.Add(-1)
 					var response []byte
 					if job.master {
 						if engine, err := m.masterDNSFor(job.rt); err == nil {
@@ -175,6 +176,21 @@ func (m *Manager) startCottenWorkers() {
 			}
 		}()
 	}
+}
+
+// One noisy account must not fill the queue every Cotten and MasterDNS account shares.
+const maxAccountDNSJobs = 32
+
+func (m *Manager) queueEngineDNS(job cottenJob) bool {
+	if job.rt.dnsQueued.Add(1) <= maxAccountDNSJobs {
+		select {
+		case m.cottenJobs <- job:
+			return true
+		default:
+		}
+	}
+	job.rt.dnsQueued.Add(-1)
+	return false
 }
 
 // All engines live beneath the existing delegation. The internal "cot" and
@@ -218,22 +234,21 @@ func (m *Manager) routeDNS(query []byte, remote net.Addr, tcp bool, reply func([
 		masterQuery := name == masterZone || strings.HasSuffix(name, "."+masterZone)
 		if masterQuery && rt.client.hasEngine("masterdns") {
 			job := cottenJob{rt: rt, query: append([]byte(nil), query...), reply: reply, tcp: tcp, master: true}
-			select {
-			case m.cottenJobs <- job:
-				return
-			default:
+			if !m.queueEngineDNS(job) {
 				m.diagnostics.masterQueueDrops.Add(1)
 				m.logEvent("warn", "masterdns", rt.client.ID, "dns_queue_full", nil, 0)
+				// No answer lets the resolver retry; REFUSED would count against the server.
+				reply(nil)
 			}
+			return
 		} else if cottenQuery && rt.client.hasEngine("cotten") {
 			job := cottenJob{rt: rt, query: append([]byte(nil), query...), reply: reply, tcp: tcp}
-			select {
-			case m.cottenJobs <- job:
-				return
-			default:
+			if !m.queueEngineDNS(job) {
 				m.diagnostics.cottenQueueDrops.Add(1)
 				m.logEvent("warn", "cotten", rt.client.ID, "dns_queue_full", nil, 0)
+				reply(nil)
 			}
+			return
 		} else if !cottenQuery && !masterQuery && !tcp && rt.client.hasEngine("soar") {
 			q := packet{append([]byte(nil), query...), remote}
 			select {
@@ -368,6 +383,10 @@ func (m *Manager) tunnelDNS(rt *accountRuntime, parent context.Context, query []
 	ctx, cancel := context.WithTimeout(parent, 6*time.Second)
 	defer cancel()
 	candidates := rt.orderedResolvers(resolvers, time.Now())
+	network := "udp"
+	if route.Mode == "http" || route.Mode == "https" {
+		network = "tcp"
+	}
 	for i, candidate := range candidates {
 		endpoint := candidate.endpoint
 		deadline, _ := ctx.Deadline()
@@ -380,11 +399,12 @@ func (m *Manager) tunnelDNS(rt *accountRuntime, parent context.Context, query []
 		}
 		attempt, stop := context.WithTimeout(ctx, budget)
 		started := time.Now()
-		network := "udp"
-		if route.Mode == "http" || route.Mode == "https" {
-			network = "tcp"
-		}
 		response, err := m.exchangeDNSFor(rt, attempt, network, endpoint, query, engine)
+		if err != nil && network == "udp" && route.Mode == "socks5" && !errors.Is(err, errAntiFlood) && !errors.Is(err, ErrDenied) {
+			// Many SOCKS5 proxies have no UDP ASSOCIATE, or a relay that drops datagrams.
+			network = "tcp"
+			response, err = m.exchangeDNSFor(rt, attempt, network, endpoint, query, engine)
+		}
 		if err != nil {
 			stop()
 			if errors.Is(err, errAntiFlood) || errors.Is(err, ErrDenied) {

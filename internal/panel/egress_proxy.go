@@ -23,6 +23,16 @@ import (
 var errUpstreamProxy = errors.New("upstream proxy unavailable or handshake rejected")
 var errProxyUDP = errors.New("this upstream proxy does not support UDP; direct fallback is disabled")
 
+// Each uncached lookup opens several proxy tunnels to port 53, once per dial.
+// shortcut: fixed TTL because net.Resolver hides record TTLs, replace if a short-lived record matters.
+const proxyLookupTTL = time.Minute
+const maxProxyLookups = 1024
+
+type proxyLookup struct {
+	ips     []netip.Addr
+	expires time.Time
+}
+
 // Resolve final target names through the same engine's configured upstream.
 // Returning a stream Conn makes Go's resolver use DNS-over-TCP framing even
 // when its first requested transport is UDP. Proxy endpoint bootstrap DNS is
@@ -30,7 +40,14 @@ var errProxyUDP = errors.New("this upstream proxy does not support UDP; direct f
 func (m *Manager) lookupViaProxy(ctx context.Context, rt *accountRuntime, engine upstreamEngine, host string) ([]netip.Addr, error) {
 	m.mu.RLock()
 	resolvers := m.cfg.cottenResolvers()
+	key := m.egress.route(engine).Address + "|" + host
 	m.mu.RUnlock()
+	m.proxyLookupMu.Lock()
+	cached, ok := m.proxyLookups[key]
+	m.proxyLookupMu.Unlock()
+	if ok && time.Now().Before(cached.expires) {
+		return cached.ips, nil
+	}
 	resolver := &net.Resolver{PreferGo: true, Dial: func(ctx context.Context, _, _ string) (net.Conn, error) {
 		for _, address := range resolvers {
 			conn, err := m.dialEgressFor(rt, ctx, "tcp", address, true, engine)
@@ -47,6 +64,12 @@ func (m *Manager) lookupViaProxy(ctx context.Context, rt *accountRuntime, engine
 	if err != nil {
 		return nil, err
 	}
+	m.proxyLookupMu.Lock()
+	if m.proxyLookups == nil || len(m.proxyLookups) >= maxProxyLookups {
+		m.proxyLookups = map[string]proxyLookup{}
+	}
+	m.proxyLookups[key] = proxyLookup{ips: ips, expires: time.Now().Add(proxyLookupTTL)}
+	m.proxyLookupMu.Unlock()
 	return ips, nil
 }
 

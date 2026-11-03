@@ -1,0 +1,23 @@
+{
+  "mode": "enforce",
+  "account_rate": 2,
+  "account_burst": 6,
+  "server_rate": 5,
+  "server_burst": 12,
+  "target_rate": 1,
+  "target_burst": 3,
+  "network_rate": 2,
+  "network_burst": 6,
+  "account_streams": 12,
+  "server_streams": 32,
+  "target_streams": 8,
+  "targets_per_minute": 30,
+  "failure_threshold": 10,
+  "failure_percent": 80,
+  "violation_threshold": 20,
+  "cooldown_seconds": 900,
+  "account_upload_kib": 64,
+  "target_upload_kib": 128,
+  "server_upload_kib": 256,
+  "resolver_qps": 10
+}

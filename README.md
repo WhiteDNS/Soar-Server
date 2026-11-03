@@ -10,7 +10,7 @@
 
 [پراکسی خروجی، پورت‌های Upstream و گزارش ترافیک — فارسی](docs/EGRESS.fa.md) · [English](docs/EGRESS.en.md): راهنمای قدم‌به‌قدم هر سه موتور، ورودی لوکال Xray/sing-box، فیلتر زمانی و دانلود CSV/JSON.
 
-پنل مدیریت سرور **WhiteDNS 0.14.0** با موتورهای **Soar، Cotten و MasterDNS** برای **Ubuntu 22.04/24.04/26.04 یا Debian 12/13، معماری amd64/x86_64 یا arm64/aarch64**.
+پنل مدیریت سرور **WhiteDNS 0.14.1** با موتورهای **Soar، Cotten و MasterDNS** برای **Ubuntu 22.04/24.04/26.04 یا Debian 12/13، معماری amd64/x86_64 یا arm64/aarch64**.
 
 **CottenDNS** نیز از [فورک سازگار WhiteDNS](https://github.com/WhiteDNS/CottenDns) و با حفظ نام و مجوز نویسندگان اصلی اضافه شده است.
 

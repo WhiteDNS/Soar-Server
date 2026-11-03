@@ -485,7 +485,10 @@ func (s *Service) fetchBundle(ctx context.Context, version, dir string) error {
 			if e != nil {
 				return e
 			}
-			response, e := panel.ReleaseClient().Do(req)
+			// The default client deadline also covers the body; a 96 MiB bundle needs longer on slow links.
+			client := panel.ReleaseClient()
+			client.Timeout = 15 * time.Minute
+			response, e := client.Do(req)
 			if e != nil {
 				return e
 			}

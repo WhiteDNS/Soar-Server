@@ -13,6 +13,15 @@ var errAntiFlood = errors.New("outbound traffic temporarily limited by antiflood
 const maxFloodTargets = 8192
 const maxFloodNetworks = 4096
 
+// Destination policy values are per account. Many healthy accounts legitimately
+// reach one CDN or Telegram DC, so all accounts together get this multiple.
+const floodSharedFactor = 8
+const maxFloodAccountDestinations = 2000
+
+// A failure burst only proves scanning while the server's egress demonstrably
+// works; with no recent successful dial the outage is the likelier cause.
+const floodHealthyWindow = 10 * time.Second
+
 // Every bucket is accessed under floodGuard.mu. Tokens are checked before a
 // network operation, never after bytes/SYNs have already left the host.
 type floodBucket struct {
@@ -62,6 +71,9 @@ type floodAccount struct {
 	active                         int
 	targets                        map[netip.Addr]time.Time
 	failedTargets                  map[netip.Addr]time.Time
+	destinations                   map[netip.Addr]*floodDestination
+	networks                       map[netip.Prefix]*floodDestination
+	pruned                         time.Time
 	attempts, failures, violations floodWindow
 	lastSeen                       time.Time
 	lastEvent                      map[string]time.Time
@@ -123,7 +135,7 @@ type floodGuard struct {
 	denied, observed, quarantines, persistenceErrors uint64
 	reasons                                          map[string]uint64
 	events                                           []FloodEvent
-	pruned                                           time.Time
+	pruned, lastConnected                            time.Time
 }
 
 func newFloodGuard(s *Store) *floodGuard {
@@ -168,7 +180,8 @@ func (g *floodGuard) accountLocked(id string, now time.Time) *floodAccount {
 		if len(g.accounts) >= 2*(MaxClients+1) {
 			return nil
 		}
-		a = &floodAccount{targets: map[netip.Addr]time.Time{}, failedTargets: map[netip.Addr]time.Time{}, lastEvent: map[string]time.Time{}}
+		a = &floodAccount{targets: map[netip.Addr]time.Time{}, failedTargets: map[netip.Addr]time.Time{}, lastEvent: map[string]time.Time{},
+			destinations: map[netip.Addr]*floodDestination{}, networks: map[netip.Prefix]*floodDestination{}}
 		g.accounts[id] = a
 	}
 	a.lastSeen = now
@@ -249,6 +262,7 @@ type floodLease struct {
 	id              string
 	account         *floodAccount
 	target, network *floodDestination
+	own, ownNetwork *floodDestination
 	targetIP        netip.Addr
 	once            sync.Once
 }
@@ -263,13 +277,17 @@ func (l *floodLease) release() {
 		defer g.mu.Unlock()
 		g.active--
 		l.account.active--
-		if l.target != nil {
-			l.target.active--
-		}
-		if l.network != nil {
-			l.network.active--
-		}
+		l.releaseTargetLocked()
 	})
+}
+
+func (l *floodLease) releaseTargetLocked() {
+	for _, d := range []**floodDestination{&l.target, &l.network, &l.own, &l.ownNetwork} {
+		if *d != nil {
+			(*d).active--
+			*d = nil
+		}
+	}
 }
 
 // begin runs BEFORE resolution, bounding both pending DNS lookups and sockets.
@@ -369,7 +387,8 @@ func floodTargetIP(ip netip.Addr) netip.Addr {
 }
 
 // Canonical keys exclude hostnames, ports and engine names. Rotating aliases,
-// ports, accounts, IPv4-mapped addresses or IPv6 hosts cannot reset a target cap.
+// ports, IPv4-mapped addresses or IPv6 hosts cannot reset a target cap, and
+// rotating accounts only reaches the shared floodSharedFactor ceiling.
 func (g *floodGuard) target(l *floodLease, ip netip.Addr, now time.Time) (error, bool) {
 	if l == nil {
 		return nil, false
@@ -417,14 +436,19 @@ func (g *floodGuard) target(l *floodLease, ip netip.Addr, now time.Time) (error,
 		n = &floodDestination{}
 		g.networks[prefix] = n
 	}
-	t.lastSeen, n.lastSeen = now, now
+	own, ownNetwork := a.destinationLocked(ip, prefix, p, now)
+	t.lastSeen, n.lastSeen, own.lastSeen, ownNetwork.lastSeen = now, now, now, now
+	f := floodSharedFactor
 	for _, c := range []struct {
 		ok     bool
 		reason string
 	}{
-		{t.active < p.TargetStreams, "target_streams"},
-		{t.rate.available(now, p.TargetRate, p.TargetBurst, 1), "target_rate"},
-		{n.rate.available(now, p.NetworkRate, p.NetworkBurst, 1), "network_rate"},
+		{own.active < p.TargetStreams, "target_streams"},
+		{own.rate.available(now, p.TargetRate, p.TargetBurst, 1), "target_rate"},
+		{ownNetwork.rate.available(now, p.NetworkRate, p.NetworkBurst, 1), "network_rate"},
+		{t.active < p.TargetStreams*f, "target_streams"},
+		{t.rate.available(now, p.TargetRate*f, p.TargetBurst*f, 1), "target_rate"},
+		{n.rate.available(now, p.NetworkRate*f, p.NetworkBurst*f, 1), "network_rate"},
 	} {
 		if !c.ok && p.Mode != "off" {
 			if deny, q := g.noteLocked(l.id, c.reason, false, now); deny {
@@ -432,13 +456,45 @@ func (g *floodGuard) target(l *floodLease, ip netip.Addr, now time.Time) (error,
 			}
 		}
 	}
-	t.rate.tokens = max(t.rate.tokens-1, 0)
-	n.rate.tokens = max(n.rate.tokens-1, 0)
-	t.active++
-	n.active++
-	l.target, l.network = t, n
+	for _, d := range []*floodDestination{own, ownNetwork, t, n} {
+		d.rate.tokens = max(d.rate.tokens-1, 0)
+		d.active++
+	}
+	l.target, l.network, l.own, l.ownNetwork = t, n, own, ownNetwork
 	l.targetIP = ip
 	return nil, false
+}
+
+// shortcut: past the table cap a destination gets a throwaway budget, so only
+// the shared ceiling and target_scan bound it; both still apply to such scans.
+func (a *floodAccount) destinationLocked(ip netip.Addr, prefix netip.Prefix, p AntiFloodPolicy, now time.Time) (*floodDestination, *floodDestination) {
+	if a.pruned.IsZero() || now.Sub(a.pruned) >= 10*time.Second {
+		a.pruned = now
+		for key, d := range a.destinations {
+			if d.active == 0 && now.Sub(d.lastSeen) > time.Minute && d.rate.available(now, p.TargetRate, p.TargetBurst, p.TargetBurst) && d.upload.available(now, p.TargetUploadKiB*1024, p.TargetUploadKiB*2048, p.TargetUploadKiB*2048) {
+				delete(a.destinations, key)
+			}
+		}
+		for key, d := range a.networks {
+			if d.active == 0 && now.Sub(d.lastSeen) > time.Minute && d.rate.available(now, p.NetworkRate, p.NetworkBurst, p.NetworkBurst) {
+				delete(a.networks, key)
+			}
+		}
+	}
+	own, ownNetwork := a.destinations[ip], a.networks[prefix]
+	if own == nil {
+		own = &floodDestination{}
+		if len(a.destinations) < maxFloodAccountDestinations {
+			a.destinations[ip] = own
+		}
+	}
+	if ownNetwork == nil {
+		ownNetwork = &floodDestination{}
+		if len(a.networks) < maxFloodAccountDestinations {
+			a.networks[prefix] = ownNetwork
+		}
+	}
+	return own, ownNetwork
 }
 
 func (g *floodGuard) pruneLocked(now time.Time) {
@@ -447,14 +503,14 @@ func (g *floodGuard) pruneLocked(now time.Time) {
 	}
 	g.pruned = now
 	// Evict only refilled idle buckets: churning targets cannot reset a debt.
-	p := g.policy
+	p, f := g.policy, floodSharedFactor
 	for ip, t := range g.targets {
-		if t.active == 0 && now.Sub(t.lastSeen) > time.Minute && t.rate.available(now, p.TargetRate, p.TargetBurst, p.TargetBurst) && t.upload.available(now, p.TargetUploadKiB*1024, p.TargetUploadKiB*2048, p.TargetUploadKiB*2048) {
+		if t.active == 0 && now.Sub(t.lastSeen) > time.Minute && t.rate.available(now, p.TargetRate*f, p.TargetBurst*f, p.TargetBurst*f) && t.upload.available(now, p.TargetUploadKiB*1024*f, p.TargetUploadKiB*2048*f, p.TargetUploadKiB*2048*f) {
 			delete(g.targets, ip)
 		}
 	}
 	for prefix, t := range g.networks {
-		if t.active == 0 && now.Sub(t.lastSeen) > time.Minute && t.rate.available(now, p.NetworkRate, p.NetworkBurst, p.NetworkBurst) {
+		if t.active == 0 && now.Sub(t.lastSeen) > time.Minute && t.rate.available(now, p.NetworkRate*f, p.NetworkBurst*f, p.NetworkBurst*f) {
 			delete(g.networks, prefix)
 		}
 	}
@@ -471,7 +527,9 @@ func (g *floodGuard) outcome(l *floodLease, failed bool, now time.Time) bool {
 	}
 	a := l.account
 	a.attempts.add(now)
-	if failed {
+	if !failed {
+		g.lastConnected = now
+	} else {
 		a.failures.add(now)
 		for ip, at := range a.failedTargets {
 			if now.Sub(at) >= time.Minute {
@@ -484,7 +542,7 @@ func (g *floodGuard) outcome(l *floodLease, failed bool, now time.Time) bool {
 	}
 	fails, total := a.failures.count(now, 60), a.attempts.count(now, 60)
 	// A single unavailable website must not label an account as a scanner.
-	if failed && len(a.failedTargets) >= 10 && fails >= g.policy.FailureThreshold && fails*100 >= total*g.policy.FailurePercent {
+	if failed && now.Sub(g.lastConnected) < floodHealthyWindow && len(a.failedTargets) >= 10 && fails >= g.policy.FailureThreshold && fails*100 >= total*g.policy.FailurePercent {
 		g.noteLocked(l.id, "dial_failures", false, now)
 		if g.policy.Mode == "enforce" {
 			return g.quarantineLocked(l.id, "dial_failures", now)
@@ -521,7 +579,11 @@ func (g *floodGuard) write(l *floodLease, bytes int, now time.Time) (error, bool
 			bucket *floodBucket
 			rate   int
 			reason string
-		}{&l.target.upload, p.TargetUploadKiB * 1024, "target_upload"})
+		}{&l.own.upload, p.TargetUploadKiB * 1024, "target_upload"}, struct {
+			bucket *floodBucket
+			rate   int
+			reason string
+		}{&l.target.upload, p.TargetUploadKiB * 1024 * floodSharedFactor, "target_upload"})
 	}
 	for _, c := range checks {
 		if !c.bucket.available(now, c.rate, 2*c.rate, bytes) {
