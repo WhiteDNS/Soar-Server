@@ -1,8 +1,7 @@
 # Server tests and release checks
 
 Supported target: Ubuntu 24.04 LTS amd64 with systemd. Source and bundles pin
-Soar v0.2.2 and its Go module checksums. See AUDIT-REPORT.md for the real-server
-checks and their limits.
+Soar v0.2.2 and its Go module checksums.
 
 ## Automated checks
 
