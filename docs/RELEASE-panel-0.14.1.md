@@ -20,7 +20,7 @@ permits it.
   the last 10 seconds. Scanning on a quiet or proxied route is limited by
   `target_scan` and the rate limits instead.
 - A full Cotten or MasterDNS queue now drops the query so the resolver retries,
-  instead of answering REFUSED. Each account can hold at most 32 queued queries.
+  instead of answering REFUSED. The shared queue holds 1024 queries, and each account can hold at most 256.
 - Tunneled DNS retries over TCP when a SOCKS5 proxy fails over UDP.
 - Names inside the panel's zones get NODATA with SOA instead of REFUSED, which
   made resolvers treat the server as lame. This includes disabled and unknown

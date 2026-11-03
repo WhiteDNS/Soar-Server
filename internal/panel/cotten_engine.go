@@ -179,7 +179,8 @@ func (m *Manager) startCottenWorkers() {
 }
 
 // One noisy account must not fill the queue every Cotten and MasterDNS account shares.
-const maxAccountDNSJobs = 32
+// A large datagram from the native client is a burst of far more than 32 queries.
+const maxAccountDNSJobs = 256
 
 func (m *Manager) queueEngineDNS(job cottenJob) bool {
 	if job.rt.dnsQueued.Add(1) <= maxAccountDNSJobs {

@@ -143,7 +143,7 @@ type Manager struct {
 
 func NewManager(ctx context.Context, s *Store, pc net.PacketConn) *Manager {
 	ctx, cancel := context.WithCancel(ctx)
-	m := &Manager{ctx: ctx, cancel: cancel, cottenJobs: make(chan cottenJob, 128), store: s, pc: pc, accounts: map[string]*accountRuntime{}, zones: map[string]*accountRuntime{}, started: time.Now()}
+	m := &Manager{ctx: ctx, cancel: cancel, cottenJobs: make(chan cottenJob, 1024), store: s, pc: pc, accounts: map[string]*accountRuntime{}, zones: map[string]*accountRuntime{}, started: time.Now()}
 	m.flood = newFloodGuard(s)
 	if s != nil {
 		m.logs.open(diagnosticLogPath(s))
