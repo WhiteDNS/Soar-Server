@@ -6,6 +6,7 @@ import (
 	"net"
 	"net/netip"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/getlantern/soar"
@@ -18,14 +19,16 @@ func (l *floodLease) releaseTarget() {
 	g := l.guard
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	if l.target != nil {
-		l.target.active--
-		l.target = nil
+	l.releaseTargetLocked()
+}
+
+// A dead proxy or a down uplink fails every destination at once. It says nothing
+// about the account, so it must not feed the dial_failures scan detector.
+func dialFailureCountable(route EngineEgress, err error) bool {
+	if route.proxy() || errors.Is(err, context.Canceled) {
+		return false
 	}
-	if l.network != nil {
-		l.network.active--
-		l.network = nil
-	}
+	return !errors.Is(err, syscall.ENETUNREACH) && !errors.Is(err, syscall.ENETDOWN)
 }
 
 // Pin resolution to the exact address inspected by the guard. The dialer keeps
@@ -115,7 +118,7 @@ func (m *Manager) guardedDialRoute(ctx context.Context, network, address string,
 		}
 		flow.attempt(ip.String(), result)
 		stop()
-		if !resolver && !errors.Is(e, context.Canceled) {
+		if !resolver && (e == nil || dialFailureCountable(route, e)) {
 			if q := m.flood.outcome(l, e != nil, time.Now()); q {
 				if conn != nil {
 					conn.Close()

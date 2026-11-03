@@ -123,7 +123,7 @@ func TestAntiFloodTargetNetworkAndPendingCaps(t *testing.T) {
 				}
 			}
 			id := other.ID
-			if kind == "account_streams" {
+			if kind != "server_streams" {
 				id = c.ID
 			}
 			second, err, _ := g.begin(id, false, now)
@@ -142,10 +142,10 @@ func TestAntiFloodTargetNetworkAndPendingCaps(t *testing.T) {
 				ip = "192.0.2.2"
 			}
 			if err, _ := g.target(second, netip.MustParseAddr(ip), now); !errors.Is(err, errAntiFlood) {
-				t.Fatal("cross-account target/network cap bypassed", err)
+				t.Fatal("per-account target/network cap bypassed", err)
 			}
 			if len(g.blocks) != 0 {
-				t.Fatal("shared destination pressure quarantined account")
+				t.Fatal("destination pressure quarantined account")
 			}
 		})
 	}
@@ -297,6 +297,12 @@ func TestAntiFloodFailuresRequireDiverseTargets(t *testing.T) {
 		if err, _ := g.target(l, ip, now); err != nil {
 			t.Fatal(err)
 		}
+		healthy, err, _ := g.begin("healthy-account", false, now)
+		if err != nil {
+			t.Fatal(err)
+		}
+		g.outcome(healthy, false, now)
+		healthy.release()
 		q := g.outcome(l, true, now)
 		l.release()
 		if i < 18 && q {

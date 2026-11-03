@@ -83,6 +83,7 @@ type accountRuntime struct {
 	rateTail       *paceTicket
 	resolverMu     sync.Mutex
 	resolverHealth map[string]*resolverHealth
+	dnsQueued      atomic.Int32
 }
 
 func (r *accountRuntime) closeIO() {
