@@ -18,7 +18,7 @@ import (
 
 const ProductName = "WhiteDNS Server Management"
 
-var Version = "0.14.1"
+var Version = "0.14.2"
 
 // Public half of the offline release key; see docs/RELEASING.md.
 var releaseSigningKey = "Hik5wPR7NqtPobXbE1aS/rIcXFmSG4m5ikaqVEDau9k="
