@@ -118,6 +118,8 @@ type Manager struct {
 	domainProofKey [32]byte
 	cancel         context.CancelFunc
 	cottenJobs     chan cottenJob
+	proxyLookupMu  sync.Mutex
+	proxyLookups   map[string]proxyLookup
 	store          *Store
 	pc             net.PacketConn
 	ctx            context.Context
@@ -431,7 +433,9 @@ func dnsControl(query []byte, end int, name string, typ uint16, base string, nam
 		out = binary.BigEndian.AppendUint16(out, uint16(len(data)))
 		return append(out, data...)
 	}
-	if (name == base || strings.HasSuffix(name, "."+base)) && (typ == 6 || typ == 2) {
+	// Inside our zone answer NODATA: REFUSED makes resolvers mark this server lame
+	// for every account. REFUSED stays only for names outside our zones.
+	if base != "" && (name == base || strings.HasSuffix(name, "."+base)) {
 		flags &^= 15
 		data := append(dnsName(ns), dnsName("hostmaster."+base)...)
 		for _, n := range []uint32{1, 300, 60, 3600, 30} {

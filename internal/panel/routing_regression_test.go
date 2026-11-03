@@ -7,10 +7,13 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"net/http/httptest"
 	"net/netip"
 	"sync"
 	"testing"
 	"time"
+
+	"golang.org/x/net/dns/dnsmessage"
 )
 
 func TestAntiFloodDestinationBudgetsArePerAccountUnderSharedCeiling(t *testing.T) {
@@ -258,13 +261,131 @@ func tcpOnlySocks(t *testing.T) (string, <-chan byte) {
 				if _, err := io.ReadFull(conn, query); err != nil {
 					return
 				}
-				query[2] |= 0x80
-				conn.Write(binary.BigEndian.AppendUint16(nil, uint16(len(query))))
-				conn.Write(query)
+				var message dnsmessage.Message
+				if err := message.Unpack(query); err != nil {
+					return
+				}
+				message.Response = true
+				if q := message.Questions[0]; q.Type == dnsmessage.TypeA {
+					message.Answers = []dnsmessage.Resource{{Header: dnsmessage.ResourceHeader{Name: q.Name, Type: q.Type, Class: q.Class, TTL: 60}, Body: &dnsmessage.AResource{A: [4]byte{93, 184, 216, 34}}}}
+				}
+				answer, err := message.Pack()
+				if err != nil {
+					return
+				}
+				conn.Write(binary.BigEndian.AppendUint16(nil, uint16(len(answer))))
+				conn.Write(answer)
 			}()
 		}
 	}()
 	return ln.Addr().String(), commands
+}
+
+func TestProxyLookupIsCachedAndDoesNotReopenTunnels(t *testing.T) {
+	s := testStore(t)
+	c, err := s.Create(ClientInput{Name: "a", Engines: "cotten", Enabled: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	address, commands := tcpOnlySocks(t)
+	cfg, _ := s.Egress()
+	cfg.Cotten = EngineEgress{Mode: "socks5", Address: address, Ports: "80,443"}
+	if err = s.SaveEgress(cfg); err != nil {
+		t.Fatal(err)
+	}
+	m := testManager(t, s, nil)
+	rt := m.accounts[c.ID]
+	first, err := m.lookupViaProxy(context.Background(), rt, upstreamCotten, "example.com")
+	if err != nil || len(first) == 0 {
+		t.Fatal(first, err)
+	}
+	opened := len(commands)
+	second, err := m.lookupViaProxy(context.Background(), rt, upstreamCotten, "example.com")
+	if err != nil || len(second) == 0 || second[0] != first[0] {
+		t.Fatal(second, err)
+	}
+	if len(commands) != opened {
+		t.Fatal("cached lookup opened proxy tunnels", opened, len(commands))
+	}
+}
+
+func TestLoginTableExpiresBeforeApplyingItsCap(t *testing.T) {
+	h := &HTTP{attempts: map[string]loginAttempt{}, sessions: map[string]loginSession{}}
+	past := time.Now().Add(-time.Hour)
+	for i := range 1024 {
+		h.attempts[fmt.Sprintf("198.51.100.%d-%d", i/256, i%256)] = loginAttempt{count: 1, until: past}
+	}
+	r := httptest.NewRequest("POST", "/api/login", nil)
+	r.RemoteAddr = "203.0.113.9:4000"
+	w := httptest.NewRecorder()
+	if _, allowed := h.authAttempt(w, r); !allowed {
+		t.Fatal("expired entries locked out a new address", w.Code)
+	}
+	if len(h.attempts) != 1 {
+		t.Fatal("expired entries retained", len(h.attempts))
+	}
+	for range 7 {
+		if _, allowed := h.authAttempt(httptest.NewRecorder(), r); !allowed {
+			t.Fatal("limit reached early")
+		}
+	}
+	if _, allowed := h.authAttempt(httptest.NewRecorder(), r); allowed {
+		t.Fatal("ninth attempt allowed")
+	}
+}
+
+func TestDNSControlAnswersNodataInsideZoneOnly(t *testing.T) {
+	const base = "soar.example.org"
+	for _, tc := range []struct {
+		name  string
+		typ   uint16
+		rcode int
+	}{
+		{base, 1, 0},
+		{"x.unknown." + base, 16, 0},
+		{"unknown.example.net", 16, 5},
+	} {
+		q := make([]byte, 12)
+		q[5] = 1
+		q = append(q, dnsName(tc.name)...)
+		q = binary.BigEndian.AppendUint16(q, tc.typ)
+		q = binary.BigEndian.AppendUint16(q, 1)
+		name, end, typ, ok := dnsQuestion(q)
+		if !ok {
+			t.Fatal(tc.name)
+		}
+		zone := base
+		if tc.rcode == 5 {
+			zone = ""
+		}
+		r := dnsControl(q, end, name, typ, zone, "ns1.example.org")
+		if rcodeOf(r) != tc.rcode || binary.BigEndian.Uint16(r[6:8]) != 0 {
+			t.Fatal("wrong answer", tc.name, rcodeOf(r))
+		}
+		if tc.rcode == 0 && binary.BigEndian.Uint16(r[8:10]) != 1 {
+			t.Fatal("NODATA without SOA", tc.name)
+		}
+	}
+}
+
+func TestSettingsSaveWithoutChangesKeepsEnginesRunning(t *testing.T) {
+	b, s, h := testBrowser(t)
+	c, err := s.Create(ClientInput{Name: "keep", Engines: "soar", Enabled: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = h.manager.Reconcile(); err != nil {
+		t.Fatal(err)
+	}
+	h.manager.mu.RLock()
+	old := h.manager.accounts[c.ID]
+	h.manager.mu.RUnlock()
+	b.login()
+	cfg, _ := s.Settings()
+	b.request("/api/settings", "PUT", cfg, 200)
+	if old.ctx.Err() != nil {
+		t.Fatal("unchanged settings dropped tunnels")
+	}
 }
 
 func TestTunnelDNSFallsBackToTCPWhenSocksHasNoUDP(t *testing.T) {
