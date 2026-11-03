@@ -3,6 +3,7 @@ import hashlib
 import io
 import json
 import os
+import re
 from pathlib import Path
 import struct
 import sys
@@ -68,9 +69,16 @@ class ReleaseGates(unittest.TestCase):
 
     def test_workflow_is_manual_and_publishes_same_run_artifacts(self):
         root=Path(__file__).resolve().parents[1]
-        workflows=list((root/".github/workflows").glob("*.yml"))
-        self.assertEqual([p.name for p in workflows],["panel.yml"])
-        workflow=workflows[0].read_text()
+        workflows=sorted(p.name for p in (root/".github/workflows").glob("*.yml"))
+        self.assertEqual(workflows,["ci.yml","panel.yml"])
+        workflow=(root/".github/workflows/panel.yml").read_text()
+        ci=(root/".github/workflows/ci.yml").read_text()
+        # Pull request tests must stay unable to publish and pinned to the release engine.
+        self.assertIn("  contents: read",ci)
+        self.assertNotIn(": write",ci)
+        self.assertNotIn("publish_release",ci)
+        pin=re.compile(r"repository: WhiteDNS/CottenDNS\s+ref: (\w+)")
+        self.assertEqual(pin.search(ci)[1],pin.search(workflow)[1])
         self.assertIn("  workflow_dispatch:",workflow)
         for trigger in ("  push:","  pull_request:","  workflow_run:"):
             self.assertNotIn(trigger,workflow)

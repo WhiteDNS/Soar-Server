@@ -1,0 +1,48 @@
+name: Test pull requests
+on:
+  pull_request:
+permissions:
+  contents: read
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Check out the exact Cotten engine source
+        uses: actions/checkout@v4
+        with:
+          repository: WhiteDNS/CottenDNS
+          ref: 7db7b73658c791cce62300d29647e4d369d6e1e4
+          path: .engine-source/CottenDNS
+          persist-credentials: false
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26.1'
+          cache-dependency-path: go.sum
+      - name: Prepare the verified patched engine workspace
+        run: |
+          GOWORK=off go mod download
+          python3 scripts/prepare_panel_engines.py --workspace .engine-source/patched.go.work
+          echo "GOWORK=$GITHUB_WORKSPACE/.engine-source/patched.go.work" >> "$GITHUB_ENV"
+      - name: Build the pinned native Cotten test client
+        run: |
+          COTTEN_SOURCE=$(go list -m -f '{{.Dir}}' cottendns-go)
+          (cd "$COTTEN_SOURCE" && go build -mod=readonly -o "$RUNNER_TEMP/cotten-client" ./cmd/client)
+          echo "PANEL_COTTEN_CLIENT=$RUNNER_TEMP/cotten-client" >> "$GITHUB_ENV"
+      - name: Test panel modules
+        run: |
+          go vet ./...
+          go test ./... -count=1 -timeout 300s
+      - name: Test release scripts and installers
+        run: |
+          python3 -m unittest discover -s tests -p 'panel_release*_test.py'
+          bash tests/panel_installer_test.sh
+          bash tests/panel_bootstrap_test.sh
+          bash tests/panel_menu_test.sh
+          bash tests/panel_security_test.sh
