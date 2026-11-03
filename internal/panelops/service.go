@@ -37,6 +37,8 @@ type Service struct {
 	Health  func(context.Context) error
 	Inspect func(context.Context, string) (panel.BackupSummary, error)
 	Fetch   func(context.Context, string, string) error
+	// Preserve keeps machine-local admin and egress settings in a restore candidate.
+	Preserve func(context.Context, string) error
 }
 
 func (s *Service) statusPath() string { return filepath.Join(s.StateDir, "job.json") }
@@ -67,6 +69,9 @@ func (s *Service) Initialize() error {
 	}
 	if s.Fetch == nil {
 		s.Fetch = s.fetchBundle
+	}
+	if s.Preserve == nil {
+		s.Preserve = s.preserve
 	}
 	if s.job.State == "running" {
 		unlock, err := acquireMaintenanceLock(s.LockFile)
@@ -109,13 +114,56 @@ func systemControl(ctx context.Context, action string) error {
 func (s *Service) checkHealth(ctx context.Context) error {
 	return panel.CheckManagementHealth(ctx, s.DB, s.HealthAddress)
 }
-func (s *Service) inspect(ctx context.Context, path string) (panel.BackupSummary, error) {
-	return InspectChild(ctx, s.Binary, path)
+
+// Uploaded databases are attacker-influenced, so root never parses them. The
+// child works on a copy as the panel user; root only moves the resulting bytes.
+func (s *Service) withPanelCopy(path string, use func(copy string) error) error {
+	dir, e := os.MkdirTemp(filepath.Dir(s.DB), ".soar-maintenance-*")
+	if e != nil {
+		return e
+	}
+	defer os.RemoveAll(dir)
+	if s.UID >= 0 {
+		if e = os.Chown(dir, s.UID, s.GID); e != nil {
+			return e
+		}
+	}
+	copy := filepath.Join(dir, "panel.db")
+	if e = copyAtomic(path, copy, 0600, s.UID, s.GID); e != nil {
+		return e
+	}
+	return use(copy)
 }
-func InspectChild(ctx context.Context, binary, path string) (summary panel.BackupSummary, e error) {
+func (s *Service) inspect(ctx context.Context, path string) (summary panel.BackupSummary, e error) {
+	e = s.withPanelCopy(path, func(copy string) (err error) {
+		ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
+		defer cancel()
+		cmd := exec.CommandContext(ctx, s.Binary, "inspect-backup", "--input", copy)
+		dropPrivileges(cmd, s.UID, s.GID)
+		summary, err = readSummary(cmd)
+		return err
+	})
+	return summary, e
+}
+func (s *Service) preserve(ctx context.Context, candidate string) error {
+	return s.withPanelCopy(candidate, func(copy string) error {
+		ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
+		defer cancel()
+		cmd := exec.CommandContext(ctx, s.Binary, "preserve-restore-admin", "--input", copy, "--db", s.DB)
+		dropPrivileges(cmd, s.UID, s.GID)
+		if e := cmd.Run(); e != nil {
+			return errors.New("cannot retain administrator settings during restore")
+		}
+		return copyAtomic(copy, candidate, 0600, -1, -1)
+	})
+}
+func InspectChild(ctx context.Context, binary, path string) (panel.BackupSummary, error) {
 	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
-	out, e := exec.CommandContext(ctx, binary, "inspect-backup", "--input", path).Output()
+	return readSummary(exec.CommandContext(ctx, binary, "inspect-backup", "--input", path))
+}
+func readSummary(cmd *exec.Cmd) (summary panel.BackupSummary, e error) {
+	out, e := cmd.Output()
 	if e != nil {
 		return summary, errors.New("backup validation failed")
 	}
@@ -338,7 +386,7 @@ func (s *Service) perform(request panel.MaintenanceRequest, job panel.Maintenanc
 			fail(errors.New("current server zone changed; restore cancelled"))
 			return
 		}
-		if e = panel.PreserveRestoreAdmin(candidate, s.DB); e != nil {
+		if e = s.Preserve(ctx, candidate); e != nil {
 			fail(e)
 			return
 		}
@@ -473,10 +521,11 @@ func (s *Service) fetchBundle(ctx context.Context, version, dir string) error {
 		return e
 	}
 	sumName := archive + ".sha256"
-	var sums []byte
+	sigName := sumName + ".sig"
+	var sums, signature []byte
 	var archivePath string
 	var archiveDigest string
-	for _, name := range []string{sumName, archive} {
+	for _, name := range []string{sumName, sigName, archive} {
 		for _, asset := range release.Assets {
 			if asset.Name != name {
 				continue
@@ -501,6 +550,12 @@ func (s *Service) fetchBundle(ctx context.Context, version, dir string) error {
 				response.Body.Close()
 				if e != nil || len(sums) > 2048 {
 					return errors.New("invalid release checksum file")
+				}
+			} else if name == sigName {
+				signature, e = io.ReadAll(io.LimitReader(response.Body, 65))
+				response.Body.Close()
+				if e != nil {
+					return errors.New("invalid release signature file")
 				}
 			} else {
 				archivePath = filepath.Join(dir, "release.tar.gz")
@@ -529,11 +584,20 @@ func (s *Service) fetchBundle(ctx context.Context, version, dir string) error {
 			}
 		}
 	}
-	fields := strings.Fields(string(sums))
-	if len(fields) != 2 || fields[0] != archiveDigest || fields[1] != archive {
-		return errors.New("release SHA-256 verification failed")
+	if e = verifyRelease(sums, signature, archiveDigest, archive); e != nil {
+		return e
 	}
 	return ExtractBinaries(archivePath, dir, version)
+}
+func verifyRelease(sums, signature []byte, digest, archive string) error {
+	if e := panel.VerifyReleaseSignature(sums, signature); e != nil {
+		return e
+	}
+	fields := strings.Fields(string(sums))
+	if len(fields) != 2 || fields[0] != digest || fields[1] != archive {
+		return errors.New("release SHA-256 verification failed")
+	}
+	return nil
 }
 func ExtractBinaries(archive, destination, version string) error {
 	return extractBinariesArch(archive, destination, version, runtime.GOARCH)
