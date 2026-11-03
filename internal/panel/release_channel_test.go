@@ -1,11 +1,17 @@
 package panel
 
-import "testing"
+import (
+	"crypto/ed25519"
+	"crypto/rand"
+	"encoding/base64"
+	"strings"
+	"testing"
+)
 
 func releaseFixture(version string, prerelease bool) PanelRelease {
 	r := PanelRelease{Tag: "panel-v" + version, URL: "https://github.com/WhiteDNS/Soar-Server/releases/tag/panel-v" + version, Prerelease: prerelease}
 	for _, arch := range []string{"amd64", "arm64"} {
-		for _, suffix := range []string{".tar.gz", ".tar.gz.sha256"} {
+		for _, suffix := range []string{".tar.gz", ".tar.gz.sha256", ".tar.gz.sha256.sig"} {
 			name := "soar-panel-" + version + "-linux-" + arch + suffix
 			r.Assets = append(r.Assets, ReleaseAsset{Name: name, URL: "https://github.com/WhiteDNS/Soar-Server/releases/download/" + r.Tag + "/" + name, Size: 100})
 		}
@@ -34,6 +40,42 @@ func TestBetaCanGraduateToStable(t *testing.T) {
 	r, err = selectPanelRelease([]PanelRelease{releaseFixture("0.3.0-beta1", true)}, "0.2.0-beta10")
 	if err != nil || r.Tag != "panel-v0.3.0-beta1" {
 		t.Fatal("existing beta channel changed", r.Tag, err)
+	}
+}
+
+func TestReleaseSignatureBindsChecksumContent(t *testing.T) {
+	public, private, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if VerifyReleaseSignature([]byte("x"), ed25519.Sign(private, []byte("x"))) == nil {
+		t.Fatal("signature from another key accepted")
+	}
+	original := releaseSigningKey
+	t.Cleanup(func() { releaseSigningKey = original })
+	releaseSigningKey = base64.StdEncoding.EncodeToString(public)
+	sums := []byte("abc  soar-panel-0.8.0-linux-amd64.tar.gz\n")
+	signature := ed25519.Sign(private, sums)
+	if e := VerifyReleaseSignature(sums, signature); e != nil {
+		t.Fatal(e)
+	}
+	if VerifyReleaseSignature([]byte("abc  soar-panel-0.7.0-linux-amd64.tar.gz\n"), signature) == nil {
+		t.Fatal("signature accepted for a different release")
+	}
+}
+
+func TestUnsignedReleaseIsNotOffered(t *testing.T) {
+	unsigned := releaseFixture("0.8.0", false)
+	assets := []ReleaseAsset{}
+	for _, a := range unsigned.Assets {
+		if !strings.HasSuffix(a.Name, ".sig") {
+			assets = append(assets, a)
+		}
+	}
+	unsigned.Assets = assets
+	r, err := selectPanelRelease([]PanelRelease{releaseFixture("0.7.0", false), unsigned}, "0.6.0")
+	if err != nil || r.Tag != "panel-v0.7.0" {
+		t.Fatal("unsigned release was offered", r.Tag, err)
 	}
 }
 
