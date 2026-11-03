@@ -96,7 +96,8 @@ def verify_public_release(repo, tag, version, merged):
         raise RuntimeError("Release is not a public stable release of the expected tag")
     assets = {asset["name"]: asset for asset in release["assets"]}
     expected_names = {f"soar-panel-{version}-linux-{arch}.tar.gz{suffix}" for arch in ("amd64", "arm64") for suffix in ("", ".sha256")}
-    if set(assets) != expected_names:
+    # Offline signatures are uploaded after publication, so a retry may find them.
+    if set(assets) - {name + ".sig" for name in expected_names} != expected_names:
         raise RuntimeError("Public release must contain both archives and both checksums")
     results = []
     for arch in ("amd64", "arm64"):

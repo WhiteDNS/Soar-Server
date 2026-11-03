@@ -94,6 +94,9 @@ func execute(args []string) error {
 		}
 		return json.NewEncoder(os.Stdout).Encode(v)
 	}
+	if args[0] == "preserve-restore-admin" {
+		return panel.PreserveRestoreAdmin(*input, *db)
+	}
 	if args[0] == "access-domains" || args[0] == "access-info" || args[0] == "access-url" || args[0] == "health" {
 		cfg, e := panel.ReadAccessConfig(*accessFile)
 		if e != nil {

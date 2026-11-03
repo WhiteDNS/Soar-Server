@@ -3,7 +3,8 @@
 Open **Actions → Build and release WhiteDNS → Run workflow**. Select `main`
 and choose `panel` (default) or `standalone`.
 
-This is the repository's only workflow. PRs, pushes and tags do not start builds.
+This is the repository's only release workflow. PRs run the read-only tests in
+`ci.yml`; they cannot publish. Pushes and tags do not start builds.
 The workflow does not merge PRs. Review and merge the intended changes, update
 the product version and release notes, then trigger it once.
 
@@ -25,6 +26,24 @@ standalone publication does not replace that designation.
 If only publication fails, use **Re-run failed jobs**, not **Re-run all jobs**.
 The release job reuses the successful build jobs' artifacts and can resume its
 partial draft upload. It does not repeat verification or builds.
+
+## Sign every panel release
+
+Panels update only to a release signed with the offline key. Until the signature
+is uploaded, panels do not offer the new version. Confirm the release came from
+your own workflow run at the expected commit, then sign:
+
+```sh
+gh release download panel-vVERSION --repo WhiteDNS/Soar-Server --pattern '*.sha256' --dir sign
+go run ./cmd/soar-release-sign sign KEY_FILE sign/*.sha256
+gh release upload panel-vVERSION sign/*.sig --repo WhiteDNS/Soar-Server
+```
+
+The signature covers the checksum file, which names the archive and its version.
+Keep `KEY_FILE` off GitHub and off build runners, and keep an offline backup. If
+it is lost or leaked, replace `releaseSigningKey` in `internal/panel/releases.go`
+and have operators rerun the installer, because installed panels trust only the
+old key. The install bootstrap checks SHA-256 only and does not verify this signature.
 
 Panel versions must agree in `internal/panel/releases.go`, `panel-install.sh`
 and `scripts/build_panel_bundle.py`; add `docs/RELEASE-panel-VERSION.md`.

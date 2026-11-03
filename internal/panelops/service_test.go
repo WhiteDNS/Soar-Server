@@ -54,6 +54,8 @@ func TestRestoreActivationRollbackAndPersistentRecovery(t *testing.T) {
 			starts := 0
 			s := &Service{DB: current, Binary: binary, OpsBinary: ops, StateDir: filepath.Join(dir, "jobs"), UID: -1, GID: -1, Inspect: func(_ context.Context, path string) (panel.BackupSummary, error) {
 				return panel.InspectBackupFile(path)
+			}, Preserve: func(_ context.Context, path string) error {
+				return panel.PreserveRestoreAdmin(path, current)
 			}, Control: func(_ context.Context, action string) error {
 				if action == "start" {
 					starts++
