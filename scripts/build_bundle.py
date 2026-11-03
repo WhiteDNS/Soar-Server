@@ -38,7 +38,7 @@ def main() -> None:
             ["go", "build", "-mod=readonly", "-trimpath", "-buildvcs=false", "-ldflags=-s -w", "-o", str(binaries / program), package],
             cwd=ROOT, env=env, check=True,
         )
-    for name in ("install.sh", "SERVER-GUIDE.fa.md", "SOAR-IRAN-GUIDE.fa.md", "AUDIT-REPORT.md", "TESTING.md", "LICENSE", "NOTICE"):
+    for name in ("install.sh", "SERVER-GUIDE.fa.md", "SOAR-IRAN-GUIDE.fa.md", "TESTING.md", "LICENSE", "NOTICE"):
         content = (ROOT / name).read_text(encoding="utf-8").replace("\r\n", "\n")
         (bundle / name).write_bytes(content.encode("utf-8"))
     licenses = bundle / "licenses"

@@ -97,8 +97,8 @@ fi
 printf '\n[4/7] Choose how to open the panel\n'
 printf '1) Direct IP and port over HTTP (test server; passwords are not encrypted).\n'
 printf '2) Private access through SSH, or through an HTTPS proxy you configure.\n'
-access_default=1
-if [[ -f $SERVICE ]] && ! grep -q -- --allow-insecure-http "$SERVICE";then access_default=2;fi
+access_default=2
+if [[ -f $SERVICE ]] && grep -q -- --allow-insecure-http "$SERVICE";then access_default=1;fi
 while :; do
 panel_ask panel_access 'Access mode (1 or 2)' "$access_default"
 panel_ask panel_port 'Management TCP port' 2053
@@ -203,6 +203,19 @@ NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+ProtectClock=true
+ProtectHostname=true
+RestrictNamespaces=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+SystemCallArchitectures=native
 ReadWritePaths=/var/lib/soar-panel
 # Go net.InterfaceAddrs uses NETLINK to reject the server's own addresses.
 # Without it Lantern PublicOnly deliberately fails closed for every destination.
