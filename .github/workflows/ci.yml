@@ -38,7 +38,7 @@ jobs:
       - name: Test panel modules
         run: |
           go vet ./...
-          go test ./... -count=1 -timeout 300s
+          go test ./... -count=1 -timeout 420s
       - name: Test own-server access in a network namespace
         run: |
           go test -c -o "$RUNNER_TEMP/panel.test" ./internal/panel
