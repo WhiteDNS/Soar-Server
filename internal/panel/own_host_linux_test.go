@@ -152,11 +152,17 @@ func TestOwnHostStaysBlockedUnlessThePortIsListed(t *testing.T) {
 	}
 
 	// A panel whose address became unusable fails closed.
-	m.mu.Lock()
-	m.cfg.PublicIP = ""
-	m.mu.Unlock()
+	// Saved through the store: the manager reloads its settings every second.
+	settings, _ := m.store.Settings()
+	settings.PublicIP = "10.0.0.5"
+	if err = m.store.SaveSettings(settings); err != nil {
+		t.Fatal(err)
+	}
+	if err = m.Reconcile(); err != nil {
+		t.Fatal(err)
+	}
 	conn, err = dialOwn(m, rt, ownTestIP+":14756")
-	wantNotPublic(t, conn, err, "missing public IP")
+	wantNotPublic(t, conn, err, "unusable public IP")
 }
 
 func TestOwnHostFollowsTheListOnProxyRoutes(t *testing.T) {
