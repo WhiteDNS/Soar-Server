@@ -47,7 +47,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: WhiteDNS/CottenDNS
-          ref: be99443db5c6908ec68f572809120e71c2ce33e0
+          ref: 5e2a9045e0fb2e599c883da2d81098cb002a0ebf
           path: .engine-source/CottenDNS
           persist-credentials: false
       - uses: actions/setup-go@v5

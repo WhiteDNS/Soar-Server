@@ -19,7 +19,7 @@ require (
 
 replace masterdnsvpn-go => github.com/masterking32/MasterDnsVPN v0.0.0-20260829205859-acbf1c61f907
 
-replace cottendns-go => github.com/WhiteDNS/CottenDNS v0.0.0-20261103161330-be99443db5c6
+replace cottendns-go => github.com/WhiteDNS/CottenDNS v0.0.0-20261104173402-5e2a9045e0fb
 
 require (
 	github.com/BurntSushi/toml v1.4.0 // indirect
