@@ -1,6 +1,7 @@
 package panel
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"testing"
@@ -42,6 +43,31 @@ func TestOwnHostPortsNeedAUsablePublicIP(t *testing.T) {
 	if saved.publicView().OwnHostPorts != "14756,1000-1002" {
 		t.Fatal("own-host list missing from the settings view")
 	}
+}
+
+func TestPublicIPOnNoInterfaceFollowsTheOwnHostList(t *testing.T) {
+	address, proxy := startMatrixProxy(t, "socks5", "", "")
+	m, rt := matrixManager(t, []uint16{443}, func(c *EgressConfig) {
+		c.Soar = EngineEgress{Mode: "socks5", Address: address, Unrestricted: true}
+	})
+	// 8.8.4.4 is on no interface here, like a server behind 1:1 NAT.
+	m.mu.Lock()
+	m.cfg.PublicIP = "8.8.4.4"
+	m.mu.Unlock()
+	_, err := m.dialForEngine(rt, context.Background(), "tcp", "8.8.4.4:14756", upstreamSoar)
+	if got := diagnosticReason(err); got != "destination_not_public" {
+		t.Fatal("NAT public IP opened without being listed:", got, err)
+	}
+	if proxy.contacted() != 0 {
+		t.Fatal("blocked NAT public IP reached the proxy")
+	}
+	m.mu.Lock()
+	m.egress.OwnHostPorts = "14756"
+	m.mu.Unlock()
+	conn, err := m.dialForEngine(rt, context.Background(), "tcp", "8.8.4.4:14756", upstreamSoar)
+	assertEcho(t, conn, err, "listed NAT public IP")
+	conn, err = m.dialForEngine(rt, context.Background(), "tcp", "8.8.8.8:14756", upstreamSoar)
+	assertEcho(t, conn, err, "another server")
 }
 
 func TestRestoredBackupCannotEnableOwnHostPorts(t *testing.T) {

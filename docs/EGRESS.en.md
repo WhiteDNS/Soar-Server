@@ -107,6 +107,16 @@ Internal resolver connections have an exception only for the panel's allowed res
 8. For newer results, advance the end time and show the report again. The initial one-hour range is a starting selection, not a continuously moving live window.
 9. Click **Download CSV** or **Download JSON**. Downloads use the current form values; apply those same values with **Show report** first if you want the table and export to match.
 
+### Connecting to this server's own IP
+
+Tunnel connections to the panel's own server are blocked by default on every route, even with unrestricted proxy ports. To open a port on this server's public IP:
+
+1. Make sure the panel's public IPv4 is set correctly, from the server menu or the Telegram bot.
+2. Enter the port in "Allowed ports on this server's IP".
+3. Keep the same port in the engine's route list: the allowed outbound ports for a direct route, or the proxy's allowed ports.
+
+**Warning:** each port listed here is reachable by every account from inside the server, even if a firewall closes it from outside. Do not add the panel or SSH ports, because anyone with an account link could guess their passwords. `127.0.0.1` and private addresses always stay closed, and restoring a backup does not change this list. The server's IPv6 address is not covered.
+
 ### What is recorded?
 
 Destination logging is optional and off by default. Enable it before reproducing

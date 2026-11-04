@@ -86,7 +86,15 @@ func (m *Manager) guardedDialRoute(ctx context.Context, network, address string,
 		}
 		seen[ip] = true
 		pinned := net.JoinHostPort(ip.String(), port)
-		ownHost := !resolver && m.ownHostAllowed(ip, port)
+		var isOwnHost, ownHost bool
+		if !resolver {
+			isOwnHost, ownHost = m.ownHostPolicy(ip, port)
+		}
+		// Behind NAT the public IP is on no interface, so PublicOnly cannot see it.
+		if isOwnHost && !ownHost {
+			last = errDestinationNotPublic
+			continue
+		}
 		if (route.proxy() || m.dialOverride == nil) && !ownHost {
 			if e := soar.PublicOnly(network, pinned, nil); e != nil {
 				last = errDestinationNotPublic
@@ -148,17 +156,20 @@ func (m *Manager) guardedDialRoute(ctx context.Context, network, address string,
 	return nil, last
 }
 
-// ownHostAllowed is the only exception to the non-public block: the panel's exact
-// public IP, on a port the administrator listed. Everything else stays closed.
-func (m *Manager) ownHostAllowed(ip netip.Addr, rawPort string) bool {
+// ownHostPolicy reports whether ip is the panel's exact public IP and whether the
+// administrator listed this port, the only exception to the non-public block.
+func (m *Manager) ownHostPolicy(ip netip.Addr, rawPort string) (own, allowed bool) {
 	port, err := strconv.ParseUint(rawPort, 10, 16)
 	if err != nil {
-		return false
+		return false, false
 	}
 	m.mu.RLock()
 	defer m.mu.RUnlock()
-	own, ok := usableOwnIP(m.cfg.PublicIP)
-	return ok && ip == own && m.egress.ownHostAllows(uint16(port))
+	public, ok := usableOwnIP(m.cfg.PublicIP)
+	if !ok || ip != public {
+		return false, false
+	}
+	return true, m.egress.ownHostAllows(uint16(port))
 }
 
 func (c *meterConn) guardWrite(bytes int) error {
