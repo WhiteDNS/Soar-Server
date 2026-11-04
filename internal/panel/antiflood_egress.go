@@ -78,7 +78,7 @@ func (m *Manager) guardedDialRoute(ctx context.Context, network, address string,
 	last := errors.New("no eligible public destination")
 	seen := map[netip.Addr]bool{}
 	attempts := 0
-	for _, ip := range ips {
+	for i, ip := range ips {
 		ip = ip.Unmap()
 		if !ip.IsValid() || seen[ip] || strings.HasSuffix(network, "4") && !ip.Is4() || strings.HasSuffix(network, "6") && !ip.Is6() {
 			continue
@@ -100,15 +100,16 @@ func (m *Manager) guardedDialRoute(ctx context.Context, network, address string,
 			}
 		}
 		attempts++
-		// Leave time for a second family/address without multiplying the total
-		// 15-second dial deadline. A canceled operation never creates new traffic.
+		// Share the 15-second dial deadline across the addresses still to try, so a
+		// slow proxy chain with one address gets all of it. A canceled operation
+		// never creates new traffic.
 		if err := ctx.Err(); err != nil {
 			l.releaseTarget()
 			return nil, err
 		}
 		budget := 5 * time.Second
 		if deadline, ok := ctx.Deadline(); ok {
-			budget = min(budget, time.Until(deadline))
+			budget = time.Until(deadline) / time.Duration(min(len(ips)-i, 5-attempts))
 		}
 		attempt, stop := context.WithTimeout(ctx, budget)
 		conn, e := dial(attempt, network, pinned)
