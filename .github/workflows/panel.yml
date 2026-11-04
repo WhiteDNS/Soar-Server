@@ -75,11 +75,13 @@ jobs:
       - name: Verify panel modules and behavior
         run: |
           go mod verify
-          go test ./... -count=1 -timeout 180s
+          go test ./... -count=1 -timeout 420s
           # The expanded Telegram restore/model-discovery suite adds bcrypt-backed
           # admin fixtures; slower runners need room to finish every race check.
           go test -race ./internal/panel ./internal/panelops -count=1 -timeout 1800s
           go vet ./...
+          go test -c -o "$RUNNER_TEMP/panel.test" ./internal/panel
+          (cd internal/panel && sudo "$RUNNER_TEMP/panel.test" -test.run '^(TestOwnHostStaysBlockedUnlessThePortIsListed|TestOwnHostFollowsTheListOnProxyRoutes|TestNativeClientsReachListedOwnHostPort)$' -test.count=1 -test.timeout 240s)
       - name: Verify installers and bootstrap
         run: |
           bash tests/installer_test.sh

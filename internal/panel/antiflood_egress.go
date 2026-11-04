@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net"
 	"net/netip"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -85,7 +86,16 @@ func (m *Manager) guardedDialRoute(ctx context.Context, network, address string,
 		}
 		seen[ip] = true
 		pinned := net.JoinHostPort(ip.String(), port)
-		if route.proxy() || m.dialOverride == nil {
+		var isOwnHost, ownHost bool
+		if !resolver {
+			isOwnHost, ownHost = m.ownHostPolicy(ip, port)
+		}
+		// Behind NAT the public IP is on no interface, so PublicOnly cannot see it.
+		if isOwnHost && !ownHost {
+			last = errDestinationNotPublic
+			continue
+		}
+		if (route.proxy() || m.dialOverride == nil) && !ownHost {
 			if e := soar.PublicOnly(network, pinned, nil); e != nil {
 				last = errDestinationNotPublic
 				continue
@@ -112,7 +122,12 @@ func (m *Manager) guardedDialRoute(ctx context.Context, network, address string,
 			budget = time.Until(deadline) / time.Duration(min(len(ips)-i, 5-attempts))
 		}
 		attempt, stop := context.WithTimeout(ctx, budget)
-		conn, e := dial(attempt, network, pinned)
+		attemptDial := dial
+		if ownHost && !route.proxy() && m.dialOverride == nil {
+			// The exact address and port were approved above, and the pinned IP cannot rebind.
+			attemptDial = (&net.Dialer{}).DialContext
+		}
+		conn, e := attemptDial(attempt, network, pinned)
 		result := "connected"
 		if e != nil {
 			result = diagnosticReason(e)
@@ -139,6 +154,22 @@ func (m *Manager) guardedDialRoute(ctx context.Context, network, address string,
 		}
 	}
 	return nil, last
+}
+
+// ownHostPolicy reports whether ip is the panel's exact public IP and whether the
+// administrator listed this port, the only exception to the non-public block.
+func (m *Manager) ownHostPolicy(ip netip.Addr, rawPort string) (own, allowed bool) {
+	port, err := strconv.ParseUint(rawPort, 10, 16)
+	if err != nil {
+		return false, false
+	}
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	public, ok := usableOwnIP(m.cfg.PublicIP)
+	if !ok || ip != public {
+		return false, false
+	}
+	return true, m.egress.ownHostAllows(uint16(port))
 }
 
 func (c *meterConn) guardWrite(bytes int) error {

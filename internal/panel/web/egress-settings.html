@@ -31,6 +31,10 @@
 <label for="egress-masterdns-ports">پورت‌های مجاز روی پراکسی</label><input id="egress-masterdns-ports" dir="ltr" maxlength="2048" placeholder="80,443,1000-2000" autocomplete="off" spellcheck="false">
 <label class="checkbox"><input id="egress-masterdns-unrestricted" type="checkbox">بدون محدودیت پورت روی پراکسی</label>
 </fieldset></div>
+ <fieldset class="settings-section"><legend>پورت‌های مجاز روی IP خود سرور</legend>
+  <label for="egress-own-host-ports">پورت‌های مجاز روی IP خود سرور</label><input id="egress-own-host-ports" dir="ltr" maxlength="2048" placeholder="14756,1052" autocomplete="off" spellcheck="false">
+  <p class="hint">پیش‌فرض خالی است و اتصال تونل به خود سرور مسدود می‌ماند. هر پورتی که اینجا بنویسید برای همهٔ حساب‌ها روی IP عمومی همین سرور باز می‌شود، حتی اگر فایروال آن را از بیرون بسته باشد. آن پورت باید در فهرست مسیر موتور هم باشد. پورت پنل و SSH را اینجا نگذارید؛ هر کسی لینک حساب داشته باشد می‌تواند رمز آن‌ها را حدس بزند. 127.0.0.1 و آدرس‌های خصوصی همیشه بسته‌اند.</p>
+ </fieldset>
  <fieldset class="settings-section"><legend>نگهداری گزارش مقصدها</legend>
   <label class="checkbox"><input id="outbound-logging" type="checkbox">ثبت گزارش خروجی فعال باشد</label>
   <p class="hint">ثبت مقصد اختیاری و پیش‌فرض خاموش است. در صورت فعال‌سازی، موتور، شناسهٔ حساب، IP و پورت مقصد، زمان و حجم payload ثبت می‌شود؛ محتوای ترافیک و رمز پراکسی ثبت یا برای دستیار ارسال نمی‌شود.</p>

@@ -107,6 +107,16 @@ Internal resolver connections have an exception only for the panel's allowed res
 8. For newer results, advance the end time and show the report again. The initial one-hour range is a starting selection, not a continuously moving live window.
 9. Click **Download CSV** or **Download JSON**. Downloads use the current form values; apply those same values with **Show report** first if you want the table and export to match.
 
+### Connecting to this server's own IP
+
+Tunnel connections to the panel's own server are blocked by default on every route, even with unrestricted proxy ports. To open a port on this server's public IP:
+
+1. Make sure the panel's public IPv4 is set correctly, from the server menu or the Telegram bot.
+2. Enter the port in "Allowed ports on this server's IP".
+3. Keep the same port in the engine's route list: the allowed outbound ports for a direct route, or the proxy's allowed ports.
+
+**Warning:** each port listed here is reachable by every account from inside the server, even if a firewall closes it from outside. Do not add the panel or SSH ports, because anyone with an account link could guess their passwords. `127.0.0.1` and private addresses always stay closed, and restoring a backup does not change this list. The server's IPv6 address is not covered.
+
 ### What is recorded?
 
 Destination logging is optional and off by default. Enable it before reproducing
@@ -181,7 +191,7 @@ with the retained report. Other server processes are outside this journal.
 | Proxy is reachable but sites fail | Check destination ports, DNS-over-TCP through the proxy, that service's outbound rules, quotas and Anti-Flood. Reaching the proxy inbound alone is insufficient. |
 | `destination_policy` | The destination port is not permitted by the selected route; distinguish direct and proxy port lists. |
 | `proxy_dns_failed` | The proxy is down or refuses port 53, so hostnames cannot be resolved through it. IP targets can still work. Allow port 53 to the configured resolvers on the proxy. DNS does not fall back to direct. |
-| `destination_not_public` | The destination is this panel's server or a private address. It is blocked on purpose in every route, so opening the port does not help. |
+| `destination_not_public` | The destination is this panel's server or a private address, which every route blocks. For this server's public IP, also add the port to “Allowed ports on this server's IP”. Private addresses never open. |
 | SOCKS5 UDP fails | The proxy must support UDP ASSOCIATE. A relay on a different host, or announced as a hostname, is not accepted. |
 | Public exit IP did not change | Configure and reconnect the correct engine; inspect Xray/sing-box outbound rules and any direct exit in that service separately. |
 | Report is empty | Logging must have been enabled before the connection. Check timezone, time range, engine/account filters and retention/capacity. Disabling logging does not immediately erase previously stored history. |
