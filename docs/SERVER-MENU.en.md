@@ -76,7 +76,8 @@ same original base zone. It replaces account data, keys, usage and tunnel settin
 preserving the current administrator, access configuration, certificates and
 Telegram pairing. The maintenance service creates its own rollback backup under
 `/var/lib/soar-panel-ops` and rolls back a failed readiness check. Those job backups
-have automatic retention; terminal snapshots have separate retention.
+have automatic retention. The menu keeps only the five newest automatic `snapshot-*`
+folders and deletes older ones; its `panel-*.db` backups are not deleted.
 
 Updates use the existing official-release downloader, archive verification and
 automatic rollback. The menu and HTTPS helper update with the binaries. The
