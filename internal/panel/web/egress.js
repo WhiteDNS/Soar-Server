@@ -15,11 +15,11 @@ window.panelEgress=(()=>{
   const cfg=await api('/egress');if(csrf!==session||currentPage!=='settings')return;
   revision=cfg.revision;
   for(const [key] of engines){const route=cfg[key];for(const name of ['mode','address','username','ports'])$('egress-'+key+'-'+name).value=route[name]||'';$('egress-'+key+'-password').value='';$('egress-'+key+'-password').placeholder=route.password_configured?text('رمز ذخیره شده است'):'';$('egress-'+key+'-clear').checked=false;$('egress-'+key+'-unrestricted').checked=!!route.unrestricted;$('egress-'+key+'-mode').dispatchEvent(new Event('change'));}
-  $('outbound-logging').checked=cfg.logs.enabled;$('outbound-retention').value=cfg.logs.retention_hours;$('outbound-storage').value=cfg.logs.max_mib;$('egress-save').disabled=false;panelUI.syncSelects();
+  $('egress-own-host-ports').value=cfg.own_host_ports||'';$('outbound-logging').checked=cfg.logs.enabled;$('outbound-retention').value=cfg.logs.retention_hours;$('outbound-storage').value=cfg.logs.max_mib;$('egress-save').disabled=false;panelUI.syncSelects();
  }
  $('egress-form').addEventListener('submit',event=>{event.preventDefault();withButton(event.submitter,async()=>{
   if(revision===null||csrf!==settingsSession)throw Error(text('تنظیمات را دوباره دریافت کنید.'));
-  const cfg={revision,logs:{enabled:$('outbound-logging').checked,retention_hours:Number($('outbound-retention').value),max_mib:Number($('outbound-storage').value)}};
+  const cfg={revision,own_host_ports:$('egress-own-host-ports').value.trim(),logs:{enabled:$('outbound-logging').checked,retention_hours:Number($('outbound-retention').value),max_mib:Number($('outbound-storage').value)}};
   for(const [key] of engines){const clear=$('egress-'+key+'-clear').checked;cfg[key]={mode:$('egress-'+key+'-mode').value,address:$('egress-'+key+'-address').value.trim(),username:clear?'':$('egress-'+key+'-username').value,password:clear?'':$('egress-'+key+'-password').value,ports:$('egress-'+key+'-ports').value.trim(),unrestricted:$('egress-'+key+'-unrestricted').checked,clear_password:clear};}
   const session=csrf;await api('/egress','PUT',cfg);if(csrf!==session)return;loadedReport=false;await loadSettings();$('egress-feedback').textContent=text('مسیر خروجی ذخیره شد و موتورهای فعال دوباره راه‌اندازی شدند.');toast(text('مسیر خروجی ذخیره شد و موتورهای فعال دوباره راه‌اندازی شدند.'));return true;
  });});

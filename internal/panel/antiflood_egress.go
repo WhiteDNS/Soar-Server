@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net"
 	"net/netip"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -85,7 +86,8 @@ func (m *Manager) guardedDialRoute(ctx context.Context, network, address string,
 		}
 		seen[ip] = true
 		pinned := net.JoinHostPort(ip.String(), port)
-		if route.proxy() || m.dialOverride == nil {
+		ownHost := !resolver && m.ownHostAllowed(ip, port)
+		if (route.proxy() || m.dialOverride == nil) && !ownHost {
 			if e := soar.PublicOnly(network, pinned, nil); e != nil {
 				last = errDestinationNotPublic
 				continue
@@ -112,7 +114,12 @@ func (m *Manager) guardedDialRoute(ctx context.Context, network, address string,
 			budget = time.Until(deadline) / time.Duration(min(len(ips)-i, 5-attempts))
 		}
 		attempt, stop := context.WithTimeout(ctx, budget)
-		conn, e := dial(attempt, network, pinned)
+		attemptDial := dial
+		if ownHost && !route.proxy() && m.dialOverride == nil {
+			// The exact address and port were approved above, and the pinned IP cannot rebind.
+			attemptDial = (&net.Dialer{}).DialContext
+		}
+		conn, e := attemptDial(attempt, network, pinned)
 		result := "connected"
 		if e != nil {
 			result = diagnosticReason(e)
@@ -139,6 +146,19 @@ func (m *Manager) guardedDialRoute(ctx context.Context, network, address string,
 		}
 	}
 	return nil, last
+}
+
+// ownHostAllowed is the only exception to the non-public block: the panel's exact
+// public IP, on a port the administrator listed. Everything else stays closed.
+func (m *Manager) ownHostAllowed(ip netip.Addr, rawPort string) bool {
+	port, err := strconv.ParseUint(rawPort, 10, 16)
+	if err != nil {
+		return false
+	}
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	own, ok := usableOwnIP(m.cfg.PublicIP)
+	return ok && ip == own && m.egress.ownHostAllows(uint16(port))
 }
 
 func (c *meterConn) guardWrite(bytes int) error {

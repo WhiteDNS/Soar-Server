@@ -181,7 +181,7 @@ with the retained report. Other server processes are outside this journal.
 | Proxy is reachable but sites fail | Check destination ports, DNS-over-TCP through the proxy, that service's outbound rules, quotas and Anti-Flood. Reaching the proxy inbound alone is insufficient. |
 | `destination_policy` | The destination port is not permitted by the selected route; distinguish direct and proxy port lists. |
 | `proxy_dns_failed` | The proxy is down or refuses port 53, so hostnames cannot be resolved through it. IP targets can still work. Allow port 53 to the configured resolvers on the proxy. DNS does not fall back to direct. |
-| `destination_not_public` | The destination is this panel's server or a private address. It is blocked on purpose in every route, so opening the port does not help. |
+| `destination_not_public` | The destination is this panel's server or a private address, which every route blocks. For this server's public IP, also add the port to “Allowed ports on this server's IP”. Private addresses never open. |
 | SOCKS5 UDP fails | The proxy must support UDP ASSOCIATE. A relay on a different host, or announced as a hostname, is not accepted. |
 | Public exit IP did not change | Configure and reconnect the correct engine; inspect Xray/sing-box outbound rules and any direct exit in that service separately. |
 | Report is empty | Logging must have been enabled before the connection. Check timezone, time range, engine/account filters and retention/capacity. Disabling logging does not immediately erase previously stored history. |
