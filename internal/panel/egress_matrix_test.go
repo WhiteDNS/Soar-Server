@@ -26,6 +26,35 @@ import (
 type matrixProxy struct {
 	mu      sync.Mutex
 	targets []string
+	// forward sends non-DNS targets to a real server instead of echoing them.
+	forward string
+	// refuseDNS rejects port 53, like a proxy that only permits web ports.
+	refuseDNS bool
+	// connectDelay models a slow chain before the proxy confirms a target.
+	connectDelay time.Duration
+}
+
+func (p *matrixProxy) serveTarget(conn io.ReadWriter, target string) {
+	if p.forward == "" || strings.HasSuffix(target, ":53") {
+		serveMatrixTarget(conn, target)
+		return
+	}
+	upstream, err := net.Dial("tcp", p.forward)
+	if err != nil {
+		return
+	}
+	defer upstream.Close()
+	done := make(chan struct{})
+	go func() {
+		io.Copy(upstream, conn)
+		upstream.(*net.TCPConn).CloseWrite()
+		close(done)
+	}()
+	io.Copy(conn, upstream)
+	if c, ok := conn.(net.Conn); ok {
+		c.Close()
+	}
+	<-done
 }
 
 func (p *matrixProxy) note(target string) {
@@ -83,12 +112,16 @@ func serveMatrixTarget(conn io.ReadWriter, target string) {
 
 func startMatrixProxy(t *testing.T, mode, user, pass string) (string, *matrixProxy) {
 	t.Helper()
+	return runMatrixProxy(t, &matrixProxy{}, mode, user, pass)
+}
+
+func runMatrixProxy(t *testing.T, p *matrixProxy, mode, user, pass string) (string, *matrixProxy) {
+	t.Helper()
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { ln.Close() })
-	p := &matrixProxy{}
 	go func() {
 		for {
 			conn, err := ln.Accept()
@@ -120,8 +153,13 @@ func (p *matrixProxy) serveHTTP(conn net.Conn, user, pass string) {
 		return
 	}
 	p.note(req.Host)
+	if p.refuseDNS && strings.HasSuffix(req.Host, ":53") {
+		io.WriteString(conn, "HTTP/1.1 403 Forbidden\r\n\r\n")
+		return
+	}
+	time.Sleep(p.connectDelay)
 	io.WriteString(conn, "HTTP/1.1 200 Connection established\r\n\r\n")
-	serveMatrixTarget(struct {
+	p.serveTarget(struct {
 		io.Reader
 		io.Writer
 	}{reader, conn}, req.Host)
@@ -165,8 +203,13 @@ func (p *matrixProxy) serveSocks(conn net.Conn, user, pass string) {
 		return
 	}
 	p.note(target)
+	if p.refuseDNS && strings.HasSuffix(target, ":53") {
+		conn.Write([]byte{5, 2, 0, 1, 0, 0, 0, 0, 0, 0})
+		return
+	}
+	time.Sleep(p.connectDelay)
 	conn.Write([]byte{5, 0, 0, 1, 0, 0, 0, 0, 0, 0})
-	serveMatrixTarget(conn, target)
+	p.serveTarget(conn, target)
 }
 
 // The relay echoes each datagram with its SOCKS header, as if the target replied.

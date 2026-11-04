@@ -39,6 +39,8 @@ jobs:
         run: |
           go vet ./...
           go test ./... -count=1 -timeout 300s
+      - name: Race test outbound routes
+        run: go test -race ./internal/panel -count=1 -timeout 300s -run 'TestNativeClientsReachCustomPort|TestSlowProxy|TestSocksUDPAccepts|TestProxyThatRefuses|TestDirectRouteOpens|TestProxyRoutesOpen|TestProxyPortList|TestHTTPSProxy|TestDeadEgressProxy|TestTunnelDNSFallsBack'
       - name: Test release scripts and installers
         run: |
           python3 -m unittest discover -s tests -p 'panel_release*_test.py'
