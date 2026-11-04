@@ -4,7 +4,7 @@ go 1.26.0
 
 require (
 	cottendns-go v0.0.0
-	github.com/getlantern/soar v0.2.3
+	github.com/getlantern/soar v0.2.4
 	github.com/skip2/go-qrcode v0.0.0-20200617195104-da1b6568686e
 	go.etcd.io/bbolt v1.4.3
 	golang.org/x/crypto v0.54.0
@@ -19,7 +19,7 @@ require (
 
 replace masterdnsvpn-go => github.com/masterking32/MasterDnsVPN v0.0.0-20260829205859-acbf1c61f907
 
-replace cottendns-go => github.com/WhiteDNS/CottenDNS v0.0.0-20261024182838-7db7b73658c7
+replace cottendns-go => github.com/WhiteDNS/CottenDNS v0.0.0-20261103161330-be99443db5c6
 
 require (
 	github.com/BurntSushi/toml v1.4.0 // indirect
