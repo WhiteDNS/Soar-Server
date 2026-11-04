@@ -50,10 +50,16 @@ func TestPublicIPOnNoInterfaceFollowsTheOwnHostList(t *testing.T) {
 	m, rt := matrixManager(t, []uint16{443}, func(c *EgressConfig) {
 		c.Soar = EngineEgress{Mode: "socks5", Address: address, Unrestricted: true}
 	})
-	// 8.8.4.4 is on no interface here, like a server behind 1:1 NAT.
-	m.mu.Lock()
-	m.cfg.PublicIP = "8.8.4.4"
-	m.mu.Unlock()
+	// 8.8.4.4 is on no interface here, like a server behind 1:1 NAT. Settings go
+	// through the store because the manager reloads them every second.
+	settings, _ := m.store.Settings()
+	settings.PublicIP = "8.8.4.4"
+	if err := m.store.SaveSettings(settings); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.Reconcile(); err != nil {
+		t.Fatal(err)
+	}
 	_, err := m.dialForEngine(rt, context.Background(), "tcp", "8.8.4.4:14756", upstreamSoar)
 	if got := diagnosticReason(err); got != "destination_not_public" {
 		t.Fatal("NAT public IP opened without being listed:", got, err)
@@ -61,9 +67,18 @@ func TestPublicIPOnNoInterfaceFollowsTheOwnHostList(t *testing.T) {
 	if proxy.contacted() != 0 {
 		t.Fatal("blocked NAT public IP reached the proxy")
 	}
-	m.mu.Lock()
-	m.egress.OwnHostPorts = "14756"
-	m.mu.Unlock()
+	egress, _ := m.store.Egress()
+	egress.OwnHostPorts = "14756"
+	if err = m.store.SaveEgress(egress); err != nil {
+		t.Fatal(err)
+	}
+	if err = m.Reconcile(); err != nil {
+		t.Fatal(err)
+	}
+	// Changing egress settings restarts the account's runtime.
+	m.mu.RLock()
+	rt = m.accounts[rt.client.ID]
+	m.mu.RUnlock()
 	conn, err := m.dialForEngine(rt, context.Background(), "tcp", "8.8.4.4:14756", upstreamSoar)
 	assertEcho(t, conn, err, "listed NAT public IP")
 	conn, err = m.dialForEngine(rt, context.Background(), "tcp", "8.8.8.8:14756", upstreamSoar)
