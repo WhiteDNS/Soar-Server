@@ -107,7 +107,7 @@ Internal resolver connections have an exception only for the panel's allowed res
 8. For newer results, advance the end time and show the report again. The initial one-hour range is a starting selection, not a continuously moving live window.
 9. Click **Download CSV** or **Download JSON**. Downloads use the current form values; apply those same values with **Show report** first if you want the table and export to match.
 
-Since 0.14.1, tunneled DNS for Cotten and MasterDNS retries over TCP when SOCKS5 fails over UDP. A slow proxy gets the full 15-second dial time when the destination has one address. A proxy that refuses port 53 fails hostnames with `proxy_dns_failed`, and DNS does not fall back to direct.
+Since 0.14.1, tunneled DNS for Cotten and MasterDNS retries over TCP when SOCKS5 fails over UDP. Since 0.14.3, a slow proxy gets the full 15-second dial time when the destination has one address. A proxy that refuses port 53 fails hostnames with `proxy_dns_failed`, and DNS does not fall back to direct.
 
 ### Connecting to this server's own IP
 
