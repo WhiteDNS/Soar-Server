@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/binary"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"net/netip"
@@ -23,6 +24,8 @@ var (
 	errAccountStreamLimit   = errors.New("stream limit reached")
 	errServerStreamCapacity = errors.New("server stream capacity reached")
 	errDestinationPort      = errors.New("destination port denied")
+	// Wraps errDestinationPort: both are policy denials, but opening a port cannot fix this one.
+	errDestinationNotPublic = fmt.Errorf("destination is this server or a private network: %w", errDestinationPort)
 )
 
 type packet struct {

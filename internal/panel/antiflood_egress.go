@@ -87,7 +87,7 @@ func (m *Manager) guardedDialRoute(ctx context.Context, network, address string,
 		pinned := net.JoinHostPort(ip.String(), port)
 		if route.proxy() || m.dialOverride == nil {
 			if e := soar.PublicOnly(network, pinned, nil); e != nil {
-				last = errDestinationPort
+				last = errDestinationNotPublic
 				continue
 			}
 		}
