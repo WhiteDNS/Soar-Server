@@ -17,11 +17,13 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
 var errUpstreamProxy = errors.New("upstream proxy unavailable or handshake rejected")
 var errProxyUDP = errors.New("this upstream proxy does not support UDP; direct fallback is disabled")
+var errProxyDNS = fmt.Errorf("upstream proxy did not open a DNS connection to port 53: %w", errUpstreamProxy)
 
 // Each uncached lookup opens several proxy tunnels to port 53, once per dial.
 // shortcut: fixed TTL because net.Resolver hides record TTLs, replace if a short-lived record matters.
@@ -48,11 +50,16 @@ func (m *Manager) lookupViaProxy(ctx context.Context, rt *accountRuntime, engine
 	if ok && time.Now().Before(cached.expires) {
 		return cached.ips, nil
 	}
+	var reached, refused atomic.Bool
 	resolver := &net.Resolver{PreferGo: true, Dial: func(ctx context.Context, _, _ string) (net.Conn, error) {
 		for _, address := range resolvers {
 			conn, err := m.dialEgressFor(rt, ctx, "tcp", address, true, engine)
 			if err == nil {
+				reached.Store(true)
 				return conn, nil
+			}
+			if errors.Is(err, errUpstreamProxy) {
+				refused.Store(true)
 			}
 			if ctx.Err() != nil {
 				return nil, ctx.Err()
@@ -62,6 +69,10 @@ func (m *Manager) lookupViaProxy(ctx context.Context, rt *accountRuntime, engine
 	}}
 	ips, err := resolver.LookupNetIP(ctx, "ip", host)
 	if err != nil {
+		// The resolver hides why no connection opened, and an unrelated failure must keep its own reason.
+		if refused.Load() && !reached.Load() {
+			return nil, errProxyDNS
+		}
 		return nil, err
 	}
 	m.proxyLookupMu.Lock()
@@ -355,7 +366,7 @@ func (c *socksUDPConn) Read(p []byte) (int, error) {
 			continue
 		}
 		endpoint, e := netip.ParseAddrPort(address)
-		if e != nil || endpoint != c.target {
+		if e != nil || netip.AddrPortFrom(endpoint.Addr().Unmap(), endpoint.Port()) != c.target {
 			continue
 		}
 		offset := n - r.Len()

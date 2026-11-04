@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net"
 	"net/netip"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -78,14 +79,23 @@ func (m *Manager) guardedDialRoute(ctx context.Context, network, address string,
 	last := errors.New("no eligible public destination")
 	seen := map[netip.Addr]bool{}
 	attempts := 0
-	for _, ip := range ips {
+	for i, ip := range ips {
 		ip = ip.Unmap()
 		if !ip.IsValid() || seen[ip] || strings.HasSuffix(network, "4") && !ip.Is4() || strings.HasSuffix(network, "6") && !ip.Is6() {
 			continue
 		}
 		seen[ip] = true
 		pinned := net.JoinHostPort(ip.String(), port)
-		if route.proxy() || m.dialOverride == nil {
+		var isOwnHost, ownHost bool
+		if !resolver {
+			isOwnHost, ownHost = m.ownHostPolicy(ip, port)
+		}
+		// Behind NAT the public IP is on no interface, so PublicOnly cannot see it.
+		if isOwnHost && !ownHost {
+			last = errDestinationNotPublic
+			continue
+		}
+		if (route.proxy() || m.dialOverride == nil) && !ownHost {
 			if e := soar.PublicOnly(network, pinned, nil); e != nil {
 				last = errDestinationNotPublic
 				continue
@@ -100,18 +110,24 @@ func (m *Manager) guardedDialRoute(ctx context.Context, network, address string,
 			}
 		}
 		attempts++
-		// Leave time for a second family/address without multiplying the total
-		// 15-second dial deadline. A canceled operation never creates new traffic.
+		// Share the 15-second dial deadline across the addresses still to try, so a
+		// slow proxy chain with one address gets all of it. A canceled operation
+		// never creates new traffic.
 		if err := ctx.Err(); err != nil {
 			l.releaseTarget()
 			return nil, err
 		}
 		budget := 5 * time.Second
 		if deadline, ok := ctx.Deadline(); ok {
-			budget = min(budget, time.Until(deadline))
+			budget = time.Until(deadline) / time.Duration(min(len(ips)-i, 5-attempts))
 		}
 		attempt, stop := context.WithTimeout(ctx, budget)
-		conn, e := dial(attempt, network, pinned)
+		attemptDial := dial
+		if ownHost && !route.proxy() && m.dialOverride == nil {
+			// The exact address and port were approved above, and the pinned IP cannot rebind.
+			attemptDial = (&net.Dialer{}).DialContext
+		}
+		conn, e := attemptDial(attempt, network, pinned)
 		result := "connected"
 		if e != nil {
 			result = diagnosticReason(e)
@@ -138,6 +154,22 @@ func (m *Manager) guardedDialRoute(ctx context.Context, network, address string,
 		}
 	}
 	return nil, last
+}
+
+// ownHostPolicy reports whether ip is the panel's exact public IP and whether the
+// administrator listed this port, the only exception to the non-public block.
+func (m *Manager) ownHostPolicy(ip netip.Addr, rawPort string) (own, allowed bool) {
+	port, err := strconv.ParseUint(rawPort, 10, 16)
+	if err != nil {
+		return false, false
+	}
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	public, ok := usableOwnIP(m.cfg.PublicIP)
+	if !ok || ip != public {
+		return false, false
+	}
+	return true, m.egress.ownHostAllows(uint16(port))
 }
 
 func (c *meterConn) guardWrite(bytes int) error {

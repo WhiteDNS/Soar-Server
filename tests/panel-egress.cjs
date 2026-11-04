@@ -10,6 +10,7 @@ module.exports=async({page,out,assert,password})=>{
   assert.equal(await page.locator('#egress-masterdns-unrestricted').isDisabled(),true,'direct route exposed unrestricted ports');
   await choose('egress-soar-mode','SOCKS5');await page.locator('#egress-soar-address').fill('127.0.0.1:1080');await page.locator('#egress-soar-username').fill('route-user');await page.locator('#egress-soar-password').fill('route-secret-never-return');await page.locator('#egress-soar-ports').fill('1-2000,8443');
   await choose('egress-cotten-mode','HTTP CONNECT');await page.locator('#egress-cotten-address').fill('127.0.0.1:8080');await page.locator('#egress-cotten-unrestricted').check();
+  assert.equal(await page.locator('#egress-own-host-ports').inputValue(),'','own server ports must start empty');
   await page.locator('#outbound-logging').check();await page.locator('#outbound-retention').fill('48');await page.locator('#outbound-storage').fill('8');await page.locator('#egress-save').click();await page.waitForFunction(()=>!document.getElementById('egress-save').disabled&&document.getElementById('egress-soar-password').value==='');
   const cfg=await page.evaluate(()=>api('/egress'));
   assert.equal(cfg.soar.mode,'socks5');assert.equal(cfg.soar.password_configured,true);assert.equal(cfg.soar.password,undefined);assert.equal(cfg.cotten.unrestricted,true);assert.equal(cfg.masterdns.mode,'direct');assert.equal(cfg.logs.retention_hours,48);

@@ -38,7 +38,13 @@ jobs:
       - name: Test panel modules
         run: |
           go vet ./...
-          go test ./... -count=1 -timeout 300s
+          go test ./... -count=1 -timeout 420s
+      - name: Test own-server access in a network namespace
+        run: |
+          go test -c -o "$RUNNER_TEMP/panel.test" ./internal/panel
+          (cd internal/panel && sudo "$RUNNER_TEMP/panel.test" -test.run '^(TestOwnHostStaysBlockedUnlessThePortIsListed|TestOwnHostFollowsTheListOnProxyRoutes|TestNativeClientsReachListedOwnHostPort)$' -test.count=1 -test.timeout 240s)
+      - name: Race test outbound routes
+        run: go test -race ./internal/panel -count=1 -timeout 300s -run 'TestNativeClientsReachCustomPort|TestSlowProxy|TestSocksUDPAccepts|TestProxyThatRefuses|TestDirectRouteOpens|TestProxyRoutesOpen|TestProxyPortList|TestHTTPSProxy|TestDeadEgressProxy|TestTunnelDNSFallsBack'
       - name: Test release scripts and installers
         run: |
           python3 -m unittest discover -s tests -p 'panel_release*_test.py'

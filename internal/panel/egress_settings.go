@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"net/netip"
 	"strconv"
 	"strings"
 
@@ -37,6 +38,10 @@ type EgressConfig struct {
 	Cotten    EngineEgress      `json:"cotten"`
 	MasterDNS EngineEgress      `json:"masterdns"`
 	Logs      OutboundLogConfig `json:"logs"`
+	// OwnHostPorts opens these ports on this panel's public IP. Empty keeps every
+	// connection to the server blocked. It lives here so a restore cannot enable it.
+	OwnHostPorts string `json:"own_host_ports,omitempty"`
+	ownHost      []portInterval
 }
 
 func defaultEgressConfig() EgressConfig {
@@ -112,6 +117,11 @@ func (c EgressConfig) validate() error {
 			return fmt.Errorf("%s: %w", name, err)
 		}
 	}
+	if c.OwnHostPorts != "" {
+		if _, err := parsePortIntervals(c.OwnHostPorts); err != nil {
+			return fmt.Errorf("own server ports: %w", err)
+		}
+	}
 	if c.Logs.RetentionHours < 1 || c.Logs.RetentionHours > 720 || c.Logs.MaxMiB < 4 || c.Logs.MaxMiB > 256 {
 		return errors.New("log retention must be 1–720 hours and storage 4–256 MiB")
 	}
@@ -137,6 +147,37 @@ func (c *EgressConfig) prepare() {
 			r.intervals, _ = parsePortIntervals(r.Ports)
 		}
 	}
+	if c.OwnHostPorts != "" {
+		c.ownHost, _ = parsePortIntervals(c.OwnHostPorts)
+	}
+}
+
+func (c EgressConfig) ownHostAllows(port uint16) bool {
+	intervals := c.ownHost
+	if intervals == nil && c.OwnHostPorts != "" {
+		intervals, _ = parsePortIntervals(c.OwnHostPorts)
+	}
+	return portsContain(intervals, port)
+}
+
+// Only a real public address may be exempted, never a private or shared one.
+var ownIPExcluded = []netip.Prefix{
+	netip.MustParsePrefix("100.64.0.0/10"), netip.MustParsePrefix("192.0.0.0/24"), netip.MustParsePrefix("192.0.2.0/24"),
+	netip.MustParsePrefix("198.18.0.0/15"), netip.MustParsePrefix("198.51.100.0/24"), netip.MustParsePrefix("203.0.113.0/24"),
+	netip.MustParsePrefix("240.0.0.0/4"),
+}
+
+func usableOwnIP(raw string) (netip.Addr, bool) {
+	ip, err := netip.ParseAddr(raw)
+	if err != nil || !ip.Is4() || !ip.IsGlobalUnicast() || ip.IsPrivate() {
+		return netip.Addr{}, false
+	}
+	for _, excluded := range ownIPExcluded {
+		if excluded.Contains(ip) {
+			return netip.Addr{}, false
+		}
+	}
+	return ip, true
 }
 
 func (r EngineEgress) proxy() bool { return r.Mode != "" && r.Mode != "direct" }
@@ -160,6 +201,10 @@ func (r EngineEgress) allows(port uint16, direct []uint16) bool {
 			return false
 		}
 	}
+	return portsContain(intervals, port)
+}
+
+func portsContain(intervals []portInterval, port uint16) bool {
 	for _, p := range intervals {
 		if port >= p.first && port <= p.last {
 			return true
@@ -215,6 +260,15 @@ func (s *Store) SaveEgress(next EgressConfig) error {
 		}
 		if err := next.validate(); err != nil {
 			return err
+		}
+		if next.OwnHostPorts != "" {
+			var settings Settings
+			if err := json.Unmarshal(tx.Bucket(meta).Get([]byte("settings")), &settings); err != nil {
+				return err
+			}
+			if _, ok := usableOwnIP(settings.PublicIP); !ok {
+				return errors.New("own server ports need this panel's public IPv4; set it from the server menu first")
+			}
 		}
 		next.Revision++
 		if err := putJSON(tx.Bucket(meta), []byte("egress"), next); err != nil {
