@@ -171,6 +171,7 @@ const panelI18n = (() => {
  "سقف جریان هم‌زمان حساب پُر است": "Account stream limit reached",
  "سقف جریان هم‌زمان سرور پُر است": "Server stream limit reached",
  "سیاست دسترسی مقصد اجازهٔ اتصال نمی‌دهد": "Destination access policy denied connection",
+ "مقصد روی همین سرور یا در شبکهٔ خصوصی است و عمداً مسدود می‌شود": "The destination is this server or a private network and is blocked on purpose",
  "کنترل ضدفلاد اتصال را محدود کرد": "Anti-flood policy limited connection",
  "عملیات لغو شد": "Operation cancelled",
  "اتصال بسته است": "Connection closed",
