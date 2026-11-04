@@ -1,7 +1,7 @@
 # Engine upstream proxies and outbound reports
 
 Available in **panel 0.14.0 and later**; these controls are absent from 0.13.0.
-[Main panel guide](PANEL.en.md) · [فارسی](EGRESS.fa.md) · [Download 0.14.0](https://github.com/WhiteDNS/Soar-Server/releases/tag/panel-v0.14.0)
+[Main panel guide](PANEL.en.md) · [فارسی](EGRESS.fa.md) · [Download the latest release](https://github.com/WhiteDNS/Soar-Server/releases/latest)
 
 ## 1. Preparation and upgrade
 
@@ -106,6 +106,8 @@ Internal resolver connections have an exception only for the panel's allowed res
 7. Click **Show report**. After changing a filter, click it again before paging. The table shows up to 200 rows per page.
 8. For newer results, advance the end time and show the report again. The initial one-hour range is a starting selection, not a continuously moving live window.
 9. Click **Download CSV** or **Download JSON**. Downloads use the current form values; apply those same values with **Show report** first if you want the table and export to match.
+
+Since 0.14.1, tunneled DNS for Cotten and MasterDNS retries over TCP when SOCKS5 fails over UDP. Since 0.14.3, a slow proxy gets the full 15-second dial time when the destination has one address. A proxy that refuses port 53 fails hostnames with `proxy_dns_failed`, and DNS does not fall back to direct.
 
 ### Connecting to this server's own IP
 

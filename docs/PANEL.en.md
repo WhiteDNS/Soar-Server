@@ -8,9 +8,9 @@ code with a workflow inspired by 3x-ui; Xray is not installed.
 Supported servers: Ubuntu 22.04/24.04/26.04 or Debian 12/13, amd64/x86_64 or arm64/aarch64,
 with root/sudo and systemd. No Docker, Go, Node or external database is required.
 
-Panel 0.14.0 provides separate archives for each architecture. The installer rejects mismatched bundles before installation. On every run, the public bootstrap resolves GitHub's latest stable panel release and downloads the matching architecture archive and checksum. It stops before installation if discovery, download or verification fails; it never silently installs an older version.
+Panel 0.14 releases provide separate archives for each architecture. The installer rejects mismatched bundles before installation. On every run, the public bootstrap resolves GitHub's latest stable panel release and downloads the matching architecture archive and checksum. It stops before installation if discovery, download or verification fails; it never silently installs an older version.
 
-For the 0.14.0 engine proxies, proxy port policies and destination reports, follow
+For engine proxies, proxy port policies, destination reports and own-server access, follow
 the [complete upstream and outbound reporting guide](EGRESS.en.md) ([فارسی](EGRESS.fa.md)).
 
 ## 1. Prepare a server and DNS
@@ -137,8 +137,9 @@ login credentials and machine-local HTTPS/access settings are preserved.
 The file must use the same delegated tunnel zone. Restore restarts the service.
 
 **Panel updates → Check for updates → Install update** installs a newer stable
-official release after password confirmation. Packages are checksum-checked,
-and program/data are backed up before replacement. A failed activation rolls
+official release after password confirmation. Since 0.14.2, the panel offers and
+installs only releases signed with the offline release key. Packages are
+checksum-checked, and program/data are backed up before replacement. A failed activation rolls
 back. Connections briefly drop during restart. Older installations without the
 maintenance service should rerun the guided installer once.
 
@@ -197,6 +198,11 @@ Click **Save outbound routes**. Active engines restart and their existing
 connections close briefly; accounts, keys, subscriptions and usage are preserved.
 Reconnect a client through each configured engine and check its actual public
 exit IP. Xray/sing-box outbound routing is configured in that service separately.
+
+Tunnel connections to this server's own IP are blocked on every route by default.
+To open specific ports since 0.14.3, read
+[Connecting to this server's own IP](EGRESS.en.md#connecting-to-this-servers-own-ip)
+and consider its risk first.
 
 ## Destination reports and downloads — 0.14.0+
 
