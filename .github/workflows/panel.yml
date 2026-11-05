@@ -150,6 +150,7 @@ jobs:
     needs: [plan, verify]
     if: needs.plan.outputs.build == 'true'
     runs-on: ubuntu-24.04
+    environment: release
     permissions:
       contents: write
     steps:
@@ -166,6 +167,25 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TARGET: ${{ inputs.target }}
         run: python3 scripts/publish_release.py --artifacts release-artifacts
+      - uses: actions/setup-go@v5
+        if: inputs.target == 'panel'
+        with:
+          go-version: '1.26.1'
+          cache: false
+      - name: Sign the published panel release
+        if: inputs.target == 'panel'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_SIGNING_KEY: ${{ secrets.RELEASE_SIGNING_KEY }}
+          RELEASE_VERSION: ${{ needs.plan.outputs.version }}
+        run: |
+          key="$RUNNER_TEMP/release-signing.key"
+          trap 'rm -f "$key"' EXIT
+          (umask 077; printf '%s\n' "$RELEASE_SIGNING_KEY" > "$key")
+          public=$(GOWORK=off go run ./cmd/soar-release-sign sign "$key" release-artifacts/soar-panel-"$RELEASE_VERSION"-linux-*.tar.gz.sha256)
+          grep -qF "\"$public\"" internal/panel/releases.go || { echo "RELEASE_SIGNING_KEY is not a key panels trust" >&2; exit 1; }
+          for signature in release-artifacts/*.tar.gz.sha256.sig; do mv "$signature" "${signature%.sig}.ci.sig"; done
+          gh release upload "panel-v$RELEASE_VERSION" release-artifacts/*.tar.gz.sha256.ci.sig --repo "$GITHUB_REPOSITORY" --clobber
       - uses: actions/upload-artifact@v4
         if: always()
         with:

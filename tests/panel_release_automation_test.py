@@ -83,6 +83,11 @@ class ReleaseGates(unittest.TestCase):
         for trigger in ("  push:","  pull_request:","  workflow_run:"):
             self.assertNotIn(trigger,workflow)
         self.assertIn("needs: [plan, verify]",workflow)
+        # The signing key exists only in the job that publishes, after every test passed.
+        self.assertEqual(workflow.count("secrets.RELEASE_SIGNING_KEY"),1)
+        self.assertLess(workflow.index("  release:\n"),workflow.index("environment: release"))
+        self.assertLess(workflow.index("publish_release.py --artifacts"),workflow.index("secrets.RELEASE_SIGNING_KEY"))
+        self.assertNotIn("secrets.",ci)
         self.assertNotIn("run-id:",workflow)
         self.assertNotIn("finish-release:",workflow)
         self.assertNotIn("actions: write",workflow)

@@ -27,23 +27,34 @@ If only publication fails, use **Re-run failed jobs**, not **Re-run all jobs**.
 The release job reuses the successful build jobs' artifacts and can resume its
 partial draft upload. It does not repeat verification or builds.
 
-## Sign every panel release
+## Signing panel releases
 
-Panels update only to a release signed with the offline key. Until the signature
-is uploaded, panels do not offer the new version. Confirm the release came from
-your own workflow run at the expected commit, then sign:
+The release job signs each panel release automatically, right after publishing,
+as `*.tar.gz.sha256.ci.sig`. Anyone who can run this workflow on `main` can publish
+a release panels will install, with no key to handle. The key lives only in the
+`release` GitHub Environment, as `RELEASE_SIGNING_KEY`, restricted to `main`. Add a
+required reviewer to that environment to require a second person's approval.
+
+Keep access small and use two-factor authentication: this signature does not
+protect against a stolen account that can run the workflow. The offline key
+exists for that case and for recovery. Keep it off GitHub, with an offline backup.
+
+Panels up to 0.14.4 trust only the offline key and read only `*.sha256.sig`. They
+stay on the newest release that has that file. **The first release after this
+change must also be signed offline once**, so those panels can reach it and then
+continue with workflow signatures:
 
 ```sh
 gh release download panel-vVERSION --repo WhiteDNS/Soar-Server --pattern '*.sha256' --dir sign
-go run ./cmd/soar-release-sign sign KEY_FILE sign/*.sha256
+go run ./cmd/soar-release-sign sign OFFLINE_KEY_FILE sign/*.sha256
 gh release upload panel-vVERSION sign/*.sig --repo WhiteDNS/Soar-Server
 ```
 
-The signature covers the checksum file, which names the archive and its version.
-Keep `KEY_FILE` off GitHub and off build runners, and keep an offline backup. If
-it is lost or leaked, replace `releaseSigningKey` in `internal/panel/releases.go`
-and have operators rerun the installer, because installed panels trust only the
-old key. The install bootstrap checks SHA-256 only and does not verify this signature.
+If the workflow key leaks: remove it from `releaseSigningKeys` in
+`internal/panel/releases.go`, add a new public key, replace the secret, and sign
+that release with the offline key the same way. Panels then stop trusting the old
+key once updated. The install bootstrap checks SHA-256 only and does not verify
+signatures.
 
 Panel versions must agree in `internal/panel/releases.go`, `panel-install.sh`
 and `scripts/build_panel_bundle.py`; add `docs/RELEASE-panel-VERSION.md`.
