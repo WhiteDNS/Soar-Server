@@ -51,9 +51,9 @@ func TestReleaseSignatureBindsChecksumContent(t *testing.T) {
 	if VerifyReleaseSignature([]byte("x"), ed25519.Sign(private, []byte("x"))) == nil {
 		t.Fatal("signature from another key accepted")
 	}
-	original := releaseSigningKey
-	t.Cleanup(func() { releaseSigningKey = original })
-	releaseSigningKey = base64.StdEncoding.EncodeToString(public)
+	original := releaseSigningKeys
+	t.Cleanup(func() { releaseSigningKeys = original })
+	releaseSigningKeys = []string{original[0], base64.StdEncoding.EncodeToString(public)}
 	sums := []byte("abc  soar-panel-0.8.0-linux-amd64.tar.gz\n")
 	signature := ed25519.Sign(private, sums)
 	if e := VerifyReleaseSignature(sums, signature); e != nil {
@@ -61,6 +61,20 @@ func TestReleaseSignatureBindsChecksumContent(t *testing.T) {
 	}
 	if VerifyReleaseSignature([]byte("abc  soar-panel-0.7.0-linux-amd64.tar.gz\n"), signature) == nil {
 		t.Fatal("signature accepted for a different release")
+	}
+}
+
+func TestReleaseWithOnlyWorkflowSignatureIsOffered(t *testing.T) {
+	r := releaseFixture("0.8.0", false)
+	for i := range r.Assets {
+		if strings.HasSuffix(r.Assets[i].Name, ".sha256.sig") {
+			r.Assets[i].Name = strings.TrimSuffix(r.Assets[i].Name, OfflineSignatureSuffix) + WorkflowSignatureSuffix
+			r.Assets[i].URL = "https://github.com/WhiteDNS/Soar-Server/releases/download/" + r.Tag + "/" + r.Assets[i].Name
+		}
+	}
+	selected, err := selectPanelRelease([]PanelRelease{releaseFixture("0.7.0", false), r}, "0.6.0")
+	if err != nil || selected.Tag != "panel-v0.8.0" {
+		t.Fatal("workflow-signed release was not offered", selected.Tag, err)
 	}
 }
 

@@ -97,7 +97,8 @@ def verify_public_release(repo, tag, version, merged):
     assets = {asset["name"]: asset for asset in release["assets"]}
     expected_names = {f"soar-panel-{version}-linux-{arch}.tar.gz{suffix}" for arch in ("amd64", "arm64") for suffix in ("", ".sha256")}
     # Offline signatures are uploaded after publication, so a retry may find them.
-    if set(assets) - {name + ".sig" for name in expected_names} != expected_names:
+    signatures = {f"soar-panel-{version}-linux-{arch}.tar.gz.sha256{suffix}" for arch in ("amd64", "arm64") for suffix in (".sig", ".ci.sig")}
+    if set(assets) - signatures != expected_names:
         raise RuntimeError("Public release must contain both archives and both checksums")
     results = []
     for arch in ("amd64", "arm64"):

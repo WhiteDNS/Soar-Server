@@ -26,8 +26,9 @@ func TestKeygenAndSignRoundTrip(t *testing.T) {
 	if err = os.WriteFile(file, []byte("digest  panel.tar.gz\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	if err = sign(keyPath, []string{file}); err != nil {
-		t.Fatal(err)
+	signer, err := sign(keyPath, []string{file})
+	if err != nil || signer != encoded {
+		t.Fatal("sign did not report its public key", signer, err)
 	}
 	signature, err := os.ReadFile(file + ".sig")
 	if err != nil {

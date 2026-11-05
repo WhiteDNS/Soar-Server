@@ -20,8 +20,20 @@ const ProductName = "WhiteDNS Server Management"
 
 var Version = "0.14.4"
 
-// Public half of the offline release key; see docs/RELEASING.md.
-var releaseSigningKey = "Hik5wPR7NqtPobXbE1aS/rIcXFmSG4m5ikaqVEDau9k="
+// Public keys panels trust; see docs/RELEASING.md. The offline key stays trusted so
+// a release signed with it can replace the release workflow's key if that one leaks.
+var releaseSigningKeys = []string{
+	"Hik5wPR7NqtPobXbE1aS/rIcXFmSG4m5ikaqVEDau9k=", // offline
+	"weRAZveeqvhLTCIJVldUf6wwZxylv+ElRifRxlfTcOU=", // release workflow
+}
+
+// The workflow's signature has its own file because panels up to 0.14.4 trust only
+// the offline key: they keep updating to the last release that has a .sig file.
+const (
+	OfflineSignatureSuffix  = ".sha256.sig"
+	WorkflowSignatureSuffix = ".sha256.ci.sig"
+)
+
 var panelVersionPattern = regexp.MustCompile(`^(\d+)\.(\d+)\.(\d+)(?:-beta(\d+))?$`)
 
 func ValidVersion(v string) bool { return panelVersionPattern.MatchString(v) && len(v) < 48 }
@@ -131,26 +143,28 @@ func validatePanelReleaseArch(r PanelRelease, v, arch string) error {
 	}
 	found := map[string]bool{}
 	for _, a := range r.Assets {
-		for _, name := range []string{archive, archive + ".sha256", archive + ".sha256.sig"} {
+		for _, name := range []string{archive, archive + ".sha256", archive + OfflineSignatureSuffix, archive + WorkflowSignatureSuffix} {
 			if a.Name == name && a.URL == "https://github.com/WhiteDNS/Soar-Server/releases/download/"+r.Tag+"/"+name && a.Size > 0 && a.Size <= 96<<20 {
 				found[name] = true
 			}
 		}
 	}
-	if len(found) != 3 {
+	if !found[archive] || !found[archive+".sha256"] || !found[archive+OfflineSignatureSuffix] && !found[archive+WorkflowSignatureSuffix] {
 		return errors.New("official panel bundle is not available")
 	}
 	return nil
 }
 
-// VerifyReleaseSignature proves the checksum file was signed offline. A stolen
-// GitHub account can publish a release but cannot make panels install it.
+// VerifyReleaseSignature proves a trusted key signed the checksum file, which names
+// the archive and its version.
 func VerifyReleaseSignature(sums, signature []byte) error {
-	key, e := base64.StdEncoding.DecodeString(releaseSigningKey)
-	if e != nil || len(key) != ed25519.PublicKeySize || !ed25519.Verify(key, sums, signature) {
-		return errors.New("release signature verification failed")
+	for _, encoded := range releaseSigningKeys {
+		key, e := base64.StdEncoding.DecodeString(encoded)
+		if e == nil && len(key) == ed25519.PublicKeySize && ed25519.Verify(key, sums, signature) {
+			return nil
+		}
 	}
-	return nil
+	return errors.New("release signature verification failed")
 }
 func LatestPanelRelease(ctx context.Context) (PanelRelease, error) {
 	var releases []PanelRelease

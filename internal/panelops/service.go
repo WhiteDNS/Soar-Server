@@ -521,11 +521,12 @@ func (s *Service) fetchBundle(ctx context.Context, version, dir string) error {
 		return e
 	}
 	sumName := archive + ".sha256"
-	sigName := sumName + ".sig"
+	sigName := archive + panel.OfflineSignatureSuffix
+	workflowSigName := archive + panel.WorkflowSignatureSuffix
 	var sums, signature []byte
 	var archivePath string
 	var archiveDigest string
-	for _, name := range []string{sumName, sigName, archive} {
+	for _, name := range []string{sumName, sigName, workflowSigName, archive} {
 		for _, asset := range release.Assets {
 			if asset.Name != name {
 				continue
@@ -551,11 +552,14 @@ func (s *Service) fetchBundle(ctx context.Context, version, dir string) error {
 				if e != nil || len(sums) > 2048 {
 					return errors.New("invalid release checksum file")
 				}
-			} else if name == sigName {
-				signature, e = io.ReadAll(io.LimitReader(response.Body, 65))
+			} else if name == sigName || name == workflowSigName {
+				raw, e := io.ReadAll(io.LimitReader(response.Body, 65))
 				response.Body.Close()
 				if e != nil {
 					return errors.New("invalid release signature file")
+				}
+				if signature == nil {
+					signature = raw
 				}
 			} else {
 				archivePath = filepath.Join(dir, "release.tar.gz")
