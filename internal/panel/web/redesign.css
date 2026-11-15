@@ -540,3 +540,12 @@ html{scrollbar-gutter:stable}
 #page-dashboard:not([data-loaded]) .stat>strong{color:transparent;background:var(--color-rule);border-radius:6px;inline-size:65%;opacity:.45}
 .page[aria-busy=true]:not([data-loaded]){cursor:progress}
 @media(prefers-reduced-motion:reduce){.page{scroll-behavior:auto}}
+/* Sidebar groups, row action glyphs and status dots. */
+.nav-group{flex-shrink:0;font-size:var(--text-xs);color:var(--color-ink-2);padding:var(--space-3) var(--space-3) var(--space-1)}
+.nav-group:first-child{padding-top:0}
+.row-actions button{display:inline-flex;align-items:center;gap:6px}.row-actions button>.icon{width:15px;height:15px}
+.badge{display:inline-flex;align-items:center;gap:6px}.badge::before{content:'';width:6px;height:6px;border-radius:50%;background:currentColor;flex-shrink:0}
+@media(min-width:801px){
+ body.sidebar-collapsed .nav-group{font-size:0;padding:0;margin:var(--space-2) var(--space-3);border-top:1px solid var(--color-rule)}
+ body.sidebar-collapsed .nav-group:first-child{display:none}
+}

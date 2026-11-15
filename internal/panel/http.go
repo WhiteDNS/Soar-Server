@@ -313,6 +313,10 @@ func (h *HTTP) serveHTTP(w http.ResponseWriter, r *http.Request) {
 		h.deleteClients(w, r)
 		return
 	}
+	if r.URL.Path == "/api/clients/export" {
+		h.exportClients(w, r)
+		return
+	}
 	if r.URL.Path == "/api/clients" {
 		h.clientList(w, r)
 		return
