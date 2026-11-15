@@ -2,6 +2,18 @@
 // Translation is applied to authored UI only. Account names, notes, URLs and input values are never translated.
 const panelI18n = (() => {
  const catalog = {
+ "اصلی": "Main",
+ "پایش و حفاظت": "Monitoring & protection",
+ "سرور": "Server",
+ "خروجی کانفیگ‌ها": "Export configs",
+ "کپی کانفیگ‌ها": "Copy configs",
+ "خروجی کانفیگ حساب‌ها": "Account configs exported",
+ "حسابی انتخاب نشده است.": "No account is selected.",
+ "این خروجی شامل لینک و کلید اتصال حساب‌های انتخاب‌شده است. هر کس آن را داشته باشد می‌تواند با این حساب‌ها وصل شود. آن را در جای امن نگه دارید.": "This export contains the connection links and keys of the selected accounts. Anyone who has it can connect with these accounts. Keep it somewhere safe.",
+ "خروجی کانفیگ دریافت نشد. فهرست حساب‌ها به‌روز شد؛ دوباره انتخاب کنید.": "The configs could not be exported. The account list was refreshed; select again.",
+ "مرورگر اجازهٔ کپی نداد؛ «خروجی کانفیگ‌ها» را بزنید.": "The browser blocked copying; use Export configs instead.",
+ "کانفیگ حساب‌های انتخاب‌شده دریافت شد.": "Configs of the selected accounts were downloaded.",
+ "کانفیگ حساب‌های انتخاب‌شده کپی شد.": "Configs of the selected accounts were copied.",
  "پایان نامشخص": "End unknown",
  "برای اتصال‌های پایان‌نامشخص، حجم گزارش‌شده حداقلِ ثبت‌شده است؛ پس از توقف ناگهانی، صفر به‌معنی نبود ترافیک نیست.": "For connections with an unknown end, reported bytes are only the recorded lower bound. After an abrupt stop, zero does not mean there was no traffic.",
  "فیلتر تغییر کرده؛ نمایش گزارش را بزنید.": "Filters changed; click Show report.",
