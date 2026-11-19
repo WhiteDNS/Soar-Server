@@ -45,6 +45,7 @@ type HTTP struct {
 	assets        http.Handler
 	metrics       hostSampler
 	ops           MaintenanceOps
+	container     bool
 	preview       *restorePreview
 	inspectBackup func(context.Context, string) (BackupSummary, error)
 	access        *AccessController

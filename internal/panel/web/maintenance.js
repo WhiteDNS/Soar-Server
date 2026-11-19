@@ -1,6 +1,6 @@
 'use strict';
 window.panelMaintenance=(()=>{
- let restoreToken='',updateVersion='',accessPlan='',accessConfig={},available=false,watching=false;
+ let restoreToken='',updateVersion='',accessPlan='',accessConfig={},available=false,container=false,watching=false;
  const delay=ms=>new Promise(resolve=>setTimeout(resolve,ms));
  const info=(id,text,error=false)=>{const el=$(id);el.textContent=message({message:text});el.dataset.kind=error?'error':'info';};
  const withFeedback=(button,id,fn)=>withButton(button,async()=>{try{return await fn();}catch(e){info(id,message(e),true);throw e;}});
@@ -8,13 +8,16 @@ window.panelMaintenance=(()=>{
  function jobText(job){if(!job?.id)return panelText("هنوز عملیاتی انجام نشده است.");const kind=job.kind==='restore'?panelText("بازیابی"):panelText("به‌روزرسانی");const states={running:panelText("در حال انجام است؛ ممکن است ارتباط موقتاً قطع شود."),succeeded:panelText("با موفقیت انجام شد."),rolled_back:panelText("کامل نشد؛ نسخه و اطلاعات قبلی برگردانده شد."),failed:panelText("انجام نشد؛ جزئیات را بررسی کنید.")};return kind+' '+(states[job.state]||job.state)+(job.state==='failed'||job.state==='rolled_back'?' '+job.message:'');}
  function showJob(job){for(const el of document.querySelectorAll('[data-maintenance-state]')){el.textContent=jobText(job);el.dataset.kind=['failed','rolled_back'].includes(job?.state)?'error':'info';}}
  async function load(page){
-  const ticket=navigationId,session=csrf;const state=await api('/maintenance');if(ticket!==navigationId||session!==csrf)return;available=state.available;$('update-current').textContent=state.version;showJob(state.job);
+  const ticket=navigationId,session=csrf;const state=await api('/maintenance');if(ticket!==navigationId||session!==csrf)return;available=state.available;container=!!state.container;$('update-current').textContent=state.version;showJob(state.job);
   $('restore-apply').disabled=!available;$('update-install').disabled=!available||!updateVersion;
-  if(!available&&page==='backup'){
+  if(state.container){
+   if(page==='backup')info('restore-feedback',panelText("این پنل در داکر اجرا می‌شود و بازیابی از داخل پنل ممکن نیست. روش بازیابی در راهنمای داکر (docs/DOCKER.fa.md) آمده است."),true);
+   if(page==='updates')info('update-feedback',panelText("این پنل در داکر اجرا می‌شود. برای به‌روزرسانی، روی سرور در پوشهٔ فایل compose اجرا کنید: docker compose pull && docker compose up -d"),true);
+  }else if(!available&&page==='backup'){
    const detail=state.error&&!state.error.startsWith('maintenance service unavailable')?message({message:state.error}):'';
    info('restore-feedback',panelText("برای فعال‌شدن بازیابی، نصب‌کنندهٔ همین نسخه باید سرویس نگهداری را نصب کرده باشد. ")+detail,true);
   }
-  if(!available&&page==='updates')info('update-feedback',panelText("سرویس نگهداری در دسترس نیست. نصب‌کنندهٔ همین نسخه را اجرا کنید؛ بررسی نسخه همچنان ممکن است."),true);
+  if(!container&&!available&&page==='updates')info('update-feedback',panelText("سرویس نگهداری در دسترس نیست. نصب‌کنندهٔ همین نسخه را اجرا کنید؛ بررسی نسخه همچنان ممکن است."),true);
   if(page==='security'){
    await loadTunnelDomains();
    const value=await api('/access');if(ticket!==navigationId||session!==csrf)return;accessConfig=value.config;$('access-current-url').value=new URL('.',document.baseURI).href;
@@ -47,7 +50,8 @@ window.panelMaintenance=(()=>{
  });
  $('update-check').onclick=e=>withFeedback(e.currentTarget,'update-feedback',async()=>{
   updateVersion='';$('update-preview').hidden=true;info('update-feedback',panelText("در حال بررسی مخزن رسمی…"));const result=await api('/updates/check','POST',{});$('update-current').textContent=result.current;
-  if(result.available){updateVersion=result.latest;$('update-latest').textContent=result.latest;$('update-release').href=result.release_url;$('update-preview').hidden=false;$('update-install').disabled=!available;info('update-feedback',panelText("نسخهٔ جدید آمادهٔ نصب است."));}else info('update-feedback',panelText("نسخهٔ فعلی به‌روز است. آخرین انتشار: ")+result.latest);
+  if(result.available&&container)info('update-feedback',panelText("نسخهٔ جدید منتشر شده است: ")+result.latest+panelText(". برای به‌روزرسانی، روی سرور در پوشهٔ فایل compose اجرا کنید: docker compose pull && docker compose up -d"));
+  else if(result.available){updateVersion=result.latest;$('update-latest').textContent=result.latest;$('update-release').href=result.release_url;$('update-preview').hidden=false;$('update-install').disabled=!available;info('update-feedback',panelText("نسخهٔ جدید آمادهٔ نصب است."));}else info('update-feedback',panelText("نسخهٔ فعلی به‌روز است. آخرین انتشار: ")+result.latest);
  });
  $('update-install').onclick=e=>withFeedback(e.currentTarget,'update-feedback',async()=>{
   const password=$('update-password').value;try{if(!updateVersion)throw Error(panelText("ابتدا نسخهٔ جدید را بررسی کنید."));const job=await api('/updates/install','POST',{version:updateVersion,password});info('update-feedback',panelText("دریافت و بررسی بسته آغاز شد. تا پایان بررسی، سرویس فعلی کار می‌کند."));void watchJob(job);}finally{$('update-password').value='';}

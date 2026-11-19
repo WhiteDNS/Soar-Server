@@ -253,3 +253,19 @@ func TestVersionOrdering(t *testing.T) {
 		t.Fatal("unsafe version accepted")
 	}
 }
+
+func TestContainerModeReportsMaintenanceOutsideThePanel(t *testing.T) {
+	b, _, h := testBrowser(t)
+	h.SetContainer(true)
+	b.login()
+	var v struct {
+		Available, Container bool
+	}
+	if err := json.Unmarshal(b.request("/api/maintenance", "GET", nil, 200), &v); err != nil {
+		t.Fatal(err)
+	}
+	if v.Available || !v.Container {
+		t.Fatalf("container panel must report no in-panel maintenance: %+v", v)
+	}
+	b.request("/api/updates/install", "POST", map[string]string{"version": "9.9.9", "password": "test-only-password-2026"}, 503)
+}

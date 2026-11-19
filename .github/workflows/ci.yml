@@ -52,3 +52,8 @@ jobs:
           bash tests/panel_bootstrap_test.sh
           bash tests/panel_menu_test.sh
           bash tests/panel_security_test.sh
+      - name: Build and smoke-test the Docker image
+        run: |
+          mkdir -p "$RUNNER_TEMP/bundle/bin/linux-amd64"
+          CGO_ENABLED=0 go build -mod=readonly -trimpath -o "$RUNNER_TEMP/bundle/bin/linux-amd64/soar-panel" ./cmd/soar-panel
+          bash tests/docker_smoke_test.sh "$RUNNER_TEMP/bundle" amd64

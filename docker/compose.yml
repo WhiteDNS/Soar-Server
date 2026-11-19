@@ -1,0 +1,19 @@
+# WhiteDNS Server Management in Docker. Guide: docs/DOCKER.fa.md
+# Optional .env beside this file:
+#   SOAR_PANEL_VERSION=0.16.0     image tag; default latest
+#   SOAR_DNS_LISTEN=10.0.0.5:53   DNS address; default auto = default-route IPv4
+services:
+  panel:
+    image: ghcr.io/whitedns/soar-panel:${SOAR_PANEL_VERSION:-latest}
+    container_name: whitedns-panel
+    # Host networking: authoritative DNS on UDP/TCP 53 with the server's real
+    # address, and the panel's own HTTPS on 80/443.
+    network_mode: host
+    restart: unless-stopped
+    volumes:
+      - panel-data:/var/lib/soar-panel
+    command: ["run", "--container", "--db", "/var/lib/soar-panel/panel.db", "--dns-listen", "${SOAR_DNS_LISTEN:-auto:53}", "--listen", "127.0.0.1:2053"]
+    ulimits:
+      nofile: 8192
+volumes:
+  panel-data:

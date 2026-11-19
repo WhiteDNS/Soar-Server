@@ -37,3 +37,19 @@ func listenDNS(address string) (net.PacketConn, net.Listener, error) {
 	}
 	return udp, tcp, nil
 }
+
+// resolveDNSListen turns "auto:PORT" into the default-route IPv4 address, as
+// the native installer does, so a host-network container does not collide
+// with systemd-resolved on 127.0.0.53.
+func resolveDNSListen(address string) (string, error) {
+	host, port, err := net.SplitHostPort(address)
+	if err != nil || host != "auto" {
+		return address, err
+	}
+	conn, err := net.Dial("udp4", "1.1.1.1:53") // UDP connect sends no packet
+	if err != nil {
+		return "", fmt.Errorf("--dns-listen auto: cannot find the default-route IPv4 address: %w", err)
+	}
+	defer conn.Close()
+	return net.JoinHostPort(conn.LocalAddr().(*net.UDPAddr).IP.String(), port), nil
+}

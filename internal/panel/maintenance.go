@@ -100,6 +100,10 @@ func (h *HTTP) SetMaintenance(ops MaintenanceOps, inspect func(context.Context, 
 		h.inspectBackup = inspect
 	}
 }
+
+// SetContainer marks a panel that runs in a container, where updates and
+// restores happen outside the panel.
+func (h *HTTP) SetContainer(v bool) { h.container = v }
 func (h *HTTP) maintenancePassword(w http.ResponseWriter, r *http.Request, password string) bool {
 	ip, _, _ := net.SplitHostPort(r.RemoteAddr)
 	key := "reauth:" + ip
@@ -133,7 +137,7 @@ func (h *HTTP) maintenance(w http.ResponseWriter, r *http.Request, session login
 			w.WriteHeader(405)
 			return true
 		}
-		v := map[string]any{"version": Version, "available": h.ops != nil, "restore_limit": MaxBackupBytes}
+		v := map[string]any{"version": Version, "available": h.ops != nil, "container": h.container, "restore_limit": MaxBackupBytes}
 		if h.ops != nil {
 			job, e := h.ops.Status(r.Context())
 			if e != nil {
