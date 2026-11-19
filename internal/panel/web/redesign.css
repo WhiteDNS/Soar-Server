@@ -549,3 +549,12 @@ html{scrollbar-gutter:stable}
  body.sidebar-collapsed .nav-group{font-size:0;padding:0;margin:var(--space-2) var(--space-3);border-top:1px solid var(--color-rule)}
  body.sidebar-collapsed .nav-group:first-child{display:none}
 }
+/* Multi-domain sharing: domain chips in Link / QR, domain choices in bulk export. */
+.share-domains{margin-block:4px 0;align-items:center}.share-caption{font-size:var(--text-xs);color:var(--color-ink-2);margin-inline-end:4px}.share-domains button{min-height:34px;padding:5px 12px;font-size:var(--text-xs)}
+.domain-name{direction:ltr;unicode-bidi:isolate;font-family:var(--font-outlier)}
+.domain-tag{font-size:10px;line-height:1.6;padding:0 7px;border-radius:var(--radius-pill);background:var(--color-accent-soft);color:var(--color-accent);white-space:nowrap}
+.domain-picks{border:1px solid var(--color-rule);border-radius:var(--radius-input);padding:var(--space-3) var(--space-4);margin:0 0 var(--space-3);min-width:0}
+.domain-picks legend{font-size:var(--text-sm);font-weight:500;padding-inline:6px}
+#export-domain-list{display:grid;gap:2px;margin-bottom:6px}#export-domain-list .checkbox{display:flex;align-items:center;gap:10px;margin:0;min-height:40px;min-width:0}
+#export-domain-list .domain-name{overflow-wrap:anywhere}
+#export-dialog .dialog-actions{flex-wrap:wrap}

@@ -90,8 +90,10 @@ def verify_archive(raw, arch, version, merged):
 
 
 def verify_public_release(repo, tag, version, merged):
-    # All metadata and assets in this phase are fetched without credentials.
-    release = json.loads(download(f"https://api.github.com/repos/{repo}/releases/tags/{tag}", 1 << 20))
+    # Metadata comes from the authenticated API: anonymous API calls share a
+    # 60-per-hour limit per runner IP and failed panel-v0.15.0 after publication.
+    # Asset bytes are still downloaded without credentials, which proves they are public.
+    release = api("GET", f"repos/{repo}/releases/tags/{tag}")
     if release["draft"] or release["prerelease"] or release["tag_name"] != tag:
         raise RuntimeError("Release is not a public stable release of the expected tag")
     assets = {asset["name"]: asset for asset in release["assets"]}

@@ -104,6 +104,38 @@ func (s *Store) Profiles(id string) (map[string]string, error) {
 	return s.profiles(c, cfg)
 }
 
+type DomainProfiles struct {
+	Zone    string            `json:"zone"`
+	Primary bool              `json:"primary"`
+	Links   map[string]string `json:"links"`
+}
+
+// ProfilesByDomain lists the account's profiles on every tunnel domain,
+// preferred domain first, exactly as its subscription serves them.
+func (s *Store) ProfilesByDomain(id string) ([]DomainProfiles, error) {
+	c, err := s.Get(id)
+	if err != nil {
+		return nil, err
+	}
+	cfg, err := s.Settings()
+	if err != nil {
+		return nil, err
+	}
+	return s.domainProfiles(c, cfg, cfg.orderedZones())
+}
+
+func (s *Store) domainProfiles(c Client, cfg Settings, zones []string) ([]DomainProfiles, error) {
+	out := make([]DomainProfiles, 0, len(zones))
+	for _, zone := range zones {
+		links, err := s.profilesAt(c, cfg, zone)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, DomainProfiles{Zone: zone, Primary: zone == cfg.primaryZone(), Links: links})
+	}
+	return out, nil
+}
+
 func selectedProfile(links map[string]string, engine string) (string, error) {
 	if engine == "" {
 		for _, candidate := range profileEngines {
