@@ -536,10 +536,23 @@ func (h *HTTP) clientAction(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if action == "link" || action == "qr.png" {
-			links, e := h.store.Profiles(id)
+			domains, e := h.store.ProfilesByDomain(id)
 			if e != nil {
 				errorReply(w, 500, errors.New("cannot render profile"))
 				return
+			}
+			links := domains[0].Links // preferred domain
+			if zone := r.URL.Query().Get("zone"); zone != "" {
+				links = nil
+				for _, d := range domains {
+					if d.Zone == zone {
+						links = d.Links
+					}
+				}
+				if links == nil {
+					errorReply(w, 400, errors.New("unknown tunnel domain"))
+					return
+				}
 			}
 			if action == "link" {
 				link, e := selectedProfile(links, r.URL.Query().Get("engine"))
@@ -547,7 +560,7 @@ func (h *HTTP) clientAction(w http.ResponseWriter, r *http.Request) {
 					errorReply(w, 400, e)
 					return
 				}
-				jsonReply(w, 200, map[string]any{"link": link, "links": links})
+				jsonReply(w, 200, map[string]any{"link": link, "links": links, "domains": domains})
 				return
 			}
 			link, e := selectedProfile(links, r.URL.Query().Get("engine"))

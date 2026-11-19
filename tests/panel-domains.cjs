@@ -17,6 +17,7 @@ module.exports=async function testDomains({page,url,out,assert}){
  await page.locator('.domain-record').nth(1).getByRole('button').click();await page.locator('#tunnel-domains-feedback').filter({hasText:'تأیید شد'}).waitFor();await page.unroute('**/api/tunnel-domains/check');
  await page.locator('#toast').waitFor({state:'hidden'});
  for(const width of [1440,375,320]){await page.setViewportSize({width,height:1100});await page.evaluate(()=>panelUI.closeMenu());if(width<=800)await page.waitForFunction(()=>document.querySelector('.sidebar').getBoundingClientRect().left>=innerWidth-1);assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1),'domain layout overflow '+width);await page.screenshot({path:path.join(out,'domains-'+width+'.png'),fullPage:true,animations:'disabled'});}
+ await require('./panel-multidomain.cjs')({page,out,assert});
  await page.setViewportSize({width:1440,height:1100});await page.locator('#tunnel-domains').fill('soar.example.org');await page.locator('#tunnel-domains-form button[type=submit]').click();await page.waitForFunction(()=>document.querySelectorAll('.domain-record').length===1);
  console.log('PASS: domain editing, independent NS instructions, preferred links, disabled-account enforcement and responsive domain forms.');
 };

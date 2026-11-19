@@ -23,10 +23,12 @@ module.exports=async({page,context,url,password,out,assert})=>{
  assert.equal(await page.locator('#clients-body tr').count(),3,'cancel deleted accounts');
  await page.locator('#search').fill('bulk-fixture-1');assert.equal(await page.locator('#bulk-toolbar').isHidden(),true,'search did not clear selection');
  await page.locator('#search').fill('bulk-fixture-');await page.locator('#select-all-clients').check();
- await page.locator('#bulk-export').click();await page.locator('#confirm-dialog').waitFor({state:'visible'});
- assert.match(await page.locator('#confirm-title').textContent(),/۳/);await page.locator('#confirm-cancel').click();
- await page.locator('#bulk-export').click();await page.locator('#confirm-dialog').waitFor({state:'visible'});
- const [exported]=await Promise.all([page.waitForEvent('download'),page.locator('#confirm-ok').click()]);
+ await page.locator('#bulk-export').click();await page.locator('#export-dialog').waitFor({state:'visible'});
+ assert.match(await page.locator('#export-title').textContent(),/۳/);assert.equal(await page.locator('#export-domains').isHidden(),true,'single domain needs no domain choice');
+ await page.screenshot({path:path.join(out,'export-dialog-single.png'),animations:'disabled'});
+ await page.locator('#export-dialog .dialog-actions .close-dialog').click();await page.locator('#export-dialog').waitFor({state:'hidden'});
+ await page.locator('#bulk-export').click();await page.locator('#export-dialog').waitFor({state:'visible'});
+ const [exported]=await Promise.all([page.waitForEvent('download'),page.locator('#export-download').click()]);await page.locator('#export-dialog').waitFor({state:'hidden'});
  const configs=require('node:fs').readFileSync(await exported.path(),'utf8');
  assert.equal(configs.match(/^# bulk-fixture-\d$/gm).length,3,'export lacks account names');
  assert.equal(configs.match(/^soar:\/\//gm).length,3,'export lacks profile links');assert.equal(configs.match(/\/sub\//g).length,3,'export lacks subscription links');

@@ -18,7 +18,7 @@ import (
 
 const ProductName = "WhiteDNS Server Management"
 
-var Version = "0.15.0"
+var Version = "0.15.1"
 
 // Public keys panels trust; see docs/RELEASING.md. The offline key stays trusted so
 // a release signed with it can replace the release workflow's key if that one leaks.
