@@ -57,6 +57,7 @@ func execute(args []string) error {
 	input := f.String("input", "", "Backup to inspect (isolated validation only)")
 	accessFile := f.String("access-file", "", "Machine-local access configuration (defaults beside DB)")
 	opsSocket := f.String("ops-socket", "/run/soar-panel-ops/control.sock", "Private maintenance service socket")
+	container := f.Bool("container", false, "Run inside a container: no host maintenance service; update by pulling a new image (run only)")
 	domain := f.String("domain", "", "Panel HTTPS domain (configure-access only)")
 	email := f.String("email", "", "Optional certificate account email")
 	panelAliases := f.String("panel-aliases", "", "Comma separated additional HTTPS domains (configure-access only)")
@@ -213,20 +214,7 @@ func execute(args []string) error {
 	}
 	defer s.Close()
 	if args[0] == "init" || args[0] == "admin-reset" {
-		if *passfile == "" {
-			return errors.New("--password-file is required; passwords must not be passed on the command line")
-		}
-		stat, err := os.Stat(*passfile)
-		if err != nil {
-			return err
-		}
-		if !stat.Mode().IsRegular() || stat.Size() > 256 {
-			return errors.New("invalid password file")
-		}
-		if stat.Mode().Perm()&0077 != 0 && os.PathSeparator != '\\' {
-			return errors.New("password file must have mode 0600")
-		}
-		raw, err := os.ReadFile(*passfile)
+		raw, err := readPasswordFile(*passfile)
 		if err != nil {
 			return err
 		}
@@ -310,7 +298,11 @@ func execute(args []string) error {
 	if _, err = net.InterfaceAddrs(); err != nil {
 		return fmt.Errorf("cannot enumerate local addresses; Linux service must permit AF_NETLINK: %w", err)
 	}
-	pc, tcpDNS, err := listenDNS(*dns)
+	dnsAddress, err := resolveDNSListen(*dns)
+	if err != nil {
+		return err
+	}
+	pc, tcpDNS, err := listenDNS(dnsAddress)
 	if err != nil {
 		return fmt.Errorf("DNS listener: %w", err)
 	}
@@ -326,7 +318,14 @@ func execute(args []string) error {
 	}
 	defer listener.Close()
 	handler := panel.NewHTTP(s, m, *proxy)
-	handler.SetMaintenance(panel.NewOpsClient(*opsSocket), func(ctx context.Context, path string) (panel.BackupSummary, error) {
+	// A container has no root maintenance service; a nil interface keeps update,
+	// restore and the HTTPS firewall step reporting "unavailable" instead of dialing.
+	var ops panel.MaintenanceOps
+	if !*container {
+		ops = panel.NewOpsClient(*opsSocket)
+	}
+	handler.SetContainer(*container)
+	handler.SetMaintenance(ops, func(ctx context.Context, path string) (panel.BackupSummary, error) {
 		binary, e := os.Executable()
 		if e != nil {
 			return panel.BackupSummary{}, e

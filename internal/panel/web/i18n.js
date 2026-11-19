@@ -3,6 +3,10 @@
 const panelI18n = (() => {
  const catalog = {
  "اصلی": "Main",
+ "این پنل در داکر اجرا می‌شود و بازیابی از داخل پنل ممکن نیست. روش بازیابی در راهنمای داکر (docs/DOCKER.fa.md) آمده است.": "This panel runs in Docker, so restore is not available inside the panel. The Docker guide (docs/DOCKER.fa.md) describes how to restore.",
+ "این پنل در داکر اجرا می‌شود. برای به‌روزرسانی، روی سرور در پوشهٔ فایل compose اجرا کنید: docker compose pull && docker compose up -d": "This panel runs in Docker. To update, run this on the server in the compose file's folder: docker compose pull && docker compose up -d",
+ "نسخهٔ جدید منتشر شده است: ": "A new version is available: ",
+ ". برای به‌روزرسانی، روی سرور در پوشهٔ فایل compose اجرا کنید: docker compose pull && docker compose up -d": ". To update, run this on the server in the compose file's folder: docker compose pull && docker compose up -d",
  "پایش و حفاظت": "Monitoring & protection",
  "سرور": "Server",
  "خروجی کانفیگ‌ها": "Export configs",
