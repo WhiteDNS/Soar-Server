@@ -54,6 +54,7 @@ func (f *telegramFake) serve(w http.ResponseWriter, r *http.Request) {
 		MessageID int64            `json:"message_id"`
 		Markup    telegramKeyboard `json:"reply_markup"`
 		Offset    int64            `json:"offset"`
+		Limit     int              `json:"limit"`
 		ParseMode string           `json:"parse_mode"`
 	}
 	if method == "sendDocument" {
@@ -126,6 +127,9 @@ func (f *telegramFake) serve(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		f.updates = pending
+		if body.Limit > 0 && len(pending) > body.Limit {
+			pending = pending[:body.Limit]
+		}
 		result = pending
 	}
 	_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "result": result})

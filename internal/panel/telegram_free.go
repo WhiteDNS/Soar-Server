@@ -84,15 +84,22 @@ func (t *Telegram) handleFreeUpdate(ctx context.Context, c TelegramConfig, from 
 	}
 	owned := freeReadAction(action) && t.h.store.hasFreeOwner(from.ID)
 	menu := action == "request" && u.Callback != nil || oneOf(action, "menu", "status", "guide", "terms", "language")
-	if !t.allowFreeJob(from.ID, now, action, owned, menu) {
+	lane, _ := ctx.Value(freeLaneKey{}).(freeLane)
+	queuedReply := lane == freeAdmissionLane && action == "reply"
+	if lane != freeMenuLane && !queuedReply && !t.allowFreeJob(from.ID, now, action, owned, menu) {
+		revision, _ := ctx.Value(freePublicConfigKey{}).(uint64)
+		t.rejectFreeJob(telegramFreeJob{config: c, revision: revision, from: from})
 		return
 	}
-	ctx = withFreeLane(ctx, freeAdmissionLane)
-	if owned {
-		ctx = withFreeLane(ctx, freeOwnerLane)
+	if lane != freeMenuLane {
+		ctx = withFreeLane(ctx, freeAdmissionLane)
+		if owned {
+			ctx = withFreeLane(ctx, freeOwnerLane)
+		}
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, 2*time.Second)
+		defer cancel()
 	}
-	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
-	defer cancel()
 	c.ChatID = from.ID
 	if u.Callback != nil {
 		ctx = withTelegramMenu(ctx, c.ChatID, u.Callback.Message.ID)
@@ -100,10 +107,12 @@ func (t *Telegram) handleFreeUpdate(ctx context.Context, c TelegramConfig, from 
 	store := t.h.store
 	member, err := store.freeMember(from.ID)
 	if err != nil {
+		t.freeTraffic.failed.Add(1)
 		return
 	}
 	catalog, err := store.freeCatalog()
 	if err != nil {
+		t.freeTraffic.failed.Add(1)
 		return
 	}
 	language := member.Language
@@ -136,7 +145,12 @@ func (t *Telegram) handleFreeUpdate(ctx context.Context, c TelegramConfig, from 
 			keyboard.Rows = append(keyboard.Rows, back)
 			markup = keyboard
 		}
-		id, _ := t.sendText(ctx, c, tr(en, fa), markup)
+		id, err := t.sendText(ctx, c, tr(en, fa), markup)
+		if err == nil {
+			t.freeTraffic.sent.Add(1)
+		} else {
+			t.freeTraffic.failed.Add(1)
+		}
 		return id
 	}
 	if u.Callback != nil {
@@ -157,12 +171,14 @@ func (t *Telegram) handleFreeUpdate(ctx context.Context, c TelegramConfig, from 
 		return
 	}
 	if action == "menu" {
-		_ = store.updateFreeMember(from.ID, now, func(m *freeMember) {
-			m.Started = true
-			if m.Language == "" {
-				m.Language = language
-			}
-		})
+		if !member.Started || member.Language == "" || now.Sub(member.Seen) >= time.Minute {
+			_ = store.updateFreeMember(from.ID, now, func(m *freeMember) {
+				m.Started = true
+				if m.Language == "" {
+					m.Language = language
+				}
+			})
+		}
 		welcome := catalog.Text["welcome:"+language]
 		if welcome == "" {
 			welcome = tr("To get a free configuration, choose a plan and reply to the verification message. Follow the decision in My account.", "برای دریافت کانفیگ رایگان، یک پلن انتخاب کنید و به پیام بررسی پاسخ بدهید. نتیجه را در «حساب من» ببینید.")
@@ -460,7 +476,7 @@ func (t *Telegram) freeQR(ctx context.Context, c TelegramConfig, link string) er
 	if e = w.Close(); e != nil {
 		return e
 	}
-	if e = t.waitAPI(ctx, true); e != nil {
+	if e = t.waitAPI(ctx, true, c.ChatID); e != nil {
 		return e
 	}
 	req, e := http.NewRequestWithContext(ctx, "POST", t.baseURL+"/bot"+c.Token+"/sendPhoto", &body)

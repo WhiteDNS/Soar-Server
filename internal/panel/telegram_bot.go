@@ -800,10 +800,11 @@ func (t *Telegram) links(ctx context.Context, id string) error {
 			all = append(all, share{engine, link})
 		}
 	}
+	c.ChatID = telegramRecipient(ctx, c.ChatID)
 	for _, s := range all {
 		text := html.EscapeString(s.name) + "\n<pre>" + html.EscapeString(s.link) + "</pre>"
 		e = t.call(ctx, c, "sendMessage", map[string]any{
-			"chat_id": telegramRecipient(ctx, c.ChatID), "text": text, "parse_mode": "HTML",
+			"chat_id": c.ChatID, "text": text, "parse_mode": "HTML",
 			"link_preview_options": map[string]bool{"is_disabled": true},
 		}, nil)
 		if telegramActor(ctx).Role == telegramOwner {

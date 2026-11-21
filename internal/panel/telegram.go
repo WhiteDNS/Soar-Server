@@ -112,6 +112,8 @@ type Telegram struct {
 	pollError                string // An outgoing success must not hide broken command polling.
 	lastContact              int64
 	nextSend                 time.Time
+	nextBotSend              time.Time
+	chatSends                map[int64]time.Time
 	retryUntil               time.Time
 	sendInterval             time.Duration
 	freeMu                   sync.Mutex
@@ -119,9 +121,14 @@ type Telegram struct {
 	freeAttempts             map[int64][]time.Time
 	freeReplyPending         map[int64]int64 // Guarded by freeMu.
 	freeRate                 [2]freePublicRate
-	freeQueues               [2]chan telegramFreeJob // Guarded by opMu.
+	freeQueues               [3]chan telegramFreeJob // Guarded by opMu.
 	freeReplies              chan telegramFreeJob    // Guarded by opMu.
-	freeSend                 [3]telegramFreeSend     // Guarded by mu.
+	freeBusy                 chan telegramFreeJob
+	freeMenus                map[int64]telegramFreeMenuSlot // Guarded by freeMu.
+	freeReserved             [2]map[int64]struct{}          // Guarded by freeMu.
+	freeRevision             uint64                         // Writes hold opMu and mu.
+	freeTraffic              telegramFreeTraffic
+	freeSend                 [5]telegramFreeSend // Guarded by mu.
 	freeEpoch                string
 	freeNotices              chan telegramFreeNotice
 	recovered                bool
@@ -312,19 +319,34 @@ func (t *Telegram) pollingConnection(generation uint64, err error) {
 	}
 }
 func (t *Telegram) call(ctx context.Context, c TelegramConfig, method string, body any, out any) error {
-	if e := t.waitAPI(ctx, method == "sendMessage" || method == "editMessageText" || method == "sendDocument"); e != nil {
-		return e
-	}
 	raw, e := json.Marshal(body)
 	if e != nil {
 		return errors.New("cannot encode Telegram request")
 	}
-	req, e := http.NewRequestWithContext(ctx, "POST", t.baseURL+"/bot"+c.Token+"/"+method, bytes.NewReader(raw))
-	if e != nil {
-		return errors.New("cannot prepare Telegram request")
+	sending := oneOf(method, "sendMessage", "editMessageText", "sendDocument")
+	lane, _ := ctx.Value(freeLaneKey{}).(freeLane)
+	for {
+		if e = t.waitAPI(ctx, sending, c.ChatID); e != nil {
+			return e
+		}
+		attempt := ctx
+		cancel := func() {}
+		if lane == freeMenuLane {
+			attempt, cancel = context.WithTimeout(ctx, 5*time.Second)
+		}
+		req, e := http.NewRequestWithContext(attempt, "POST", t.baseURL+"/bot"+c.Token+"/"+method, bytes.NewReader(raw))
+		if e != nil {
+			cancel()
+			return errors.New("cannot prepare Telegram request")
+		}
+		req.Header.Set("Content-Type", "application/json")
+		e = t.request(attempt, req, out)
+		cancel()
+		var api *telegramAPIError
+		if lane != freeMenuLane || !sending || !errors.As(e, &api) || api.Code != http.StatusTooManyRequests {
+			return e
+		}
 	}
-	req.Header.Set("Content-Type", "application/json")
-	return t.request(ctx, req, out)
 }
 func (t *Telegram) request(ctx context.Context, req *http.Request, out any) error {
 	resp, e := t.client.Do(req)
@@ -352,7 +374,12 @@ func (t *Telegram) request(ctx context.Context, req *http.Request, out any) erro
 		if code == 0 {
 			code = resp.StatusCode
 		}
-		t.deferAPI(req.Context(), envelope.Parameters.Retry)
+		if code == http.StatusTooManyRequests {
+			t.deferAPI(req.Context(), max(1, envelope.Parameters.Retry))
+			if lane, _ := req.Context().Value(freeLaneKey{}).(freeLane); lane != 0 {
+				t.freeTraffic.limited.Add(1)
+			}
+		}
 		if code == http.StatusBadRequest && strings.Contains(envelope.Description, "message is not modified") {
 			return errTelegramMenuUnchanged
 		}
@@ -446,29 +473,61 @@ func (t *Telegram) deferAPI(ctx context.Context, seconds int) {
 	t.retryUntil = maxTime(t.retryUntil, at)
 }
 
-func (t *Telegram) waitAPI(ctx context.Context, sending bool) error {
-	t.mu.Lock()
-	retry, next := t.retryUntil, &t.nextSend
-	if lane, _ := ctx.Value(freeLaneKey{}).(freeLane); lane != 0 {
-		send := &t.freeSend[lane-1]
-		retry, next = send.retry, &send.next
-	}
-	at := retry
-	if sending {
-		at = maxTime(at, *next)
-		if deadline, ok := ctx.Deadline(); ok && !at.Before(deadline) {
+func (t *Telegram) waitAPI(ctx context.Context, sending bool, recipient ...int64) error {
+	lane, _ := ctx.Value(freeLaneKey{}).(freeLane)
+	revision, guarded := ctx.Value(freePublicConfigKey{}).(uint64)
+	for ctx.Err() == nil {
+		now := time.Now()
+		t.mu.Lock()
+		if guarded && (!t.cfg.Enabled || !t.cfg.FreeAccess || t.freeRevision != revision) {
 			t.mu.Unlock()
+			return context.Canceled
+		}
+		at, next := t.retryUntil, &t.nextSend
+		if lane != 0 {
+			send := &t.freeSend[lane-1]
+			at, next = send.retry, &send.next
+		}
+		var chat int64
+		if sending && t.sendInterval > 0 {
+			at = maxTime(at, maxTime(*next, t.nextBotSend))
+			if len(recipient) != 0 {
+				chat = recipient[0]
+				at = maxTime(at, t.chatSends[chat])
+			}
+		}
+		if !at.After(now) {
+			if sending && t.sendInterval > 0 {
+				interval := t.sendInterval
+				if lane == freeMenuLane {
+					interval = 50 * time.Millisecond
+				}
+				*next = now.Add(interval)
+				t.nextBotSend = now.Add(40 * time.Millisecond)
+				if chat != 0 {
+					if t.chatSends == nil {
+						t.chatSends = make(map[int64]time.Time)
+					}
+					for id, until := range t.chatSends {
+						if !until.After(now) {
+							delete(t.chatSends, id)
+						}
+					}
+					t.chatSends[chat] = now.Add(time.Second)
+				}
+			}
+			t.mu.Unlock()
+			return ctx.Err()
+		}
+		t.mu.Unlock()
+		if deadline, ok := ctx.Deadline(); ok && !at.Before(deadline) {
 			return context.DeadlineExceeded
 		}
-		*next = maxTime(at, time.Now()).Add(t.sendInterval)
-	}
-	t.mu.Unlock()
-	if delay := time.Until(at); delay > 0 {
+		delay := time.Until(at)
 		timer := time.NewTimer(delay)
-		defer timer.Stop()
 		select {
 		case <-ctx.Done():
-			return ctx.Err()
+			timer.Stop()
 		case <-timer.C:
 		}
 	}
@@ -564,6 +623,9 @@ func (t *Telegram) configureLocked(ctx context.Context, c TelegramConfig) error 
 	}
 	t.cfg = c
 	t.generation++
+	if old.Enabled != c.Enabled || old.FreeAccess != c.FreeAccess || old.Token != c.Token || old.ChatID != c.ChatID {
+		t.freeRevision++
+	}
 	t.lastError = ""
 	t.pollError = ""
 	t.lastContact = 0
@@ -606,6 +668,7 @@ func (t *Telegram) disconnect() error {
 	}
 	t.cfg = c
 	t.generation++
+	t.freeRevision++
 	t.status = "disconnected"
 	t.lastError = ""
 	t.pollError = ""
