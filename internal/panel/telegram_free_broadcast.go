@@ -283,6 +283,7 @@ func (t *Telegram) runFreeDelivery(ctx context.Context) {
 			_ = t.sendFreeRequestDigest(job, c, t.now())
 			cancel()
 		case <-prune.C:
+			t.logFreeTraffic()
 			_ = t.h.store.pruneFreeRequests(t.now())
 		}
 	}

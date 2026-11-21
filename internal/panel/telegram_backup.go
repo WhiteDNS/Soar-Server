@@ -141,7 +141,8 @@ func (t *Telegram) sendBackup(ctx context.Context) error {
 	}
 	var body bytes.Buffer
 	w := multipart.NewWriter(&body)
-	_ = w.WriteField("chat_id", strconv.FormatInt(telegramRecipient(ctx, c.ChatID), 10))
+	chat := telegramRecipient(ctx, c.ChatID)
+	_ = w.WriteField("chat_id", strconv.FormatInt(chat, 10))
 	_ = w.WriteField("caption", fmt.Sprintf(t.tr("💾 Encrypted WhiteDNS backup · %s\nSHA256: %x\nSave your recovery key separately via Backups → Recovery key. Restore by replying with this file to /restore.", "💾 پشتیبان رمزگذاری‌شدهٔ WhiteDNS · %s\nSHA256: %x\nکلید بازیابی را از پشتیبان ← کلید بازیابی جداگانه نگه دارید. برای بازیابی، فایل را در پاسخ به /restore بفرستید."), t.now().Format(time.RFC3339), sha256.Sum256(sealed)))
 	part, e := w.CreateFormFile("document", "whitedns-backup-"+t.now().UTC().Format("20060102-150405")+".wdb")
 	if e != nil {
@@ -153,7 +154,7 @@ func (t *Telegram) sendBackup(ctx context.Context) error {
 	if e = w.Close(); e != nil {
 		return e
 	}
-	if e = t.waitAPI(ctx, true); e != nil {
+	if e = t.waitAPI(ctx, true, chat); e != nil {
 		return e
 	}
 	req, e := http.NewRequestWithContext(ctx, "POST", t.baseURL+"/bot"+c.Token+"/sendDocument", &body)

@@ -144,6 +144,7 @@ func (t *Telegram) setFreeMode(action string) error {
 		}
 		t.mu.Lock()
 		t.cfg = c
+		t.freeRevision++
 		t.mu.Unlock()
 		t.clearFreeChallenge(0)
 		if !c.FreeAccess {
