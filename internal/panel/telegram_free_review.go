@@ -7,7 +7,6 @@ import (
 	"slices"
 	"strconv"
 	"strings"
-	"time"
 
 	bolt "go.etcd.io/bbolt"
 )
@@ -33,9 +32,13 @@ func (t *Telegram) freeReviewMenu(ctx context.Context, action, value string) err
 			key := req.Key + "@" + t.freeEpoch
 			k := telegramKeyboard{Rows: [][]telegramButton{
 				{t.button("Approve", "تأیید", "free:approve:"+key), t.button("Reject", "رد", "free:reject:"+key)},
-				{t.button("Block requester", "مسدودکردن کاربر", "free:block:"+chat), t.button("Queue", "صف", "free:queue")},
+				{t.button("Block requester", "مسدودکردن کاربر", "free:block:"+chat), t.button("Back to requests", "بازگشت به درخواست‌ها", "free:queue")},
 			}}
-			_, e = t.notify(ctx, t.config(), chat+" · "+req.At.UTC().Format(time.RFC3339)+"\n"+freePlanSummary(req.plan(), t.tr)+"\n\n"+
+			at := req.At.UTC().Format("2006-01-02 15:04") + t.tr(" UTC", " به وقت جهانی")
+			if t.config().Language == "fa" {
+				at = telegramPersianDigits.Replace(at)
+			}
+			_, e = t.notify(ctx, t.config(), t.tr("Telegram ID", "شناسهٔ تلگرام")+" "+chat+" · "+at+"\n"+freePlanSummary(req.plan(), t.tr)+"\n\n"+
 				t.tr("User explanation", "توضیح کاربر")+"\n"+req.Reason, k)
 			return e
 		}
@@ -75,8 +78,16 @@ func (t *Telegram) freeReviewMenu(ctx context.Context, action, value string) err
 		k.Rows = append(k.Rows, []telegramButton{t.button("Select all", "انتخاب همه", "free:selectall"), t.button("Clear", "پاک‌کردن انتخاب", "free:unselect")},
 			[]telegramButton{t.button("Approve selected", "تأیید گروهی", "free:bulkapprove"), t.button("Reject selected", "رد گروهی", "free:bulkreject")})
 	}
-	k.Rows = append(k.Rows, []telegramButton{t.button("Free configurations", "کانفیگ رایگان", "free:manage")})
-	_, e = t.notify(ctx, t.config(), fmt.Sprintf(t.tr("Pending requests: %d · Selected: %d", "درخواست‌های باز: %d · انتخاب‌شده: %d"), len(list), len(selected)), k)
+	k.Rows = append(k.Rows, []telegramButton{t.button("Back to dashboard", "بازگشت به داشبورد", "free:manage")})
+	text := t.tr("No pending requests.", "درخواستی در انتظار بررسی نیست.")
+	if len(list) != 0 {
+		text = fmt.Sprintf(t.tr("Pending requests: %d · Selected: %d", "درخواست‌های در انتظار: %d · انتخاب‌شده: %d"), len(list), len(selected))
+		if t.config().Language == "fa" {
+			text = telegramPersianDigits.Replace(text)
+		}
+		text += "\n" + t.tr("Open a request to review it, or use the checkboxes for group review.", "برای بررسی، درخواست را باز کنید. برای بررسی گروهی، گزینه‌های کنار درخواست‌ها را علامت بزنید.")
+	}
+	_, e = t.notify(ctx, t.config(), text, k)
 	return e
 }
 
@@ -122,6 +133,6 @@ func (t *Telegram) executeFreeReview(ctx context.Context, approve bool, keys []s
 		}
 	}
 	t.freeSelected = nil
-	_, e := t.notify(ctx, c, strings.Join(lines, "\n"), telegramKeyboard{Rows: [][]telegramButton{{t.button("Open queue", "بازکردن صف", "free:queue")}}})
+	_, e := t.notify(ctx, c, strings.Join(lines, "\n"), telegramKeyboard{Rows: [][]telegramButton{{t.button("Back to requests", "بازگشت به درخواست‌ها", "free:queue")}}})
 	return e
 }

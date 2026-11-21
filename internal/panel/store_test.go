@@ -10,7 +10,16 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	bolt "go.etcd.io/bbolt"
+	"golang.org/x/crypto/bcrypt"
 )
+
+var testAdmin = sync.OnceValues(func() (Admin, error) {
+	// Use the lowest cost accepted by backup validation for test databases.
+	hash, err := bcrypt.GenerateFromPassword([]byte("test-only-password-2026"), 10)
+	return Admin{Name: "admin", Hash: hash}, err
+})
 
 func testStore(t *testing.T) *Store {
 	t.Helper()
@@ -19,10 +28,47 @@ func testStore(t *testing.T) *Store {
 		t.Fatal(e)
 	}
 	t.Cleanup(func() { s.Close() })
-	if e = s.Init(Settings{BaseZone: "soar.example.org", Resolvers: []string{"1.1.1.1"}, Country: "IR", AllowPorts: []uint16{80, 443}}, "admin", "test-only-password-2026"); e != nil {
+	admin, e := testAdmin()
+	if e != nil {
+		t.Fatal(e)
+	}
+	settings := Settings{BaseZone: "soar.example.org", Resolvers: []string{"1.1.1.1"}, Country: "IR", AllowPorts: []uint16{80, 443}}
+	if e = s.db.Update(func(tx *bolt.Tx) error {
+		b := tx.Bucket(meta)
+		if e := putJSON(b, []byte("settings"), settings); e != nil {
+			return e
+		}
+		return putJSON(b, []byte("admin"), admin)
+	}); e != nil {
 		t.Fatal(e)
 	}
 	return s
+}
+
+func TestStoreInitCreatesValidAdministrator(t *testing.T) {
+	s, e := OpenStore(filepath.Join(t.TempDir(), "panel.db"))
+	if e != nil {
+		t.Fatal(e)
+	}
+	defer s.Close()
+	settings := Settings{BaseZone: "SOAR.EXAMPLE.ORG.", Resolvers: []string{"1.1.1.1"}, Country: "IR", AllowPorts: []uint16{80, 443}}
+	if e = s.Init(settings, "admin", "test-only-password-2026"); e != nil {
+		t.Fatal(e)
+	}
+	var admin Admin
+	if e = s.db.View(func(tx *bolt.Tx) error {
+		return json.Unmarshal(tx.Bucket(meta).Get([]byte("admin")), &admin)
+	}); e != nil {
+		t.Fatal(e)
+	}
+	cost, e := bcrypt.Cost(admin.Hash)
+	if e != nil || cost != 12 || !s.CheckAdmin("admin", "test-only-password-2026") {
+		t.Fatalf("administrator initialization failed: bcrypt cost %d, %v", cost, e)
+	}
+	got, e := s.Settings()
+	if e != nil || got.BaseZone != "soar.example.org" {
+		t.Fatalf("initial zone = %q, error = %v", got.BaseZone, e)
+	}
 }
 func account(t *testing.T, s *Store, quota int64) Client {
 	t.Helper()

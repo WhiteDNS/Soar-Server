@@ -20,6 +20,7 @@ func (t *Telegram) manageFree(ctx context.Context, data string) error {
 		if e := t.setFreeMode(action); e != nil {
 			return e
 		}
+		return t.freeOptions(ctx)
 	case "restoreresume":
 		catalog, e := t.h.store.freeCatalog()
 		if e != nil {
@@ -33,19 +34,34 @@ func (t *Telegram) manageFree(ctx context.Context, data string) error {
 				"پس از بررسی مالکیت حساب‌ها، مسدودی‌ها و صدور در بکاپ بازیابی‌شده، سرویس عمومی باز شود؟"))
 	case "stats":
 		return t.freeStatsMenu(ctx)
+	case "accounts":
+		k := telegramKeyboard{Rows: [][]telegramButton{
+			{t.button("All accounts", "همهٔ حساب‌ها", "users:0"), t.button("Active accounts", "حساب‌های فعال", "activeusers:0")},
+			{t.button("Search", "جست‌وجوی حساب", "search")},
+			{t.button("Custom config", "ساخت یا تمدید سفارشی", "free:custom")},
+			{t.button("Telegram access", "مسدودی کاربران تلگرام", "free:access")},
+			{t.button("Back to dashboard", "بازگشت به داشبورد", "free:manage")},
+		}}
+		_, e := t.notify(ctx, t.config(), t.tr("Accounts\nFind an existing account or issue a custom configuration.", "حساب‌ها\nیک حساب موجود را پیدا کنید یا کانفیگ سفارشی بسازید."), k)
+		return e
+	case "options":
+		return t.freeOptions(ctx)
 	case "queue", "select", "selectall", "unselect", "requestdetail", "approve", "reject", "bulkapprove", "bulkreject":
 		return t.freeReviewMenu(ctx, action, value)
 	case "plans", "planedit", "plannew", "planview", "planpublish", "planhide", "plandelete", "engines", "engine":
 		return t.freePlanMenu(ctx, action, value)
+	case "editor":
+		return t.freeEditorAction(ctx, value)
 	case "texts":
-		k := t.backKeyboard()
+		k := telegramKeyboard{}
 		for _, item := range []struct{ id, fa string }{{"welcome", "خوش‌آمد"}, {"terms", "شرایط"}, {"guide", "راهنما"}} {
 			k.Rows = append(k.Rows, []telegramButton{
 				t.button(item.id+" · English", item.fa+" · انگلیسی", "free:text:"+item.id+":en"),
 				t.button(item.id+" · Persian", item.fa+" · فارسی", "free:text:"+item.id+":fa"),
 			})
 		}
-		_, e := t.notify(ctx, t.config(), t.tr("Choose a public message to edit.", "متن عمومی موردنظر را انتخاب کنید."), k)
+		k.Rows = append(k.Rows, []telegramButton{t.button("Back to public settings", "بازگشت به تنظیمات عمومی", "free:options")})
+		_, e := t.notify(ctx, t.config(), t.tr("Public messages\nChoose a text and language.", "متن‌های عمومی\nمتن و زبان موردنظر را انتخاب کنید."), k)
 		return e
 	case "text":
 		if !validFreeTextField(value) {
@@ -55,7 +71,7 @@ func (t *Telegram) manageFree(ctx context.Context, data string) error {
 		if e != nil {
 			return e
 		}
-		return t.freePrompt(ctx, "text:"+value, c.Revision, nil,
+		return t.freePrompt(ctx, "text:"+value, c.Revision,
 			t.tr("Reply with the new text (max 2,400 bytes). Send - for the default.\n\n", "متن جدید را در پاسخ بفرستید (حداکثر ۲۴۰۰ بایت). برای متن پیش‌فرض - بفرستید.\n\n")+c.Text[value])
 	case "block", "unblock":
 		id, e := strconv.ParseInt(value, 10, 64)
@@ -65,18 +81,17 @@ func (t *Telegram) manageFree(ctx context.Context, data string) error {
 		return t.confirm(ctx, telegramConfirmation{Action: "free-" + action, FreeChat: id},
 			t.tr("Change public bot access for Telegram ID ", "تغییر دسترسی عمومی ربات برای شناسهٔ تلگرام ")+value)
 	case "access":
-		return t.freePrompt(ctx, "access", 0, nil, t.tr("Reply with the numeric Telegram ID to manage its public access.", "شناسهٔ عددی تلگرام را برای مدیریت دسترسی عمومی بفرستید."))
+		return t.freePrompt(ctx, "access", 0, t.tr("Reply with the numeric Telegram ID to manage its public access.", "شناسهٔ عددی تلگرام را برای مدیریت دسترسی عمومی بفرستید."))
 	case "custom":
 		p := defaultFreePlan()
-		p.ID = "custom"
-		return t.freePrompt(ctx, "custom", 0, &p,
-			t.tr("Reply with the ID of a user who opened the bot and the following account settings.\n\n", "شناسهٔ کاربری که ربات را باز کرده به‌همراه تنظیمات زیر بفرستید.\n\n")+"telegram_id: \n"+freePlanForm(p))
+		p.ID, p.Input.Name = "custom", t.tr("Custom account", "حساب سفارشی")
+		return t.startFreeEditor(ctx, "custom", 0, p)
 	case "linkuser":
 		account, e := t.h.store.Get(value)
 		if e != nil {
 			return e
 		}
-		return t.freePrompt(ctx, "linkuser:"+account.ID, account.Revision, nil,
+		return t.freePrompt(ctx, "linkuser:"+account.ID, account.Revision,
 			t.tr("Reply with the numeric Telegram ID of the recipient who opened the bot.", "شناسهٔ عددی گیرنده‌ای که ربات را باز کرده بفرستید.")+"\n"+account.Name+" · "+account.Zone)
 	case "broadcast", "announce", "broadcaststop":
 		return t.freeBroadcastMenu(ctx, action, value)
@@ -146,31 +161,53 @@ func (t *Telegram) freeDashboard(ctx context.Context) error {
 	if e != nil {
 		return e
 	}
-	state := t.tr("Public access is off.", "دسترسی عمومی خاموش است.")
-	toggle := t.button("Enable public access", "فعال‌کردن دسترسی عمومی", "free:enable")
 	k := telegramKeyboard{Rows: [][]telegramButton{
+		{t.button(fmt.Sprintf("Requests (%d)", n), telegramPersianDigits.Replace(fmt.Sprintf("درخواست‌ها (%d)", n)), "free:queue")},
+		{t.button("Plans and engines", "پلن‌ها و موتورها", "free:plans"), t.button("Accounts", "حساب‌ها", "free:accounts")},
 		{t.button("Statistics", "آمار", "free:stats"), t.button("Broadcast", "پیام همگانی", "free:broadcast")},
-		{t.button(fmt.Sprintf("Requests (%d)", n), fmt.Sprintf("درخواست‌ها (%d)", n), "free:queue"), t.button("Free plans", "پلن‌های رایگان", "free:plans")},
-		{t.button("All users", "همهٔ کاربران", "users:0"), t.button("Active users", "کاربران فعال", "activeusers:0")},
-		{t.button("Search", "جست‌وجو", "search"), t.button("Custom config", "کانفیگ سفارشی", "free:custom")},
-		{t.button("Public messages", "متن‌های عمومی", "free:texts"), t.button("Telegram access", "دسترسی شناسهٔ تلگرام", "free:access")},
+		{t.button("Public access and messages", "دسترسی و متن‌های عمومی", "free:options")},
+		{t.button("Server management", "مدیریت سرور", "home")},
 	}}
+	_, e = t.notify(ctx, c, t.tr("Free configurations", "داشبورد کانفیگ رایگان")+"\n"+t.freeAccessSummary(c, catalog), k)
+	return e
+}
+
+func (t *Telegram) freeAccessSummary(c TelegramConfig, catalog freeCatalog) string {
+	switch {
+	case !c.FreeAccess:
+		return t.tr("Public access is off.", "دسترسی عمومی خاموش است.")
+	case catalog.RestoreHold:
+		return t.tr("Public service is paused after a backup restore.", "سرویس عمومی پس از بازیابی پشتیبان متوقف است.")
+	case catalog.Paused:
+		return t.tr("New requests are paused. Existing owners can retrieve their configs.", "درخواست تازه متوقف است. صاحبان حساب همچنان می‌توانند کانفیگ بگیرند.")
+	default:
+		return t.tr("Accepting new requests.", "پذیرش درخواست تازه باز است.")
+	}
+}
+
+func (t *Telegram) freeOptions(ctx context.Context) error {
+	c := t.config()
+	catalog, e := t.h.store.freeCatalog()
+	if e != nil {
+		return e
+	}
+	toggle := t.button("Enable public access", "فعال‌کردن دسترسی عمومی", "free:enable")
+	k := telegramKeyboard{}
 	if c.FreeAccess {
-		state = t.tr("Accepting new applications.", "پذیرش درخواست تازه باز است.")
 		toggle = t.button("Emergency stop", "توقف اضطراری", "free:disable")
 		mode := t.button("Pause applications", "توقف پذیرش", "free:pause")
 		if catalog.Paused || catalog.RestoreHold {
-			state = t.tr("Applications paused. Existing users can retrieve configs.", "پذیرش متوقف است. کاربران فعلی می‌توانند کانفیگ بگیرند.")
 			mode = t.button("Resume applications", "بازکردن پذیرش", "free:resume")
 			if catalog.RestoreHold {
-				state = t.tr("Public service paused after restore. Review ownership, blocks and issuance before resuming.", "سرویس عمومی پس از بازیابی متوقف است. پیش از بازکردن، مالکیت‌ها، مسدودی‌ها و سابقهٔ صدور را بررسی کنید.")
-				mode = t.button("Review complete · Resume", "بررسی انجام شد · بازکردن سرویس", "free:restoreresume:"+t.freeEpoch)
+				mode = t.button("Review complete · Resume", "بازکردن سرویس پس از بررسی", "free:restoreresume:"+t.freeEpoch)
 			}
 		}
 		k.Rows = append(k.Rows, []telegramButton{mode})
 	}
-	k.Rows = append(k.Rows, []telegramButton{toggle, t.button("Back", "بازگشت", "home")})
-	_, e = t.notify(ctx, c, t.tr("Free configurations", "مدیریت کانفیگ رایگان")+"\n"+state, k)
+	k.Rows = append(k.Rows, []telegramButton{toggle}, []telegramButton{t.button("Edit public messages", "ویرایش متن‌های عمومی", "free:texts")},
+		[]telegramButton{t.button("Back to dashboard", "بازگشت به داشبورد", "free:manage")})
+	text := t.tr("Public access and messages", "دسترسی و متن‌های عمومی") + "\n" + t.freeAccessSummary(c, catalog)
+	_, e = t.notify(ctx, c, text, k)
 	return e
 }
 

@@ -30,6 +30,8 @@ type telegramFake struct {
 	keyboards  []telegramKeyboard
 	photos     int
 	calls      map[string]int
+	menuCalls  []map[string]json.RawMessage
+	editMode   string
 	fail       string
 	webhook    string
 	nextID     int64
@@ -49,6 +51,7 @@ func (f *telegramFake) serve(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		Text      string           `json:"text"`
 		ChatID    int64            `json:"chat_id"`
+		MessageID int64            `json:"message_id"`
 		Markup    telegramKeyboard `json:"reply_markup"`
 		Offset    int64            `json:"offset"`
 		ParseMode string           `json:"parse_mode"`
@@ -76,6 +79,9 @@ func (f *telegramFake) serve(w http.ResponseWriter, r *http.Request) {
 		raw, _ := io.ReadAll(r.Body)
 		var fields map[string]json.RawMessage
 		_ = json.Unmarshal(raw, &fields)
+		if method == "setMyCommands" || method == "setChatMenuButton" {
+			f.menuCalls = append(f.menuCalls, fields)
+		}
 		if method == "sendMessage" && bytes.Equal(bytes.TrimSpace(fields["reply_markup"]), []byte("null")) {
 			w.WriteHeader(http.StatusBadRequest)
 			_, _ = io.WriteString(w, `{"ok":false,"error_code":400,"description":"object expected as reply markup"}`)
@@ -91,13 +97,21 @@ func (f *telegramFake) serve(w http.ResponseWriter, r *http.Request) {
 		result = map[string]any{"id": int64(12345), "type": "private"}
 	case "getWebhookInfo":
 		result = map[string]string{"url": f.webhook}
-	case "sendMessage":
-		f.nextID++
+	case "sendMessage", "editMessageText":
+		if method == "editMessageText" && f.editMode != "" {
+			w.WriteHeader(http.StatusBadRequest)
+			_ = json.NewEncoder(w).Encode(map[string]any{"ok": false, "error_code": 400, "description": f.editMode})
+			return
+		}
+		if method == "sendMessage" {
+			f.nextID++
+			body.MessageID = f.nextID
+		}
 		f.texts = append(f.texts, body.Text)
 		f.chatIDs = append(f.chatIDs, body.ChatID)
 		f.parseModes = append(f.parseModes, body.ParseMode)
 		f.keyboards = append(f.keyboards, body.Markup)
-		result = map[string]any{"message_id": f.nextID}
+		result = map[string]any{"message_id": body.MessageID}
 	case "sendDocument":
 		result = map[string]any{"message_id": 100}
 	case "sendPhoto":

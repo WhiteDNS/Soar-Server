@@ -35,41 +35,64 @@ func TestTelegramFreeAdminPublishesPlanAndDeliversAllEngineProfiles(t *testing.T
 	bot, fake, _ := newTelegramTest(t)
 	now := time.Now()
 	bot.now = func() time.Time { return now }
-	mustHandle(t, bot, tgCallback(1, "free:enable"))
-	mustHandle(t, bot, tgCallback(2, "free:plannew"))
+	var updateID int64
+	step := func(data string) telegramUpdate {
+		updateID++
+		return tgCallback(updateID, data)
+	}
+	message := func(text string) telegramUpdate {
+		updateID++
+		return tgMessage(updateID, text)
+	}
+	tap := func(data string) { mustHandle(t, bot, step(data)) }
+	tap("free:enable")
+	tap("free:plannew")
 	d := bot.conversation
-	if d == nil || d.FreePlan == nil || d.Prompt == 0 {
+	if d == nil || d.FreePlan == nil || d.MenuID == 0 {
 		t.Fatal("no plan editor was displayed")
 	}
-	p := *d.FreePlan
-	p.Input.Name, p.Input.Engines, p.Input.QuotaBytes, p.Days = "All engines", "all", 2<<30, 9
-	mustHandle(t, bot, freeReply(tgMessage(3, freePlanForm(p)), d.Prompt))
+	prefix := "free:editor:" + d.Key + ":"
+	tap(prefix + "engines")
+	tap(prefix + "engine:soar")
+	tap(prefix + "engine:cotten")
+	for _, field := range []struct{ key, value string }{{"name", "All engines"}, {"quota", "۲۰۴۸"}, {"days", "۹"}} {
+		tap(prefix + field.key)
+		if d.Prompt == 0 {
+			t.Fatalf("no prompt for %s", field.key)
+		}
+		mustHandle(t, bot, freeReply(message(field.value), d.Prompt))
+	}
+	tap(prefix + "save")
 	c, err := bot.h.store.freeCatalog()
 	if err != nil || len(c.Plans) != 2 || c.Plans[1].Published {
 		t.Fatalf("plan draft not saved: %+v, %v", c, err)
 	}
-	mustHandle(t, bot, tgCallback(4, "free:planpublish:"+p.ID+":1"))
-	mustHandle(t, bot, freePublic(tgMessage(5, "/free"), 888))
+	p := c.Plans[1]
+	if p.Input.Name != "All engines" || p.Input.Engines != "all" || p.Input.QuotaBytes != 2<<30 || p.Days != 9 {
+		t.Fatalf("plan fields were not saved: %+v", p)
+	}
+	tap("free:planpublish:" + p.ID + ":1")
+	mustHandle(t, bot, freePublic(message("/free"), 888))
 	rows := fake.keyboards[len(fake.keyboards)-1].Rows
-	if len(rows) != 2 {
-		t.Fatalf("public plan list contains %d rows", len(rows))
+	if len(rows) != 3 || rows[2][0].Data != "free:home" {
+		t.Fatalf("public plan list has unexpected buttons: %+v", rows)
 	}
 	now = now.Add(4 * time.Second)
-	mustHandle(t, bot, freePublic(tgCallback(6, rows[1][0].Data), 888))
+	mustHandle(t, bot, freePublic(step(rows[1][0].Data), 888))
 	challenge := bot.freeChallenges[888]
 	if challenge.Plan.ID != p.ID {
 		t.Fatal("wrong plan selected")
 	}
 	now = now.Add(4 * time.Second)
-	reply := freeReply(tgMessage(7, challenge.Code+" I need a connection for my laptop."), challenge.Prompt)
+	reply := freeReply(message(challenge.Code+" I need a connection for my laptop."), challenge.Prompt)
 	mustHandle(t, bot, freePublic(reply, 888))
 	_, req, err := bot.h.store.freeQueue(now)
 	if err != nil || req.Key == "" {
 		t.Fatalf("no pending request: %v", err)
 	}
-	mustHandle(t, bot, tgCallback(8, "free:requestdetail:"+req.Key))
+	tap("free:requestdetail:" + req.Key)
 	approve := fake.keyboards[len(fake.keyboards)-1].Rows[0][0].Data
-	mustHandle(t, bot, tgCallback(9, approve))
+	tap(approve)
 	owned, err := bot.h.store.freeRequest(888, now)
 	if err != nil || owned.AccountID == "" {
 		t.Fatalf("no account issued: %v", err)
@@ -78,28 +101,28 @@ func TestTelegramFreeAdminPublishesPlanAndDeliversAllEngineProfiles(t *testing.T
 	if err != nil || len(links) != 3 {
 		t.Fatalf("expected three profiles: %d, %v", len(links), err)
 	}
-	for i, engine := range profileEngines {
+	for _, engine := range profileEngines {
 		now = now.Add(4 * time.Second)
-		mustHandle(t, bot, freePublic(tgCallback(int64(10+2*i), "free:link:"+engine), 888))
+		mustHandle(t, bot, freePublic(step("free:link:"+engine), 888))
 		if fake.texts[len(fake.texts)-1] != links[engine] || fake.chatIDs[len(fake.chatIDs)-1] != 888 {
 			t.Fatalf("wrong profile or recipient for %s", engine)
 		}
 		now = now.Add(4 * time.Second)
-		mustHandle(t, bot, freePublic(tgCallback(int64(11+2*i), "free:qr:"+engine), 888))
+		mustHandle(t, bot, freePublic(step("free:qr:"+engine), 888))
 	}
 	if fake.photos != 3 {
 		t.Fatalf("expected 3 QR photos, received %d", fake.photos)
 	}
-	mustHandle(t, bot, tgCallback(16, "free:pause"))
+	tap("free:pause")
 	now = now.Add(4 * time.Second)
-	mustHandle(t, bot, freePublic(tgCallback(17, "free:link:soar"), 888))
+	mustHandle(t, bot, freePublic(step("free:link:soar"), 888))
 	if fake.texts[len(fake.texts)-1] != links["soar"] {
 		t.Fatal("pausing admissions also stopped existing owners")
 	}
-	mustHandle(t, bot, tgCallback(18, "free:disable"))
+	tap("free:disable")
 	now = now.Add(4 * time.Second)
 	sends := len(fake.texts)
-	mustHandle(t, bot, freePublic(tgCallback(19, "free:link:soar"), 888))
+	mustHandle(t, bot, freePublic(step("free:link:soar"), 888))
 	if len(fake.texts) != sends {
 		t.Fatal("emergency stop still served a public profile")
 	}

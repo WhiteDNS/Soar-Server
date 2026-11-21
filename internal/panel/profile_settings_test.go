@@ -77,7 +77,7 @@ func TestProfileTuningPersistsExportsAndKeepsAccountIdentity(t *testing.T) {
 }
 
 func TestLegacySettingsWithoutStoredTuningReceiveAdaptiveDefaults(t *testing.T) {
-	s := testStore(t) // Init writes the pre-tuning schema with no soarSettings.
+	s := testStore(t) // The fixture writes the pre-tuning schema with no soarSettings.
 	cfg, e := s.Settings()
 	if e != nil || cfg.SoarSettings == nil || *cfg.SoarSettings != DefaultProfileSettings() {
 		t.Fatal("legacy settings changed behavior", e)

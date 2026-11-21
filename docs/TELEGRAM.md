@@ -80,12 +80,13 @@ administrator credential changes remain in the dashboard.
 ## Free configurations / کانفیگ رایگان
 
 Open `/admin` or **Free configs** from the paired administrator chat. Public
-access starts off. Set up the free plans and engines, then choose **Enable public
-access**. Share the ordinary bot link or `?start=free`. Keep the administrator
-pairing link private.
+access starts off. Set up the plans and engines, then open **Public access and
+messages** and choose **Enable public access**. Share the ordinary bot link or
+`?start=free`. Keep the administrator pairing link private.
 
-**Plans** supports drafts, edit, publish, unpublish and delete. The **Public
-engines** controls allow any combination of Soar, CottenDNS and MasterDNS.
+**Plans and engines** supports drafts, edit, publish, unpublish and delete. Use the
+inline editor to change individual fields, then save. **Public engines** controls
+which of Soar, CottenDNS and MasterDNS are available.
 Each plan has a quota (MiB), validity (days), speed (KiB/s), shared TCP stream
 limit and an independent session limit for each engine. The default published
 plan is MasterDNS with 1 GiB, 7 days, 512 KiB/s, 8 streams and 2 sessions.
@@ -97,17 +98,28 @@ The dashboard provides request review with individual and selected approvals
 and rejections, statistics, all and active account lists, search, individual
 and selected account deletion, custom configurations, Telegram access controls,
 and editing of English and Persian greetings, terms and connection instructions.
+New pending requests are grouped into one private administrator notification per
+15-second check, with a button to open the queue. Delivery is retried after a
+Telegram error as long as the requests are still pending.
 To link an existing account, open it from **Users** and choose **Link to Telegram
 user**. The account must have finite limits and the recipient must have opened
 the bot. Bulk deletion is confirmed against the account revisions shown in the
 preview. A custom configuration for an existing linked account edits the same
 account and preserves the keys and usage history.
 
-Users can check status, cancel a pending request, select their language or opt
-out of announcements. An approved account has one shared volume and expiry
-across its selected engines. **My config** and **QR code** let the owner select
-the engine. Account readiness means the panel has registered the tunnel route.
+The public chat's Telegram **Menu** offers quick commands for the main menu,
+applications, account status, help and language. Inline navigation updates the
+current bot message. **My account** lets users check status, cancel a pending
+request, or get a connection link or QR code for a selected engine. An approved
+account has one shared volume and expiry across its selected engines.
+Account readiness means the panel has registered the tunnel route.
 CottenDNS and MasterDNS start on demand when the first DNS query arrives.
+
+در «داشبورد کانفیگ رایگان»، مدیر از بخش «پلن‌ها و موتورها» نام، حجم، مدت و
+محدودیت‌های پلن را جداگانه تنظیم می‌کند. اعلان درخواست‌های تازه با دکمهٔ
+«مشاهدهٔ درخواست‌ها» در گفت‌وگوی خصوصی مدیر می‌آید. پس از فعال‌کردن دسترسی
+عمومی، کاربر از دکمهٔ Menu تلگرام یا منوی درون پیام به درخواست رایگان، حساب،
+راهنما و انتخاب زبان دسترسی دارد.
 
 **Pause applications** stops new requests. Administrators can still review
 saved requests and existing owners can retrieve their links. **Emergency stop**
