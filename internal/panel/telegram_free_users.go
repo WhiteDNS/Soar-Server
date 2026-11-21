@@ -36,9 +36,15 @@ func (t *Telegram) freeStatsMenu(ctx context.Context) error {
 			connected++
 		}
 	}
-	pending, denied, approved, issued := 0, 0, 0, 0
+	pending, denied, approved, issued, admitted, streams := 0, 0, 0, 0, 0, 0
+	var limits freeLimits
 	byEngine, byPlan := map[string]int{}, map[string]int{}
 	e = s.db.View(func(tx *bolt.Tx) error {
+		catalog, err := readFreeCatalog(tx)
+		if err != nil {
+			return err
+		}
+		limits = catalog.limits()
 		b := tx.Bucket(meta).Bucket(freeRequests)
 		if b == nil {
 			return nil
@@ -49,6 +55,10 @@ func (t *Telegram) freeStatsMenu(ctx context.Context) error {
 				return e
 			}
 			issued += recentFreeEvents(r.PriorIssuances, now)
+			admitted += recentFreeEvents(r.PriorAdmissions, now)
+			if now.Before(r.At.Add(freeCooldown)) {
+				admitted++
+			}
 			switch {
 			case r.AccountID != "":
 				if now.Before(r.decisionTime().Add(freeCooldown)) {
@@ -60,6 +70,9 @@ func (t *Telegram) freeStatsMenu(ctx context.Context) error {
 				}
 				if e == nil {
 					approved++
+					if account.Status(now) == "active" {
+						streams += freeAccountStreams(account)
+					}
 					if r.Linked && r.Plan == nil {
 						byPlan[t.tr("Linked account", "حساب متصل‌شده")]++
 					} else {
@@ -69,9 +82,9 @@ func (t *Telegram) freeStatsMenu(ctx context.Context) error {
 						byEngine[engine]++
 					}
 				}
-			case r.Reviewed && !r.Cancelled && !expiredFreeRequest(tx, r, now):
+			case r.Reviewed && !r.Cancelled && now.Before(r.decisionTime().Add(freeCooldown)):
 				denied++
-			case !r.Reviewed && !expiredFreeRequest(tx, r, now):
+			case !r.Reviewed && !expiredFreeRequest(tx, r, now, limits):
 				pending++
 			}
 			return nil
@@ -82,7 +95,11 @@ func (t *Telegram) freeStatsMenu(ctx context.Context) error {
 	}
 	text := fmt.Sprintf(t.tr("Telegram users %d\nPanel accounts %d · Active %d · With open streams %d\nFree accounts %d · Pending %d · Rejected in last 24h %d\nIssuance remaining %d/%d",
 		"کاربران تلگرام %d\nحساب‌های پنل %d · فعال %d · دارای جریان باز %d\nحساب رایگان %d · در انتظار %d · ردشده در ۲۴ ساعت %d\nظرفیت صدور باقی‌مانده %d/%d"),
-		len(audience), total, active, connected, approved, pending, denied, max(0, freeDailyLimit-issued), freeDailyLimit)
+		len(audience), total, active, connected, approved, pending, denied, max(0, limits.Issuance-issued), limits.Issuance)
+	text += fmt.Sprintf(t.tr("\nApplications (24h) %d/%d · Queue %d/%d\nFree account slots %d/%d · Active stream budget %d/%d",
+		"\nدرخواست در ۲۴ ساعت %d/%d · صف %d/%d\nحساب رایگان %d/%d · بودجهٔ اتصال فعال %d/%d"),
+		admitted, limits.Admissions, pending, limits.Pending, approved, limits.Accounts, streams, limits.Streams)
+	text += fmt.Sprintf(t.tr("\nPanel slots used %d/%d · Reserved %d", "\nجای اشغال‌شده در پنل %d/%d · محفوظ %d"), len(accounts), MaxClients, limits.Headroom)
 	for _, engine := range profileEngines {
 		text += fmt.Sprintf("\n%s · %d", freeEngineName(engine), byEngine[engine])
 	}

@@ -50,6 +50,8 @@ func (t *Telegram) manageFree(ctx context.Context, data string) error {
 		return e
 	case "options":
 		return t.freeOptions(ctx)
+	case "limits":
+		return t.freeLimitsMenu(ctx, value, "")
 	case "queue", "select", "selectall", "unselect", "requestdetail", "approve", "reject", "bulkapprove", "bulkreject":
 		return t.freeReviewMenu(ctx, action, value)
 	case "plans", "planedit", "plannew", "planview", "planpublish", "planhide", "plandelete", "engines", "engine":
@@ -202,6 +204,9 @@ func (t *Telegram) freeDashboard(ctx context.Context) error {
 		{t.button("Statistics", "آمار", "free:stats"), t.button("Broadcast", "پیام همگانی", "free:broadcast")},
 		{t.button("Public access and messages", "دسترسی و متن‌های عمومی", "free:options")},
 	}}
+	if telegramActor(ctx).Role != telegramFreeAdmin {
+		k.Rows = append(k.Rows, []telegramButton{t.button("Free service limits", "محدودیت‌های سرویس رایگان", "free:limits")})
+	}
 	if telegramActor(ctx).Role == telegramOwner {
 		k.Rows = append(k.Rows, []telegramButton{t.button("Bot administrators", "مدیران ربات", "admins:list")})
 	}

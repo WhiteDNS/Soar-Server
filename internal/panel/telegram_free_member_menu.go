@@ -51,7 +51,11 @@ func (t *Telegram) freeMemberMenu(ctx context.Context, id int64) error {
 		default:
 			text += t.tr("\nThe last request was declined.", "\nدرخواست قبلی رد شده است.")
 		}
-		en, fa := freeRetryDate(req.retryAt())
+		catalog, err := t.h.store.freeCatalog()
+		if err != nil {
+			return err
+		}
+		en, fa := freeRetryDate(req.retryAt(catalog.limits()))
 		text += "\n" + t.tr("Original retry time: "+en, "پایان مهلت اولیهٔ درخواست مجدد: "+fa)
 		if req.RetryAllowed {
 			text += t.tr("\nOne early request is allowed. Verification and review still apply.", "\nاجازهٔ یک درخواست زودتر داده شده است. بررسی و تأیید همچنان لازم است.")

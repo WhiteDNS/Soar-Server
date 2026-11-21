@@ -21,11 +21,12 @@ var (
 )
 
 type freePlan struct {
-	ID        string
-	Revision  uint64
-	Published bool
-	Days      int
-	Input     ClientInput
+	ID          string
+	Revision    uint64
+	Published   bool
+	AutoApprove bool `json:",omitempty"`
+	Days        int
+	Input       ClientInput
 }
 
 type freeCatalog struct {
@@ -35,6 +36,7 @@ type freeCatalog struct {
 	RestoreHold bool
 	Plans       []freePlan
 	Text        map[string]string
+	Limits      *freeLimits `json:",omitempty"`
 }
 
 func defaultFreePlan() freePlan {
@@ -95,6 +97,13 @@ func (c freeCatalog) offers(p freePlan) bool {
 func (c freeCatalog) validate() error {
 	if !validEngines(c.Allowed) || len(c.Plans) > freePlanLimit || len(c.Text) > 6 {
 		return errors.New("invalid free configuration catalogue")
+	}
+	if c.Limits != nil {
+		for _, field := range freeLimitFields {
+			if n := *field.value(c.Limits); n < field.min || n > field.max {
+				return errors.New("invalid free configuration limits")
+			}
+		}
 	}
 	ids := make(map[string]bool)
 	for _, p := range c.Plans {
