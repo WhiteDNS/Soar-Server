@@ -128,8 +128,96 @@ func TestTelegramFreeAdminPublishesPlanAndDeliversAllEngineProfiles(t *testing.T
 	}
 }
 
+func TestTelegramFreeReviewRefreshesTheOpenQueue(t *testing.T) {
+	bot, fake, _ := newTelegramTest(t)
+	store, now := bot.h.store, bot.now()
+	mustHandle(t, bot, tgCallback(1, "free:enable"))
+	for _, id := range []int64{888, 999} {
+		if err := store.submitFree(id, token()[:12], "I need access for this device.", now); err != nil {
+			t.Fatal(err)
+		}
+	}
+	list, err := store.freePending(now)
+	if err != nil || len(list) != 2 {
+		t.Fatalf("expected two requests: %v, %v", list, err)
+	}
+	next := int64(2)
+	tap := func(data string) {
+		u := tgCallback(next, data)
+		next++
+		u.Callback.Message.ID = 42
+		edits, sends := fake.calls["editMessageText"], fake.calls["sendMessage"]
+		mustHandle(t, bot, u)
+		if fake.calls["editMessageText"] != edits+1 || fake.calls["sendMessage"] != sends {
+			t.Fatal("review must edit the current message exactly once")
+		}
+	}
+	detail := func(key string) string { return "free:requestdetail:" + key }
+	tap("free:queue")
+	tap(detail(list[0].Key))
+	tap("free:approve:" + list[0].Key + "@" + bot.freeEpoch)
+	assertFreeReviewQueue(t, fake, "Approved.", list[1].Key)
+	tap(detail(list[0].Key))
+	assertFreeReviewQueue(t, fake, "already reviewed", list[1].Key)
+	tap(detail(list[1].Key))
+	tap("free:reject:" + list[1].Key + "@" + bot.freeEpoch)
+	assertFreeReviewQueue(t, fake, "Declined.")
+}
+
+func assertFreeReviewQueue(t *testing.T, fake *telegramFake, result string, expected ...string) {
+	t.Helper()
+	text := fake.texts[len(fake.texts)-1]
+	if !strings.Contains(text, result) {
+		t.Fatalf("review result missing from queue: %q", text)
+	}
+	var requests []string
+	for _, row := range fake.keyboards[len(fake.keyboards)-1].Rows {
+		if key, ok := strings.CutPrefix(row[0].Data, "free:requestdetail:"); ok {
+			requests = append(requests, key)
+		}
+	}
+	if strings.Join(requests, ",") != strings.Join(expected, ",") ||
+		len(expected) == 0 && !strings.Contains(text, "No pending requests.") {
+		t.Fatalf("stale queue after review: %v; want %v. Message: %q", requests, expected, text)
+	}
+}
+
+func TestTelegramFreeReviewRefreshDoesNotWaitForRuntime(t *testing.T) {
+	bot, fake, _ := newTelegramTest(t)
+	mustHandle(t, bot, tgCallback(1, "free:enable"))
+	store, now := bot.h.store, bot.now()
+	if err := store.submitFree(888, token()[:12], "I need access for this device.", now); err != nil {
+		t.Fatal(err)
+	}
+	_, req, err := store.freeQueue(now)
+	if err != nil || req.Key == "" {
+		t.Fatalf("request was not queued: %v", err)
+	}
+	bot.h.manager.reconcileMu.Lock()
+	done := make(chan error, 1)
+	defer func() {
+		bot.h.manager.reconcileMu.Unlock()
+		if err := <-done; err != nil {
+			t.Error(err)
+		}
+	}()
+	approve := tgCallback(2, "free:approve:"+req.Key+"@"+bot.freeEpoch)
+	approve.Callback.Message.ID = 42
+	go func() { done <- bot.handleUpdate(context.Background(), approve) }()
+
+	for deadline := time.Now().Add(3 * time.Second); time.Now().Before(deadline); time.Sleep(10 * time.Millisecond) {
+		fake.mu.Lock()
+		updated := fake.calls["editMessageText"] == 1 && strings.Contains(fake.texts[len(fake.texts)-1], "No pending requests.")
+		fake.mu.Unlock()
+		if updated {
+			return
+		}
+	}
+	t.Fatal("the queue was not refreshed while runtime preparation was blocked")
+}
+
 func TestTelegramFreeBulkReviewRespectsCapacityAndFrozenSelection(t *testing.T) {
-	bot, _, _ := newTelegramTest(t)
+	bot, fake, _ := newTelegramTest(t)
 	s, now := bot.h.store, bot.now()
 	for id := int64(1); id < freeDailyLimit; id++ {
 		if e := s.submitFree(id, token()[:12], "Request for test account", now); e != nil {
@@ -159,6 +247,7 @@ func TestTelegramFreeBulkReviewRespectsCapacityAndFrozenSelection(t *testing.T) 
 	if e != nil || len(left) != 2 || !strings.HasPrefix(left[0].Key, "22:") || !strings.HasPrefix(left[1].Key, "23:") {
 		t.Fatalf("incorrect partial review: %+v, %v", left, e)
 	}
+	assertFreeReviewQueue(t, fake, "Still pending.", left[0].Key, left[1].Key)
 	mustHandle(t, bot, tgCallback(5, "free:select:"+left[0].Key))
 	mustHandle(t, bot, tgCallback(6, "free:bulkreject"))
 	mustHandle(t, bot, tgCallback(7, "ok:"+bot.confirmation.Key))
@@ -166,6 +255,7 @@ func TestTelegramFreeBulkReviewRespectsCapacityAndFrozenSelection(t *testing.T) 
 	if e != nil || len(remaining) != 1 || !strings.HasPrefix(remaining[0].Key, "23:") {
 		t.Fatalf("selective rejection changed the queue incorrectly: %+v, %v", remaining, e)
 	}
+	assertFreeReviewQueue(t, fake, "Declined.", remaining[0].Key)
 }
 
 func TestTelegramFreeSlowPublicWorkDoesNotBlockAdministrator(t *testing.T) {

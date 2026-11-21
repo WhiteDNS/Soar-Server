@@ -15,10 +15,14 @@ func (t *Telegram) freeReviewMenu(ctx context.Context, action, value string) err
 	if action == "approve" || action == "reject" {
 		key, epoch, _ := strings.Cut(value, "@")
 		if epoch != t.freeEpoch {
-			return errors.New("confirmation expired; reopen the request")
+			return t.showFreeReview(ctx, "queue", "", t.tr("This confirmation expired. Open the request again if it is still pending.", "این تأیید منقضی شده است. اگر درخواست هنوز در انتظار است، دوباره آن را باز کنید."))
 		}
 		return t.executeFreeReview(ctx, action == "approve", []string{key})
 	}
+	return t.showFreeReview(ctx, action, value, "")
+}
+
+func (t *Telegram) showFreeReview(ctx context.Context, action, value, result string) error {
 	list, e := t.h.store.freePending(t.now())
 	if e != nil {
 		return e
@@ -44,7 +48,7 @@ func (t *Telegram) freeReviewMenu(ctx context.Context, action, value string) err
 					"تأیید، حسابی با همین شرایط می‌سازد. رد، مهلت ۲۴ساعته را آغاز می‌کند. از «مدیریت این کاربر» می‌توانید درخواست دوباره را مجاز کنید."), k)
 			return e
 		}
-		return ErrNotFound
+		result = t.tr("This request expired or was already reviewed. The list is up to date.", "این درخواست منقضی شده یا قبلاً بررسی شده است. فهرست به‌روز است.")
 	}
 	k := telegramKeyboard{}
 	var selected, preview []string
@@ -89,6 +93,9 @@ func (t *Telegram) freeReviewMenu(ctx context.Context, action, value string) err
 		}
 		text += "\n" + t.tr("Open a request to review it, or use the checkboxes for group review.", "برای بررسی، درخواست را باز کنید. برای بررسی گروهی، گزینه‌های کنار درخواست‌ها را علامت بزنید.")
 	}
+	if result != "" {
+		text = result + "\n\n" + text
+	}
 	_, e = t.notify(ctx, t.config(), text, k)
 	return e
 }
@@ -129,12 +136,13 @@ func (t *Telegram) executeFreeReview(ctx context.Context, approve bool, keys []s
 		}
 		lines = append(lines, id+" · "+label)
 	}
+	t.freeSelected = nil
+	err := t.showFreeReview(ctx, "queue", "", strings.Join(lines, "\n"))
 	if issued {
 		if e := t.h.manager.Reconcile(); e != nil {
-			lines = append(lines, t.tr("Accounts saved. Runtime preparation will be retried.", "حساب‌ها ذخیره شدند. آماده‌سازی سرویس دوباره تلاش می‌شود."))
+			t.h.manager.logEvent("error", "panel", "", "reconcile_failed", e, 0)
+			_, _ = t.notify(ctx, c, t.tr("Accounts saved. Runtime preparation will be retried.", "حساب‌ها ذخیره شدند. آماده‌سازی سرویس دوباره تلاش می‌شود."), nil)
 		}
 	}
-	t.freeSelected = nil
-	_, e := t.notify(ctx, c, strings.Join(lines, "\n"), telegramKeyboard{Rows: [][]telegramButton{{t.button("Back to requests", "بازگشت به درخواست‌ها", "free:queue")}}})
-	return e
+	return err
 }
