@@ -8,6 +8,10 @@ on:
         options: [panel, standalone]
         default: panel
         required: true
+      prerelease:
+        description: Publish a panel prerelease without updating stable defaults
+        type: boolean
+        default: false
 permissions:
   contents: read
 concurrency:
@@ -29,6 +33,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TARGET: ${{ inputs.target }}
+          RELEASE_PRERELEASE: ${{ inputs.prerelease }}
         run: python3 scripts/publish_release.py --plan
   verify:
     needs: plan
@@ -166,20 +171,14 @@ jobs:
           pattern: ${{ inputs.target == 'panel' && 'soar-panel-linux-*' || 'soar-server-linux-*' }}
           merge-multiple: true
           path: release-artifacts
-      - name: Publish the artifacts verified in this run
-        env:
-          GH_TOKEN: ${{ github.token }}
-          RELEASE_TARGET: ${{ inputs.target }}
-        run: python3 scripts/publish_release.py --artifacts release-artifacts
       - uses: actions/setup-go@v5
         if: inputs.target == 'panel'
         with:
           go-version: '1.26.1'
           cache: false
-      - name: Sign the published panel release
+      - name: Sign the verified panel artifacts
         if: inputs.target == 'panel'
         env:
-          GH_TOKEN: ${{ github.token }}
           RELEASE_SIGNING_KEY: ${{ secrets.RELEASE_SIGNING_KEY }}
           RELEASE_VERSION: ${{ needs.plan.outputs.version }}
         run: |
@@ -189,7 +188,12 @@ jobs:
           public=$(GOWORK=off go run ./cmd/soar-release-sign sign "$key" release-artifacts/soar-panel-"$RELEASE_VERSION"-linux-*.tar.gz.sha256)
           grep -qF "\"$public\"" internal/panel/releases.go || { echo "RELEASE_SIGNING_KEY is not a key panels trust" >&2; exit 1; }
           for signature in release-artifacts/*.tar.gz.sha256.sig; do mv "$signature" "${signature%.sig}.ci.sig"; done
-          gh release upload "panel-v$RELEASE_VERSION" release-artifacts/*.tar.gz.sha256.ci.sig --repo "$GITHUB_REPOSITORY" --clobber
+      - name: Publish the artifacts verified in this run
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TARGET: ${{ inputs.target }}
+          RELEASE_PRERELEASE: ${{ inputs.prerelease }}
+        run: python3 scripts/publish_release.py --artifacts release-artifacts
       - uses: docker/setup-buildx-action@v3
         if: inputs.target == 'panel'
       - uses: docker/login-action@v3
@@ -202,6 +206,7 @@ jobs:
         if: inputs.target == 'panel'
         env:
           RELEASE_VERSION: ${{ needs.plan.outputs.version }}
+          RELEASE_PRERELEASE: ${{ inputs.prerelease }}
         run: |
           stage="$RUNNER_TEMP/docker-context"
           for arch in amd64 arm64; do
@@ -209,9 +214,11 @@ jobs:
             tar -xzf "release-artifacts/soar-panel-$RELEASE_VERSION-linux-$arch.tar.gz" -O "soar-panel-$RELEASE_VERSION-linux-$arch/bin/linux-$arch/soar-panel" > "$stage/bin/linux-$arch/soar-panel"
           done
           image="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/soar-panel"
+          tags=(-t "$image:$RELEASE_VERSION")
+          if [[ "$RELEASE_PRERELEASE" == false ]]; then tags+=(-t "$image:latest"); fi
           docker buildx build --platform linux/amd64,linux/arm64 -f docker/Dockerfile \
             --label "org.opencontainers.image.version=$RELEASE_VERSION" \
-            -t "$image:$RELEASE_VERSION" -t "$image:latest" --push "$stage"
+            "${tags[@]}" --push "$stage"
       - uses: actions/upload-artifact@v4
         if: always()
         with:

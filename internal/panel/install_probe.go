@@ -59,7 +59,7 @@ func (s *Store) CreateInstallProbe() (Client, error) {
 	return s.create(ClientInput{
 		Name: installProbeName, Note: installProbeNote, Enabled: true, Engines: "all",
 		QuotaBytes: 1 << 20, ExpiresAt: time.Now().Add(10 * time.Minute).UnixMilli(), StreamLimit: 4,
-	}, true)
+	}, true, nil)
 }
 
 func isInstallProbe(c Client) bool {

@@ -89,34 +89,42 @@ def verify_archive(raw, arch, version, merged):
     return len(listed)
 
 
-def verify_public_release(repo, tag, version, merged):
+def verify_public_release(repo, tag, version, merged, prerelease=False):
     # Metadata comes from the authenticated API: anonymous API calls share a
     # 60-per-hour limit per runner IP and failed panel-v0.15.0 after publication.
     # Asset bytes are still downloaded without credentials, which proves they are public.
     release = api("GET", f"repos/{repo}/releases/tags/{tag}")
-    if release["draft"] or release["prerelease"] or release["tag_name"] != tag:
-        raise RuntimeError("Release is not a public stable release of the expected tag")
+    if release["draft"] or release["prerelease"] != prerelease or release["tag_name"] != tag:
+        raise RuntimeError("Public release does not match the expected tag and channel")
     assets = {asset["name"]: asset for asset in release["assets"]}
-    expected_names = {f"soar-panel-{version}-linux-{arch}.tar.gz{suffix}" for arch in ("amd64", "arm64") for suffix in ("", ".sha256")}
-    # Offline signatures are uploaded after publication, so a retry may find them.
-    signatures = {f"soar-panel-{version}-linux-{arch}.tar.gz.sha256{suffix}" for arch in ("amd64", "arm64") for suffix in (".sig", ".ci.sig")}
-    if set(assets) - signatures != expected_names:
-        raise RuntimeError("Public release must contain both archives and both checksums")
+    expected_names = {f"soar-panel-{version}-linux-{arch}.tar.gz{suffix}" for arch in ("amd64", "arm64") for suffix in ("", ".sha256", ".sha256.ci.sig")}
+    offline_signatures = {f"soar-panel-{version}-linux-{arch}.tar.gz.sha256.sig" for arch in ("amd64", "arm64")}
+    if set(assets) - offline_signatures != expected_names:
+        raise RuntimeError("Public release must contain both archives, checksums and signatures")
     results = []
     for arch in ("amd64", "arm64"):
         name = f"soar-panel-{version}-linux-{arch}.tar.gz"
         base = f"https://github.com/{repo}/releases/download/{tag}/"
-        for asset_name in (name, name + ".sha256"):
+        signature_name = name + ".sha256.ci.sig"
+        for asset_name in (name, name + ".sha256", signature_name):
             asset = assets[asset_name]
             if asset["browser_download_url"] != base + asset_name or asset["state"] != "uploaded" or not 0 < asset["size"] <= MAX_ASSET:
                 raise RuntimeError("Unexpected release asset URL, state or size")
-        checksum = download(base + name + ".sha256", 16384).decode("ascii").strip().split()
+        manifest = download(base + name + ".sha256", 16384)
+        checksum = manifest.decode("ascii").strip().split()
+        signature = download(base + signature_name, 64)
+        if len(signature) != 64 or assets[signature_name]["size"] != 64:
+            raise RuntimeError("Invalid public release signature size")
         raw = download(base + name, MAX_ASSET)
         digest = hashlib.sha256(raw).hexdigest()
-        if len(checksum) != 2 or checksum[1].lstrip("*") != name or checksum[0] != digest or len(raw) != assets[name]["size"]:
+        if (len(checksum) != 2 or checksum[1].lstrip("*") != name or checksum[0] != digest or
+                len(raw) != assets[name]["size"] or len(manifest) != assets[name + ".sha256"]["size"]):
             raise RuntimeError("Public archive checksum/size mismatch")
         if assets[name].get("digest") not in (None, "sha256:" + digest):
             raise RuntimeError("GitHub asset digest differs from the downloaded bytes")
         count = verify_archive(raw, arch, version, merged)
-        results.append({"asset": name, "sha256": digest, "bytes": len(raw), "verified_internal_files": count})
-    return {"url": release["html_url"], "tag": tag, "commit": merged, "anonymous_downloads": True, "assets": results}
+        results.append({"asset": name, "sha256": digest, "bytes": len(raw),
+                        "manifest_sha256": hashlib.sha256(manifest).hexdigest(),
+                        "signature_sha256": hashlib.sha256(signature).hexdigest(), "verified_internal_files": count})
+    return {"url": release["html_url"], "tag": tag, "commit": merged, "prerelease": prerelease,
+            "anonymous_downloads": True, "assets": results}

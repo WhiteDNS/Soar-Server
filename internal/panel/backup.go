@@ -94,6 +94,9 @@ func inspectBackupTransaction(tx *bolt.Tx, summary *BackupSummary) error {
 	if _, err := readFloodBlocks(tx.Bucket(meta)); err != nil {
 		return err
 	}
+	if err := inspectFreeRequests(tx); err != nil {
+		return err
+	}
 	summary.BaseZone = cfg.BaseZone
 	var admin Admin
 	if err := json.Unmarshal(tx.Bucket(meta).Get([]byte("admin")), &admin); err != nil {
@@ -215,6 +218,17 @@ func PreserveRestoreAdmin(candidate, current string) error {
 			if err := tx.Bucket(meta).Delete([]byte("egress")); err != nil {
 				return err
 			}
+		}
+		catalog, err := readFreeCatalog(tx)
+		if err != nil {
+			return err
+		}
+		catalog.RestoreHold = true
+		if err = saveFreeCatalog(tx, catalog); err != nil {
+			return err
+		}
+		if err = tx.Bucket(meta).Delete(freeBroadcastKey); err != nil {
+			return err
 		}
 		return addEvent(tx, "backup.restored", "")
 	})

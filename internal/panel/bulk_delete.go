@@ -11,10 +11,17 @@ import (
 // DeleteMany validates the complete selection and removes it in one transaction.
 // A stale or invalid ID must never leave only part of a selection deleted.
 func (s *Store) DeleteMany(ids []string) error {
+	return s.deleteMany(ids, nil)
+}
+
+func (s *Store) deleteMany(ids []string, revisions []uint64) error {
 	if len(ids) == 0 || len(ids) > MaxClients {
 		return errors.New("select between 1 and 512 accounts")
 	}
 	seen := make(map[string]bool, len(ids))
+	if revisions != nil && len(ids) != len(revisions) {
+		return ErrConflict
+	}
 	for _, id := range ids {
 		_, err := hex.DecodeString(id)
 		if len(id) != 32 || err != nil || seen[id] {
@@ -23,9 +30,13 @@ func (s *Store) DeleteMany(ids []string) error {
 		seen[id] = true
 	}
 	return s.db.Update(func(tx *bolt.Tx) error {
-		for _, id := range ids {
-			if _, err := getClient(tx, id); err != nil {
+		for i, id := range ids {
+			c, err := getClient(tx, id)
+			if err != nil {
 				return err
+			}
+			if revisions != nil && (c.Revision != revisions[i] || c.InstallerProbe) {
+				return ErrConflict
 			}
 		}
 		for _, id := range ids {

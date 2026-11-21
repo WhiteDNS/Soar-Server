@@ -25,6 +25,7 @@ type telegramFake struct {
 	documents  [][]byte
 	mu         sync.Mutex
 	texts      []string
+	chatIDs    []int64
 	parseModes []string
 	keyboards  []telegramKeyboard
 	photos     int
@@ -47,6 +48,7 @@ func (f *telegramFake) serve(w http.ResponseWriter, r *http.Request) {
 	}
 	var body struct {
 		Text      string           `json:"text"`
+		ChatID    int64            `json:"chat_id"`
 		Markup    telegramKeyboard `json:"reply_markup"`
 		Offset    int64            `json:"offset"`
 		ParseMode string           `json:"parse_mode"`
@@ -92,6 +94,7 @@ func (f *telegramFake) serve(w http.ResponseWriter, r *http.Request) {
 	case "sendMessage":
 		f.nextID++
 		f.texts = append(f.texts, body.Text)
+		f.chatIDs = append(f.chatIDs, body.ChatID)
 		f.parseModes = append(f.parseModes, body.ParseMode)
 		f.keyboards = append(f.keyboards, body.Markup)
 		result = map[string]any{"message_id": f.nextID}

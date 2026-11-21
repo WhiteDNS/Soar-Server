@@ -7,6 +7,7 @@ import (
 	"html"
 	"math"
 	"net/url"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -29,6 +30,10 @@ type telegramConversation struct {
 	Expires               time.Time
 	Prompt                int64
 	Creating              bool
+	FreePlan              *freePlan
+	FreeRevision          uint64
+	ActiveOnly            bool
+	ListPage              int
 }
 type telegramConfirmation struct {
 	Before, After            Settings
@@ -41,6 +46,12 @@ type telegramConfirmation struct {
 	Input                    ClientInput
 	Revision                 uint64
 	Expires                  time.Time
+	FreeIDs                  []string
+	FreeRevisions            []uint64
+	FreePlan                 *freePlan
+	FreeChat                 int64
+	FreeRevision             uint64
+	FreeText                 string
 }
 
 func (t *Telegram) tr(en, fa string) string {
@@ -59,11 +70,13 @@ func (t *Telegram) homeKeyboard() telegramKeyboard {
 		{t.button("⬆️ Updates", "⬆️ به‌روزرسانی", "updates"), t.button("⚙️ Preferences", "⚙️ ترجیحات", "prefs")},
 		{t.button("⚙️ Server settings", "⚙️ تنظیمات سرور", "server"), t.button("🩺 Diagnostics", "🩺 عیب‌یابی", "diagnostics")},
 		{t.button("💾 Backups", "💾 پشتیبان و بازیابی", "backups"), t.button("🌐 Panel access", "🌐 دسترسی پنل", "access")},
+		{t.button("🎁 Free configs", "🎁 کانفیگ رایگان", "free:manage")},
 	}}
 }
 func (t *Telegram) home(ctx context.Context) error {
 	t.conversation = nil
 	t.confirmation = nil
+	t.freeSelected, t.freeDeleteSelected = nil, nil
 	_, e := t.notify(ctx, t.config(), t.tr("🛠️ WhiteDNS server management\nChoose an action.", "🛠️ مدیریت سرور WhiteDNS\nیک عملیات انتخاب کنید."), t.homeKeyboard())
 	return e
 }
@@ -95,6 +108,8 @@ func (t *Telegram) message(ctx context.Context, m telegramMessage) error {
 		return t.home(ctx)
 	case "/stats":
 		return t.callback(ctx, "status")
+	case "/admin":
+		return t.manageFree(ctx, "manage")
 	case "/help":
 		_, e := t.notify(ctx, t.config(), t.tr("ℹ️ /menu: users and management · /stats: current state · /settings: server and tunnel settings · /diagnostics: runtimes and logs · /backup: encrypted backup and schedules · /restore: upload and preview a backup · /access: panel domains and HTTPS. Confirmations expire after five minutes. /cancel discards the current form. Keep the backup recovery key outside this server. The bot requires the panel process and server access to Telegram to remain available.", "ℹ️ /menu مدیریت کاربران و سرویس · /stats وضعیت فعلی · /settings تنظیمات سرور و تونل · /diagnostics موتور و لاگ · /backup پشتیبان رمزگذاری‌شده و زمان‌بندی · /restore ارسال و بررسی فایل بازیابی · /access دامنه و HTTPS پنل. تأییدها پس از پنج دقیقه منقضی می‌شوند. /cancel فرم را لغو می‌کند. کلید بازیابی پشتیبان را خارج از این سرور نگه دارید. اجرای پنل و دسترسی سرور به تلگرام برای کار ربات لازم است."), t.homeKeyboard())
 		return e
@@ -122,10 +137,13 @@ func (t *Telegram) message(ctx context.Context, m telegramMessage) error {
 	if d.Field == "management" {
 		return t.managementReply(ctx, d, text)
 	}
+	if d.Field == "free" {
+		return t.freeAdminReply(ctx, d, text)
+	}
 	if d.Field == "search" {
 		q := text
 		t.conversation = nil
-		return t.users(ctx, 0, q)
+		return t.userPage(ctx, 0, q, d.ActiveOnly)
 	}
 	if e := t.setField(d, d.Field, text); e != nil {
 		return e
@@ -142,6 +160,9 @@ func (t *Telegram) message(ctx context.Context, m telegramMessage) error {
 	return t.review(ctx)
 }
 func (t *Telegram) callback(ctx context.Context, data string) error {
+	if strings.HasPrefix(data, "free:") {
+		return t.manageFree(ctx, strings.TrimPrefix(data, "free:"))
+	}
 	if handled, e := t.managementCallback(ctx, data); handled {
 		return e
 	}
@@ -153,8 +174,15 @@ func (t *Telegram) callback(ctx context.Context, data string) error {
 		t.conversation = &telegramConversation{Key: token()[:12], Input: ClientInput{Engines: "both", Enabled: true}, Expires: t.now().Add(15 * time.Minute), Creating: true}
 		return t.prompt(ctx, "name")
 	case data == "search":
-		t.conversation = &telegramConversation{Key: token()[:12], Expires: t.now().Add(15 * time.Minute)}
+		active := t.conversation != nil && t.conversation.ActiveOnly
+		t.conversation = &telegramConversation{Key: token()[:12], Expires: t.now().Add(15 * time.Minute), ActiveOnly: active}
 		return t.prompt(ctx, "search")
+	case data == "activeusers:0":
+		return t.userPage(ctx, 0, "", true)
+	case strings.HasPrefix(data, "selectuser:"):
+		return t.freeUserSelect(ctx, strings.TrimPrefix(data, "selectuser:"))
+	case data == "deleteusers":
+		return t.confirmFreeDeletion(ctx)
 	case strings.HasPrefix(data, "users:"):
 		n, e := strconv.Atoi(strings.TrimPrefix(data, "users:"))
 		if e != nil || n < 0 || n > MaxClients {
@@ -166,11 +194,11 @@ func (t *Telegram) callback(ctx context.Context, data string) error {
 		if e != nil || n < 0 || n > MaxClients {
 			return errors.New("invalid page")
 		}
-		q := ""
+		q, active := "", false
 		if t.conversation != nil {
-			q = t.conversation.Query
+			q, active = t.conversation.Query, t.conversation.ActiveOnly
 		}
-		return t.users(ctx, n, q)
+		return t.userPage(ctx, n, q, active)
 	case strings.HasPrefix(data, "user:"):
 		return t.user(ctx, strings.TrimPrefix(data, "user:"))
 	case strings.HasPrefix(data, "edit:"):
@@ -465,6 +493,10 @@ func (t *Telegram) review(ctx context.Context) error {
 	return e
 }
 func (t *Telegram) users(ctx context.Context, page int, query string) error {
+	return t.userPage(ctx, page, query, false)
+}
+
+func (t *Telegram) userPage(ctx context.Context, page int, query string, activeOnly bool) error {
 	list, e := t.h.store.List()
 	if e != nil {
 		return e
@@ -472,22 +504,37 @@ func (t *Telegram) users(ctx context.Context, page int, query string) error {
 	sort.Slice(list, func(i, j int) bool { return list[i].CreatedAt > list[j].CreatedAt })
 	filtered := []Client{}
 	q := strings.ToLower(query)
+	now := t.now()
+	linkedID := ""
+	if id, e := strconv.ParseInt(telegramDigits(q), 10, 64); e == nil && id > 0 {
+		request, e := t.h.store.freeRequest(id, now)
+		if e != nil {
+			return e
+		}
+		linkedID = request.AccountID
+	}
 	for _, c := range list {
-		if !c.InstallerProbe && (q == "" || strings.Contains(strings.ToLower(c.Name+" "+c.Note+" "+c.Zone), q)) {
+		if !c.InstallerProbe && (!activeOnly || c.Status(now) == "active") &&
+			(q == "" || c.ID == linkedID || strings.Contains(strings.ToLower(c.ID+" "+c.Name+" "+c.Note+" "+c.Zone), q)) {
 			filtered = append(filtered, c)
 		}
 	}
-	t.conversation = &telegramConversation{Query: query, Expires: t.now().Add(15 * time.Minute)}
-	t.confirmation = nil
 	pages := max(1, (len(filtered)+7)/8)
 	page = min(page, pages-1)
+	t.conversation = &telegramConversation{Query: query, Expires: now.Add(15 * time.Minute), ActiveOnly: activeOnly, ListPage: page}
+	t.confirmation = nil
 	k := telegramKeyboard{}
 	for _, c := range filtered[min(page*8, len(filtered)):min((page+1)*8, len(filtered))] {
 		name := []rune(c.Name)
 		if len(name) > 35 {
 			name = name[:35]
 		}
-		k.Rows = append(k.Rows, []telegramButton{t.button(string(name)+" · "+t.accountStatus(c), string(name)+" · "+t.accountStatus(c), "user:"+c.ID)})
+		mark := "☐"
+		if slices.Contains(t.freeDeleteSelected, c.ID) {
+			mark = "☑"
+		}
+		k.Rows = append(k.Rows, []telegramButton{t.button(string(name)+" · "+t.accountStatus(c), string(name)+" · "+t.accountStatus(c), "user:"+c.ID),
+			{Text: mark, Data: "selectuser:" + c.ID}})
 	}
 	nav := []telegramButton{}
 	if page > 0 {
@@ -500,7 +547,14 @@ func (t *Telegram) users(ctx context.Context, page int, query string) error {
 		k.Rows = append(k.Rows, nav)
 	}
 	k.Rows = append(k.Rows, []telegramButton{t.button("🔍 Search", "🔍 جست‌وجو", "search"), t.button("➕ Add user", "➕ افزودن کاربر", "new"), t.button("↩️ Menu", "↩️ منو", "home")})
-	_, e = t.notify(ctx, t.config(), fmt.Sprintf(t.tr("👥 Users: %d · Page %d/%d", "👥 کاربران: %d · صفحهٔ %d/%d"), len(filtered), page+1, pages), k)
+	if len(t.freeDeleteSelected) != 0 {
+		k.Rows = append(k.Rows, []telegramButton{t.button(fmt.Sprintf("Delete selected (%d)", len(t.freeDeleteSelected)), fmt.Sprintf("حذف انتخاب‌ها (%d)", len(t.freeDeleteSelected)), "deleteusers")})
+	}
+	title := t.tr("Users", "کاربران")
+	if activeOnly {
+		title = t.tr("Active users", "کاربران فعال")
+	}
+	_, e = t.notify(ctx, t.config(), fmt.Sprintf(t.tr("👥 %s: %d · Page %d/%d", "👥 %s: %d · صفحهٔ %d/%d"), title, len(filtered), page+1, pages), k)
 	return e
 }
 func (t *Telegram) accountStatus(c Client) string {
@@ -524,6 +578,7 @@ func (t *Telegram) user(ctx context.Context, id string) error {
 		{t.button("♻️ Reset usage", "♻️ صفر کردن مصرف", "action:reset:"+id), t.button("🔑 Rotate tunnel key", "🔑 تعویض کلید تونل", "action:rotate:"+id)},
 		{t.button("🔗 Rotate subscription URL", "🔗 تعویض لینک ساب", "action:subscription-rotate:"+id)},
 		{t.button("🛡 Release quarantine", "🛡 رفع مسدودی ضدفلود", "release:"+id)},
+		{t.button("Link to Telegram user", "اتصال به کاربر تلگرام", "free:linkuser:"+id)},
 		{t.button("🗑️ Delete", "🗑️ حذف", "action:delete:"+id), t.button("👥 Users", "👥 کاربران", "users:0")}}}
 	counts := t.h.manager.ActiveCounts()
 	text := t.draftSummary(d) + fmt.Sprintf(t.tr("\nStatus: %s\nCurrent usage: %.2f GiB\nActive TCP streams: %d", "\nوضعیت: %s\nمصرف فعلی: %.2f GiB\nجریان TCP فعال: %d"), t.accountStatus(c), float64(c.Used())/(1<<30), counts[id])
@@ -550,6 +605,10 @@ func (t *Telegram) execute(ctx context.Context, key string) error {
 	t.confirmation = nil
 	if c == nil || c.Key != key || !t.now().Before(c.Expires) {
 		return errors.New("confirmation expired or already used")
+	}
+	if strings.HasPrefix(c.Action, "free-") {
+		t.conversation = nil
+		return t.executeFree(ctx, c)
 	}
 	if t.state.PendingAction != "" {
 		return errors.New("another action is pending; check its result before retrying")

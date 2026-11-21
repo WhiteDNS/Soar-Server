@@ -390,9 +390,9 @@ func randomIdentity(base string) (id, zone, public string, seed []byte, e error)
 	return
 }
 func (s *Store) Create(in ClientInput) (c Client, e error) {
-	return s.create(in, false)
+	return s.create(in, false, nil)
 }
-func (s *Store) create(in ClientInput, installerProbe bool) (c Client, e error) {
+func (s *Store) create(in ClientInput, installerProbe bool, commit func(*bolt.Tx, Client) error) (c Client, e error) {
 	capacity := MaxClients
 	if installerProbe {
 		capacity++
@@ -416,6 +416,11 @@ func (s *Store) create(in ClientInput, installerProbe bool) (c Client, e error) 
 		b := tx.Bucket(clients)
 		if b.Stats().KeyN >= capacity {
 			return errors.New("account capacity reached")
+		}
+		if commit != nil {
+			if e := commit(tx, c); e != nil {
+				return e
+			}
 		}
 		if e := putJSON(b, []byte(id), c); e != nil {
 			return e
@@ -587,6 +592,9 @@ func (s *Store) deleteRevision(id string, revision *uint64) error {
 	})
 }
 func deleteClient(tx *bolt.Tx, id string) error {
+	if e := markFreeAccountRemoved(tx, id, time.Now()); e != nil {
+		return e
+	}
 	if e := removeSubscription(tx, id); e != nil {
 		return e
 	}
