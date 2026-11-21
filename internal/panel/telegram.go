@@ -20,6 +20,7 @@ import (
 )
 
 type TelegramConfig struct {
+	FreeAccess  bool   `json:"free_access,omitempty"`
 	AutoBackup  bool   `json:"auto_backup"`
 	BackupTime  string `json:"backup_time"`
 	BackupKey   string `json:"backup_key,omitempty"` // Private encryption key; never included in HTTP views or DB backups.
@@ -108,6 +109,18 @@ type Telegram struct {
 	nextSend                 time.Time
 	retryUntil               time.Time
 	sendInterval             time.Duration
+	freeMu                   sync.Mutex
+	freeChallenges           map[int64]telegramFreeChallenge // Guarded by freeMu.
+	freeAttempts             map[int64][]time.Time
+	freeReplyPending         map[int64]int64 // Guarded by freeMu.
+	freeRate                 [2]freePublicRate
+	freeQueues               [2]chan telegramFreeJob // Guarded by opMu.
+	freeReplies              chan telegramFreeJob    // Guarded by opMu.
+	freeSend                 [3]telegramFreeSend     // Guarded by mu.
+	freeSelected             []string
+	freeDeleteSelected       []string
+	freeEpoch                string
+	freeNotices              chan telegramFreeNotice
 	conversation             *telegramConversation
 	confirmation             *telegramConfirmation
 	recovered                bool
@@ -168,6 +181,7 @@ func defaultTelegramConfig() TelegramConfig {
 }
 func NewTelegram(h *HTTP, file string) (*Telegram, error) {
 	t := &Telegram{h: h, file: file, cfg: defaultTelegramConfig(), baseURL: "https://api.telegram.org", client: &http.Client{Timeout: 40 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return errors.New("Telegram redirect rejected") }}, now: time.Now, latest: LatestStablePanelRelease, releaseVersion: ReleaseForVersion, wake: make(chan struct{}, 1), status: "disconnected", sendInterval: 1100 * time.Millisecond}
+	t.freeEpoch = token()[:8]
 	raw, e := os.ReadFile(file)
 	if e == nil {
 		var disk telegramDisk
@@ -333,7 +347,7 @@ func (t *Telegram) request(ctx context.Context, req *http.Request, out any) erro
 		if code == 0 {
 			code = resp.StatusCode
 		}
-		t.deferAPI(envelope.Parameters.Retry)
+		t.deferAPI(req.Context(), envelope.Parameters.Retry)
 		return &telegramAPIError{code, envelope.Parameters.Retry}
 	}
 	if out != nil {
@@ -344,25 +358,32 @@ func (t *Telegram) request(ctx context.Context, req *http.Request, out any) erro
 	return nil
 }
 func (t *Telegram) notify(ctx context.Context, c TelegramConfig, text string, keyboard any) (int64, error) {
-	var msg telegramMessage
+	var lastID int64
 	parts := telegramTextParts(text)
 	for i, part := range parts {
 		var markup any
 		if i == len(parts)-1 {
 			markup = keyboard
 		}
-		body := map[string]any{"chat_id": c.ChatID, "text": part, "link_preview_options": map[string]bool{"is_disabled": true}}
-		// Telegram rejects explicit null reply_markup; omit it for plain messages.
-		if markup != nil {
-			body["reply_markup"] = markup
-		}
-		e := t.call(ctx, c, "sendMessage", body, &msg)
+		id, e := t.sendText(ctx, c, part, markup)
 		t.connection(e)
 		if e != nil {
-			return msg.ID, e
+			return lastID, e
 		}
+		lastID = id
 	}
-	return msg.ID, nil
+	return lastID, nil
+}
+
+func (t *Telegram) sendText(ctx context.Context, c TelegramConfig, text string, markup any) (int64, error) {
+	body := map[string]any{"chat_id": c.ChatID, "text": text, "link_preview_options": map[string]bool{"is_disabled": true}}
+	// Telegram rejects explicit null reply_markup; omit it for plain messages.
+	if markup != nil {
+		body["reply_markup"] = markup
+	}
+	var msg telegramMessage
+	e := t.call(ctx, c, "sendMessage", body, &msg)
+	return msg.ID, e
 }
 
 // Telegram counts UTF-16 code units. Keep room below its 4096-unit text limit.
@@ -381,23 +402,36 @@ func telegramTextParts(text string) []string {
 	}
 	return append(parts, text[start:])
 }
-func (t *Telegram) deferAPI(seconds int) {
+func (t *Telegram) deferAPI(ctx context.Context, seconds int) {
 	if seconds <= 0 {
 		return
 	}
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	t.retryUntil = time.Now().Add(time.Duration(seconds) * time.Second)
+	at := time.Now().Add(time.Duration(seconds) * time.Second)
+	if lane, _ := ctx.Value(freeLaneKey{}).(freeLane); lane != 0 {
+		send := &t.freeSend[lane-1]
+		send.retry = maxTime(send.retry, at)
+		return
+	}
+	t.retryUntil = maxTime(t.retryUntil, at)
 }
 
 func (t *Telegram) waitAPI(ctx context.Context, sending bool) error {
 	t.mu.Lock()
-	at := t.retryUntil
-	if sending && t.nextSend.After(at) {
-		at = t.nextSend
+	retry, next := t.retryUntil, &t.nextSend
+	if lane, _ := ctx.Value(freeLaneKey{}).(freeLane); lane != 0 {
+		send := &t.freeSend[lane-1]
+		retry, next = send.retry, &send.next
 	}
+	at := retry
 	if sending {
-		t.nextSend = maxTime(at, time.Now()).Add(t.sendInterval)
+		at = maxTime(at, *next)
+		if deadline, ok := ctx.Deadline(); ok && !at.Before(deadline) {
+			t.mu.Unlock()
+			return context.DeadlineExceeded
+		}
+		*next = maxTime(at, time.Now()).Add(t.sendInterval)
 	}
 	t.mu.Unlock()
 	if delay := time.Until(at); delay > 0 {
@@ -439,6 +473,7 @@ func (t *Telegram) configureLocked(ctx context.Context, c TelegramConfig) error 
 	}
 	if old.Token != "" && old.Token != c.Token {
 		c.ChatID = 0
+		c.FreeAccess = false
 	}
 	if e := validateTelegramConfig(c, true); e != nil {
 		return e
@@ -507,6 +542,10 @@ func (t *Telegram) configureLocked(ctx context.Context, c TelegramConfig) error 
 	}
 	t.mu.Unlock()
 	t.state = state
+	if !c.Enabled || old.Token != c.Token || old.ChatID != c.ChatID {
+		t.clearFreeChallenge(0)
+		t.freeEpoch = token()[:8]
+	}
 	t.conversation = nil
 	t.confirmation = nil
 	t.reportRetry, t.backupRetry = time.Time{}, time.Time{}
@@ -542,6 +581,8 @@ func (t *Telegram) disconnect() error {
 	t.reportError, t.backupError = "", ""
 	t.mu.Unlock()
 	t.state = telegramState{}
+	t.clearFreeChallenge(0)
+	t.freeEpoch = token()[:8]
 	t.conversation = nil
 	t.confirmation = nil
 	t.recovered = false
@@ -660,6 +701,7 @@ func (h *HTTP) telegramAPI(w http.ResponseWriter, r *http.Request) {
 	}
 }
 func (t *Telegram) Run(ctx context.Context) {
+	defer t.runFreeWorkers(ctx)()
 	scheduleCtx, stopSchedule := context.WithCancel(ctx)
 	scheduleDone := make(chan struct{})
 	go func() { defer close(scheduleDone); t.runSchedule(scheduleCtx) }()
@@ -781,33 +823,39 @@ func (t *Telegram) handleUpdate(ctx context.Context, u telegramUpdate) error {
 	if u.ID < t.state.Offset {
 		return nil
 	}
-	// Acknowledge durably before dispatch: interrupted actions are never replayed.
+	c := t.config()
+	var from telegramUser
+	var chat telegramChat
+	if u.Message != nil && u.Callback == nil {
+		from = u.Message.From
+		chat = u.Message.Chat
+	} else if u.Message == nil && u.Callback != nil && u.Callback.Message != nil {
+		from = u.Callback.From
+		chat = u.Callback.Message.Chat
+	}
+	private := chat.Type == "private" && chat.ID > 0 && from.ID == chat.ID && !from.IsBot
+	pairing := false
+	if private && c.ChatID == 0 && u.Message != nil && c.PairToken != "" && t.now().UnixMilli() < c.PairExpires {
+		parts := strings.Fields(u.Message.Text)
+		pairing = len(parts) == 2 && parts[0] == "/start" && hmac.Equal([]byte(parts[1]), []byte(c.PairToken))
+	}
+	if !c.Enabled || !private || (!pairing && chat.ID != c.ChatID) {
+		// Public requests have their own one-use challenge and transactional state.
+		// Floods of ignored updates must not force a disk write for each update.
+		t.state.Offset = u.ID + 1
+		if c.Enabled && c.FreeAccess && c.ChatID > 0 && private {
+			t.dispatchFree(ctx, c, from, u)
+		}
+		return nil
+	}
+	// Acknowledge admin commands durably before dispatch.
 	offset := t.state.Offset
 	t.state.Offset = u.ID + 1
 	if e := t.save(); e != nil {
 		t.state.Offset = offset
 		return errTelegramUpdatePersistence
 	}
-	c := t.config()
-	var from telegramUser
-	var chat telegramChat
-	if u.Message != nil {
-		from = u.Message.From
-		chat = u.Message.Chat
-	} else if u.Callback != nil && u.Callback.Message != nil {
-		from = u.Callback.From
-		chat = u.Callback.Message.Chat
-	} else {
-		return nil
-	}
-	if c.Enabled && c.ChatID == 0 {
-		if u.Message == nil || chat.Type != "private" || chat.ID <= 0 || from.ID != chat.ID || from.IsBot {
-			return nil
-		}
-		parts := strings.Fields(u.Message.Text)
-		if len(parts) != 2 || parts[0] != "/start" || c.PairToken == "" || t.now().UnixMilli() >= c.PairExpires || !hmac.Equal([]byte(parts[1]), []byte(c.PairToken)) {
-			return nil
-		}
+	if pairing {
 		c.ChatID = chat.ID
 		c.PairToken = ""
 		c.PairExpires = 0
@@ -841,9 +889,6 @@ func (t *Telegram) handleUpdate(ctx context.Context, u telegramUpdate) error {
 		_ = t.h.store.Audit("telegram.paired", "")
 		_, e := t.notify(ctx, c, t.tr("✅ Telegram connected. Only this private chat can manage the server.", "✅ تلگرام متصل شد. فقط همین گفت‌وگوی خصوصی می‌تواند سرور را مدیریت کند."), t.homeKeyboard())
 		return e
-	}
-	if !c.Enabled || chat.Type != "private" || chat.ID != c.ChatID || from.ID != c.ChatID || from.IsBot {
-		return nil
 	}
 	if c.Language == "auto" {
 		c.Language = "en"

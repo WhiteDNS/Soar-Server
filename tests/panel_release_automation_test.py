@@ -86,7 +86,8 @@ class ReleaseGates(unittest.TestCase):
         # The signing key exists only in the job that publishes, after every test passed.
         self.assertEqual(workflow.count("secrets.RELEASE_SIGNING_KEY"),1)
         self.assertLess(workflow.index("  release:\n"),workflow.index("environment: release"))
-        self.assertLess(workflow.index("publish_release.py --artifacts"),workflow.index("secrets.RELEASE_SIGNING_KEY"))
+        self.assertLess(workflow.index("secrets.RELEASE_SIGNING_KEY"),workflow.index("publish_release.py --artifacts"))
+        self.assertIn('if [[ "$RELEASE_PRERELEASE" == false ]]; then tags+=(-t "$image:latest"); fi', workflow)
         self.assertNotIn("secrets.",ci)
         self.assertNotIn("run-id:",workflow)
         self.assertNotIn("finish-release:",workflow)
@@ -134,13 +135,14 @@ class ReleaseGates(unittest.TestCase):
                     raw=self.archive(arch)
                     archive.write_bytes(raw)
                     archive.with_suffix(".gz.sha256").write_text(hashlib.sha256(raw).hexdigest()+"  "+archive.name+"\n")
+                    archive.with_suffix(".gz.sha256.ci.sig").write_bytes(b"\x01" * 64)
                 notes=directory/"notes.md"
                 notes.write_text("notes")
                 summary=directory/"summary.md"
                 previous=Path.cwd()
                 try:
                     os.chdir(directory)
-                    with patch.dict(os.environ,{"RELEASE_TARGET":"panel","GITHUB_STEP_SUMMARY":str(summary)}),patch.object(sys,"argv",["publish_release.py","--artifacts",str(directory)]),patch.object(publish,"validate_context",return_value=MERGED),patch.object(publish,"configuration",return_value=("0.9.1","panel-v0.9.1","Panel",notes)),patch.object(publish,"api",return_value=existing) as api,patch.object(publish,"resolve_tag",return_value=MERGED if existing else None),patch.object(publish.subprocess,"run") as command,patch.object(publish,"public_report",return_value={"verified":True}):
+                    with patch.dict(os.environ,{"RELEASE_TARGET":"panel","GITHUB_STEP_SUMMARY":str(summary)}),patch.object(sys,"argv",["publish_release.py","--artifacts",str(directory)]),patch.object(publish,"validate_context",return_value=MERGED),patch.object(publish,"configuration",return_value=("0.9.1","panel-v0.9.1","Panel",notes)),patch.object(publish,"api",return_value=None if existing and existing["draft"] else existing) as api,patch.object(publish,"find_draft",return_value=existing if existing and existing["draft"] else None),patch.object(publish,"resolve_tag",return_value=MERGED if existing else None),patch.object(publish.subprocess,"run") as command,patch.object(publish,"public_report",return_value={"verified":True}):
                         publish.main()
                     if existing is None:
                         self.assertEqual(api.call_args_list[-1].args[0],"POST")
@@ -153,6 +155,66 @@ class ReleaseGates(unittest.TestCase):
                     self.assertIn("verified artifacts",summary.read_text())
                 finally:
                     os.chdir(previous)
+
+    def test_preview_channel_must_match_notes_and_never_sets_latest(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            notes = directory / "notes.md"
+            notes.write_text("<!-- release-channel: prerelease -->\n\nPreview notes\n")
+            config = ("0.9.1", "panel-v0.9.1", "Panel", notes)
+            env = {"RELEASE_TARGET": "panel", "GITHUB_STEP_SUMMARY": str(directory / "summary.md")}
+            previous = Path.cwd()
+            try:
+                os.chdir(directory)
+                with patch.dict(os.environ, env | {"RELEASE_PRERELEASE": "false"}), patch.object(
+                    sys, "argv", ["publish_release.py", "--plan"]
+                ), patch.object(publish, "validate_context", return_value=MERGED), patch.object(
+                    publish, "configuration", return_value=config
+                ), patch.object(publish, "api") as api, self.assertRaisesRegex(RuntimeError, "requested channel"):
+                    publish.main()
+                api.assert_not_called()
+
+                for arch in ("amd64", "arm64"):
+                    archive = directory / f"soar-panel-0.9.1-linux-{arch}.tar.gz"
+                    raw = self.archive(arch)
+                    archive.write_bytes(raw)
+                    archive.with_suffix(".gz.sha256").write_text(hashlib.sha256(raw).hexdigest() + "  " + archive.name + "\n")
+                with patch.dict(os.environ, env | {"RELEASE_PRERELEASE": "true"}), patch.object(
+                    sys, "argv", ["publish_release.py", "--artifacts", str(directory)]
+                ), patch.object(publish, "validate_context", return_value=MERGED), patch.object(
+                    publish, "configuration", return_value=config
+                ), patch.object(publish, "api", return_value=None) as api, patch.object(
+                    publish, "resolve_tag", return_value=None
+                ), patch.object(publish.subprocess, "run") as command, patch.object(
+                    publish, "public_report", return_value={"verified": True}
+                ) as report, patch.object(publish, "find_draft", return_value=None) as draft:
+                    with self.assertRaisesRegex(RuntimeError, "signatures must be staged"):
+                        publish.main()
+                    command.assert_not_called()
+                    self.assertEqual([call.args[0] for call in api.call_args_list], ["GET"])
+                    for digest in directory.glob("*.sha256"):
+                        digest.with_name(digest.name + ".ci.sig").write_bytes(b"\x01" * 64)
+                    draft.return_value = {"draft": True, "prerelease": True, "assets": [{"name": "extra.tar.gz"}]}
+                    with self.assertRaisesRegex(RuntimeError, "unexpected assets"):
+                        publish.main()
+                    command.assert_not_called()
+                    draft.return_value = None
+                    publish.main()
+                args = command.call_args.args[0]
+                self.assertIn("--prerelease", args)
+                self.assertIn("--latest=false", args)
+                self.assertEqual(sum(arg.endswith(".ci.sig") for arg in args), 2)
+                self.assertIs(report.call_args.args[-1], True)
+            finally:
+                os.chdir(previous)
+
+    def test_draft_lookup_requires_the_exact_tag(self):
+        draft = {"draft": True, "tag_name": "panel-v1.16.1"}
+        other = {"draft": True, "tag_name": "panel-v1.16.0"}
+        published = {"draft": False, "tag_name": "panel-v1.16.1"}
+        with patch.object(publish, "api", side_effect=[[other] * 100, [published, draft]]) as api:
+            self.assertEqual(publish.find_draft("repos/" + REPO, "panel-v1.16.1"), draft)
+        self.assertTrue(api.call_args.args[1].endswith("page=2"))
 
     def test_standalone_source_and_internal_checksum_are_required(self):
         files={"install.sh":b"installer","SOURCE-VERSIONS.txt":f"Setup: 0.9.1\nSource commit: {HEAD}\n".encode()}

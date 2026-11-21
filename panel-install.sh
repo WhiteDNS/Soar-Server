@@ -4,7 +4,7 @@ set -Eeuo pipefail
 export LC_ALL=C
 umask 077
 ROOT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
-PANEL_VERSION=0.16.0
+PANEL_VERSION=1.16.1
 DB=/var/lib/soar-panel/panel.db
 SERVICE=/etc/systemd/system/soar-panel.service
 OPS_SERVICE=/etc/systemd/system/soar-panel-ops.service
@@ -47,7 +47,7 @@ flock -n 9 || die 'Another panel installation is running. Wait for it to finish.
 install -d -m 0700 /var/lib/soar-panel-ops
 exec 8>/var/lib/soar-panel-ops/maintenance.lock
 flock -n 8 || die 'Another panel maintenance operation is running. Wait for it to finish.'
-printf '\nWhiteDNS Server Management %s - STABLE\n' "$PANEL_VERSION"
+printf '\nWhiteDNS Server Management %s\n' "$PANEL_VERSION"
 printf 'Direct profiles require a Soar-enabled WhiteDNS app; subscriptions require WhiteDNS 1.6.8+.\n'
 printf 'The Soar tunneling engine is developed by Lantern: https://soar.lantern.io/\n'
 printf 'Use a test server first. This wizard will explain every change before activation.\n'

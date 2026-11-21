@@ -45,7 +45,7 @@ initial language; change it under **Preferences**. Use buttons to list/search
 users, add/edit accounts, change engines and all account limits, enable/disable,
 reset usage, disconnect connections, delete accounts, rotate tunnel keys or the
 subscription URL, and receive subscription/direct connection strings in copyable
-code blocks. The Telegram bot sends no QR images; dashboard QR sharing remains available.
+code blocks. The dashboard also supports sharing QR images.
 
 Quota uses **GiB**, speed uses **KiB/s**, and zero means unlimited for quota,
 speed, expiry and TCP stream limits. Session limits have the same bounds as the
@@ -76,6 +76,79 @@ through the existing verified update/backup/readiness/rollback workflow. They do
 not upgrade OS packages, reboot the server or run arbitrary commands. Server-wide
 settings and backup/restore are available from the bot. Bulk operations and
 administrator credential changes remain in the dashboard.
+
+## Free configurations / کانفیگ رایگان
+
+Open `/admin` or **Free configs** from the paired administrator chat. Public
+access starts off. Set up the free plans and engines, then choose **Enable public
+access**. Share the ordinary bot link or `?start=free`. Keep the administrator
+pairing link private.
+
+**Plans** supports drafts, edit, publish, unpublish and delete. The **Public
+engines** controls allow any combination of Soar, CottenDNS and MasterDNS.
+Each plan has a quota (MiB), validity (days), speed (KiB/s), shared TCP stream
+limit and an independent session limit for each engine. The default published
+plan is MasterDNS with 1 GiB, 7 days, 512 KiB/s, 8 streams and 2 sessions.
+Users select from the available published plans and answer a five-minute
+one-use code with a short reason. Approval uses the terms saved at submission.
+Withdrawing a plan or required engine holds the pending request.
+
+The dashboard provides request review with individual and selected approvals
+and rejections, statistics, all and active account lists, search, individual
+and selected account deletion, custom configurations, Telegram access controls,
+and editing of English and Persian greetings, terms and connection instructions.
+To link an existing account, open it from **Users** and choose **Link to Telegram
+user**. The account must have finite limits and the recipient must have opened
+the bot. Bulk deletion is confirmed against the account revisions shown in the
+preview. A custom configuration for an existing linked account edits the same
+account and preserves the keys and usage history.
+
+Users can check status, cancel a pending request, select their language or opt
+out of announcements. An approved account has one shared volume and expiry
+across its selected engines. **My config** and **QR code** let the owner select
+the engine. Account readiness means the panel has registered the tunnel route.
+CottenDNS and MasterDNS start on demand when the first DNS query arrives.
+
+**Pause applications** stops new requests. Administrators can still review
+saved requests and existing owners can retrieve their links. **Emergency stop**
+closes the public bot workflows, stops the current broadcast, and pauses new requests until explicitly
+reopened. Issued tunnels follow their account settings. Use the account's
+Enable / Disable control to suspend the tunnel itself. After database restore,
+public delivery and issuance are held until the administrator explicitly
+confirms the restore review. Old broadcast jobs are cleared on restore and
+cannot resume with a replaced token.
+
+The bot has separate bounded work queues for admissions and existing owners.
+Valid challenge replies have reserved space. At most 8 other admission
+operations and 12 total admission operations are processed per minute. An ID
+can receive up to 3 challenges per hour. The queue holds up to 20 pending
+requests, and at most 40 applications and 10 new accounts are accepted in a
+rolling 24-hour period. Pending, cancelled or rejected requests use a 24-hour
+window. Existing free-linked accounts (including expired ones) are limited to
+100, and 20 ordinary account slots are reserved. New or renewed free accounts
+are checked against a combined budget of 512 configured TCP streams. A flood
+of new requests may delay admission while existing owners retain separate
+capacity. Upstream Telegram throttling can still affect the shared bot.
+Submitted requests and issuance counts survive a restart. Users with an
+unfinished challenge can request a fresh code.
+
+Broadcasts preview and confirm a fixed audience, recheck eligibility when
+sending, and report sent, skipped, failed and uncertain outcomes. They run at
+the standard free send rate. Stop ends future sends. A request already in
+flight can complete. The database and backups contain numeric Telegram IDs,
+preferences and current pending explanations. Explanations are cleared at
+review and expired requests are pruned regularly.
+
+در چت خصوصی مدیر `/admin` یا «کانفیگ رایگان» را باز کنید. موتورهای عمومی و
+پلن‌ها را انتخاب کنید و سپس «فعال‌کردن دسترسی عمومی» را بزنید. کاربران با
+`/start` پلن رایگان را انتخاب می‌کنند و کد و توضیح را در پاسخ به همان پیام
+می‌فرستند. پس از تأیید، لینک و QR هر موتور را جداگانه می‌گیرند. حجم و انقضا
+برای تمام موتورهای یک حساب مشترک است.
+
+«توقف پذیرش» جلوی درخواست تازه را می‌گیرد و تحویل کانفیگ به صاحبان حساب را
+باز می‌گذارد. «توقف اضطراری» مسیر عمومی ربات را می‌بندد. برای قطع خود کانفیگ،
+حساب را غیرفعال کنید. داشبورد مدیر شامل آمار، صف بررسی تکی و گروهی، فهرست
+و جست‌وجو، ساخت و تمدید سفارشی، تنظیم پلن‌ها و متن‌های عمومی، و پیام همگانی است.
 
 ## Alerts and daily report / هشدار و گزارش
 

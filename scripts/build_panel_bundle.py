@@ -1,4 +1,4 @@
-"""Build the stable management panel separately from the standalone bundle."""
+"""Build the management panel separately from the standalone bundle."""
 from __future__ import annotations
 import argparse
 import gzip
@@ -15,7 +15,7 @@ import struct
 import tarfile
 
 ROOT=Path(__file__).resolve().parents[1]
-VERSION="0.16.0"
+VERSION="1.16.1"
 
 def verify_version():
     for path, pattern in [

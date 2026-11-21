@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import io
+from itertools import count
 import json
 import os
 from pathlib import Path, PurePosixPath
@@ -99,12 +100,26 @@ def collect_assets(directory, target, version, head):
     return assets
 
 
-def public_report(target, tag, version, head, assets):
+def find_draft(prefix, tag):
+    # The by-tag endpoint does not return drafts.
+    for page in count(1):
+        releases = api("GET", f"{prefix}/releases?per_page=100&page={page}")
+        for release in releases:
+            if release["draft"] and release["tag_name"] == tag:
+                return release
+        if len(releases) < 100:
+            return None
+
+
+def public_report(target, tag, version, head, assets, prerelease):
     if target == "panel":
-        report = verify_public_release(REPO, tag, version, head)
-        expected = {path.name: hashlib.sha256(path.read_bytes()).hexdigest() for path in assets[::2]}
-        if any(expected[asset["asset"]] != asset["sha256"] for asset in report["assets"]):
-            raise RuntimeError("Public assets differ from this run's verified files")
+        report = verify_public_release(REPO, tag, version, head, prerelease)
+        expected = {path.name: hashlib.sha256(path.read_bytes()).hexdigest() for path in assets}
+        for asset in report["assets"]:
+            name = asset["asset"]
+            if (expected[name] != asset["sha256"] or expected[name + ".sha256"] != asset["manifest_sha256"] or
+                    expected[name + ".sha256.ci.sig"] != asset["signature_sha256"]):
+                raise RuntimeError("Public assets differ from this run's verified files")
         return report
     for path in assets:
         public = download(f"https://github.com/{REPO}/releases/download/{tag}/{path.name}", 96 << 20)
@@ -122,15 +137,24 @@ def main():
     target = os.environ.get("RELEASE_TARGET", "")
     version, tag, title, notes = configuration(target)
     if not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", version) or not notes.is_file():
-        raise RuntimeError("Stable version and release notes required")
+        raise RuntimeError("Numeric release version and release notes required")
+    mode = os.environ.get("RELEASE_PRERELEASE", "false")
+    if mode not in ("true", "false"):
+        raise RuntimeError("Invalid release channel")
+    prerelease = mode == "true"
+    preview_notes = target == "panel" and notes.read_text(encoding="utf8").startswith("<!-- release-channel: prerelease -->\n")
+    if prerelease != preview_notes:
+        raise RuntimeError("The requested channel must match the panel release notes")
     prefix = "repos/" + REPO
     existing = api("GET", f"{prefix}/releases/tags/{tag}", missing=True)
+    if existing and existing["prerelease"] != prerelease:
+        raise RuntimeError("Publication cannot change the channel of an existing release")
     if args.plan:
-        if existing and (existing["draft"] or existing["prerelease"]):
+        if existing and existing["draft"]:
             raise RuntimeError("An unfinished release exists. Resume its failed release job instead of rebuilding")
         current = resolve_tag(prefix, tag)
-        if existing is None and current is not None and current != head:
-            raise RuntimeError("Unpublished tag points elsewhere; stopped before allocating build runners")
+        if (existing is None or prerelease) and current is not None and current != head:
+            raise RuntimeError("Release tag points elsewhere; stopped before allocating build runners")
         matrix = {"include": [{"os": "ubuntu-24.04", "arch": "amd64"}]}
         if target == "panel":
             matrix["include"].append({"os": "ubuntu-24.04-arm", "arch": "arm64"})
@@ -141,26 +165,39 @@ def main():
     if args.artifacts is None:
         raise RuntimeError("Same-run artifacts directory required")
     assets = collect_assets(args.artifacts, target, version, head)
+    if target == "panel":
+        signatures = [manifest.with_name(manifest.name + ".ci.sig") for manifest in assets[1::2]]
+        if any(not sig.is_file() or sig.stat().st_size != 64 for sig in signatures):
+            raise RuntimeError("Both panel signatures must be staged before publication")
+        assets.extend(signatures)
+    if existing is None:
+        existing = find_draft(prefix, tag)
+        if existing and existing["prerelease"] != prerelease:
+            raise RuntimeError("The staged draft has a different release channel")
+    if existing and existing["draft"]:
+        expected = {path.name for path in assets}
+        if any(asset["name"] not in expected for asset in existing.get("assets", [])):
+            raise RuntimeError("The staged draft contains unexpected assets")
     current = resolve_tag(prefix, tag)
     if current is not None and current != head:
         raise RuntimeError("Existing tag points elsewhere; it will not be moved")
     if existing is not None and current is None:
         raise RuntimeError("Existing release tag is missing; it will not be recreated implicitly")
-    if existing and existing["prerelease"]:
-        raise RuntimeError("Stable publication cannot overwrite a prerelease")
     if current is None:
         api("POST", prefix + "/git/refs", {"ref": "refs/tags/" + tag, "sha": head})
-    latest = "true" if target == "panel" else "false"
+    latest = "true" if target == "panel" and not prerelease else "false"
+    channel_flags = ["--prerelease"] if prerelease else []
     if existing and not existing["draft"]:
         # Publication may have completed before a network failure interrupted
         # anonymous verification. Verify it again without changing public bytes.
         pass
     elif existing:
         subprocess.run(["gh", "release", "upload", tag, *map(str, assets), "--repo", REPO, "--clobber"], check=True)
-        subprocess.run(["gh", "release", "edit", tag, "--repo", REPO, "--draft=false", "--latest=" + latest], check=True)
+        subprocess.run(["gh", "release", "edit", tag, "--repo", REPO, "--draft=false", "--latest=" + latest, *channel_flags], check=True)
     else:
-        subprocess.run(["gh", "release", "create", tag, *map(str, assets), "--repo", REPO, "--verify-tag", "--latest=" + latest, "--title", title, "--notes-file", str(notes)], check=True)
-    report = public_report(target, tag, version, head, assets)
+        subprocess.run(["gh", "release", "create", tag, *map(str, assets), "--repo", REPO, "--verify-tag",
+                        "--latest=" + latest, *channel_flags, "--title", title, "--notes-file", str(notes)], check=True)
+    report = public_report(target, tag, version, head, assets, prerelease)
     Path("release-verification.json").write_text(json.dumps(report, indent=2) + "\n", encoding="utf8")
     with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf8") as stream:
         stream.write(f"Published [{tag}](https://github.com/{REPO}/releases/tag/{tag}) from the verified artifacts of this run.\n")
