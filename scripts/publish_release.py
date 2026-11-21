@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import io
+from itertools import count
 import json
 import os
 from pathlib import Path, PurePosixPath
@@ -99,6 +100,17 @@ def collect_assets(directory, target, version, head):
     return assets
 
 
+def find_draft(prefix, tag):
+    # The by-tag endpoint does not return drafts.
+    for page in count(1):
+        releases = api("GET", f"{prefix}/releases?per_page=100&page={page}")
+        for release in releases:
+            if release["draft"] and release["tag_name"] == tag:
+                return release
+        if len(releases) < 100:
+            return None
+
+
 def public_report(target, tag, version, head, assets, prerelease):
     if target == "panel":
         report = verify_public_release(REPO, tag, version, head, prerelease)
@@ -158,6 +170,14 @@ def main():
         if any(not sig.is_file() or sig.stat().st_size != 64 for sig in signatures):
             raise RuntimeError("Both panel signatures must be staged before publication")
         assets.extend(signatures)
+    if existing is None:
+        existing = find_draft(prefix, tag)
+        if existing and existing["prerelease"] != prerelease:
+            raise RuntimeError("The staged draft has a different release channel")
+    if existing and existing["draft"]:
+        expected = {path.name for path in assets}
+        if any(asset["name"] not in expected for asset in existing.get("assets", [])):
+            raise RuntimeError("The staged draft contains unexpected assets")
     current = resolve_tag(prefix, tag)
     if current is not None and current != head:
         raise RuntimeError("Existing tag points elsewhere; it will not be moved")

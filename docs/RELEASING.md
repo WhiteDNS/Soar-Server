@@ -3,6 +3,10 @@
 Open **Actions → Build and release WhiteDNS → Run workflow**. Select `main`
 and choose `panel` (default) or `standalone`.
 
+For a test release, choose `panel`, enable `prerelease`, and put
+`<!-- release-channel: prerelease -->` on the first line of that version's
+release notes. The workflow requires the selected channel to match the notes.
+
 This is the repository's only release workflow. PRs run the read-only tests in
 `ci.yml`; they cannot publish. Pushes and tags do not start builds.
 The workflow does not merge PRs. Review and merge the intended changes, update
@@ -16,12 +20,14 @@ One run performs:
    race, installer, recovery, package and browser tests. Standalone releases use
    the amd64 runner. Shared checks have one definition.
 3. Download artifacts from those jobs in the **same run**, verify their source,
-   checksums and architectures, create the version tag and publish the release.
+   checksums and architectures, sign the panel checksums, create the version
+   tag and publish the release.
    The release job does not rebuild anything or dispatch another workflow.
 
 All build jobs must pass before publication. Tags are never moved and published
-releases are never overwritten. Panel releases remain the latest release;
-standalone publication does not replace that designation.
+releases are never overwritten. A stable panel release updates GitHub's Latest
+designation and the Docker `latest` tag. Panel prereleases publish the explicit
+version tag only. Standalone releases keep the panel's Latest designation.
 
 If only publication fails, use **Re-run failed jobs**, not **Re-run all jobs**.
 The release job reuses the successful build jobs' artifacts and can resume its
@@ -29,7 +35,7 @@ partial draft upload. It does not repeat verification or builds.
 
 ## Signing panel releases
 
-The release job signs each panel release automatically, right after publishing,
+The release job signs each panel release automatically before publishing,
 as `*.tar.gz.sha256.ci.sig`. Anyone who can run this workflow on `main` can publish
 a release panels will install, with no key to handle. The key lives only in the
 `release` GitHub Environment, as `RELEASE_SIGNING_KEY`, restricted to `main`. Add a
