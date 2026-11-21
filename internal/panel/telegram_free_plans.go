@@ -114,7 +114,7 @@ func (t *Telegram) freePlanMenu(ctx context.Context, action, value string) error
 			{t.button("Edit", "ویرایش", "free:planedit:"+p.ID), button},
 			{t.button("Delete", "حذف", "free:plandelete:"+data), t.button("Back", "بازگشت", "free:plans")},
 		}
-		_, e = t.notify(ctx, t.config(), freePlanSummary(p, t.tr), k)
+		_, e = t.notify(ctx, t.config(), freePlanSummary(p, t.tr)+"\n"+t.freeApprovalMode(p), k)
 		return e
 	case "planpublish", "planhide", "plandelete":
 		revision, e := strconv.ParseUint(rev, 10, 64)

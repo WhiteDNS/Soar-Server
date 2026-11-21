@@ -100,8 +100,11 @@ func (t *Telegram) showFreeEditor(ctx context.Context, d *telegramConversation, 
 		k.Rows = append(k.Rows,
 			[]telegramButton{button("name"), t.button("Engines", "موتورها", prefix+"engines")},
 			[]telegramButton{button("quota"), button("days")},
-			[]telegramButton{t.button("Speed and other limits", "سرعت و محدودیت‌های دیگر", prefix+"limits")},
-			[]telegramButton{save, t.button("Cancel", "لغو", prefix+"cancel")})
+			[]telegramButton{t.button("Speed and other limits", "سرعت و محدودیت‌های دیگر", prefix+"limits")})
+		if d.Setting != "custom" && telegramActor(ctx).Role != telegramFreeAdmin {
+			k.Rows = append(k.Rows, []telegramButton{{Text: t.freeApprovalMode(*d.FreePlan), Data: prefix + "approval"}})
+		}
+		k.Rows = append(k.Rows, []telegramButton{save, t.button("Cancel", "لغو", prefix+"cancel")})
 	}
 	title := t.tr("Edit plan", "ویرایش پلن")
 	if d.Setting == "custom" {
@@ -127,6 +130,14 @@ func (t *Telegram) freeEditorAction(ctx context.Context, value string) error {
 	switch action {
 	case "main", "engines", "limits":
 		return t.showFreeEditor(ctx, d, action, "")
+	case "approval":
+		if d.Setting == "custom" || telegramActor(ctx).Role == telegramFreeAdmin {
+			return ErrNotFound
+		}
+		d.FreePlan.AutoApprove = !d.FreePlan.AutoApprove
+		return t.showFreeEditor(ctx, d, "main", "\n"+t.tr(
+			"Automatic approval applies to new verified requests when capacity is available. Save to apply.",
+			"پذیرش خودکار برای درخواست تازهٔ تأییدشده و در صورت وجود ظرفیت انجام می‌شود. برای اعمال تغییر، ذخیره کنید."))
 	case "cancel":
 		t.conversation = nil
 		if d.Setting == "custom" {
@@ -156,6 +167,13 @@ func (t *Telegram) freeEditorAction(ctx context.Context, value string) error {
 		return ErrNotFound
 	}
 	return t.promptFreeEditor(ctx, d, action, "")
+}
+
+func (t *Telegram) freeApprovalMode(p freePlan) string {
+	if p.AutoApprove {
+		return t.tr("Approval · Automatic", "پذیرش · خودکار")
+	}
+	return t.tr("Approval · Manual", "پذیرش · دستی")
 }
 
 func (t *Telegram) promptFreeEditor(ctx context.Context, d *telegramConversation, field, message string) error {

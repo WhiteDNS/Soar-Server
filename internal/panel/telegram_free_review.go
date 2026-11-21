@@ -115,7 +115,7 @@ func (t *Telegram) executeFreeReview(ctx context.Context, approve bool, keys []s
 			_, e = t.h.store.approveFree(key, now)
 			issued = issued || e == nil
 		} else {
-			e = t.h.store.db.Update(func(tx *bolt.Tx) error { return reviewFree(tx, key, "", now) })
+			e = t.h.store.db.Update(func(tx *bolt.Tx) error { return reviewFree(tx, key, "", now, false) })
 		}
 		id, _, _ := strings.Cut(key, ":")
 		label := t.tr("Approved. The user can get their config from My account when it is ready.", "تأیید شد. پس از آماده‌شدن، کانفیگ از «حساب من» قابل دریافت است.")

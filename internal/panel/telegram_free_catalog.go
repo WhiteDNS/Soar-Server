@@ -21,11 +21,12 @@ var (
 )
 
 type freePlan struct {
-	ID        string
-	Revision  uint64
-	Published bool
-	Days      int
-	Input     ClientInput
+	ID          string
+	Revision    uint64
+	Published   bool
+	AutoApprove bool `json:",omitempty"`
+	Days        int
+	Input       ClientInput
 }
 
 type freeCatalog struct {

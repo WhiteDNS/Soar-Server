@@ -99,7 +99,7 @@ func TestTelegramFreeShorterExpiryPreservesRollingAdmissionHistory(t *testing.T)
 		t.Fatal(err)
 	}
 	_, req, _ := store.freeQueue(now)
-	if err := store.db.Update(func(tx *bolt.Tx) error { return reviewFree(tx, req.Key, "", now) }); err != nil {
+	if err := store.db.Update(func(tx *bolt.Tx) error { return reviewFree(tx, req.Key, "", now, false) }); err != nil {
 		t.Fatal(err)
 	}
 	later := now.Add(2 * time.Hour)

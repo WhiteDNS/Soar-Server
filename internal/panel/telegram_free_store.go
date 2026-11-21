@@ -280,6 +280,10 @@ func (s *Store) freeQueue(now time.Time) (int, telegramFreeRequest, error) {
 }
 
 func (s *Store) approveFree(key string, now time.Time) (Client, error) {
+	return s.issueFree(key, now, false)
+}
+
+func (s *Store) issueFree(key string, now time.Time, automatic bool) (Client, error) {
 	chat, _, _ := strings.Cut(key, ":")
 	id, e := strconv.ParseInt(chat, 10, 64)
 	if e != nil || id < 1 {
@@ -293,7 +297,7 @@ func (s *Store) approveFree(key string, now time.Time) (Client, error) {
 		return Client{}, ErrNotFound
 	}
 	return s.create(req.plan().account(chat, now), false, func(tx *bolt.Tx, account Client) error {
-		return reviewFree(tx, key, account.ID, now)
+		return reviewFree(tx, key, account.ID, now, automatic)
 	})
 }
 
@@ -327,7 +331,7 @@ func (s *Store) cancelFree(id int64, now time.Time) (bool, error) {
 	return cancelled, err
 }
 
-func reviewFree(tx *bolt.Tx, key, accountID string, now time.Time) error {
+func reviewFree(tx *bolt.Tx, key, accountID string, now time.Time, automatic bool) error {
 	chatID, _, _ := strings.Cut(key, ":")
 	b := tx.Bucket(meta).Bucket(freeRequests)
 	if b == nil || b.Get([]byte(chatID)) == nil {
@@ -352,7 +356,7 @@ func reviewFree(tx *bolt.Tx, key, accountID string, now time.Time) error {
 		if blocked {
 			return errFreePaused
 		}
-		if catalog.RestoreHold {
+		if catalog.RestoreHold || automatic && catalog.Paused {
 			return errFreePaused
 		}
 		// Eligibility uses the current policy; approved limits come from the saved request.
@@ -362,12 +366,21 @@ func reviewFree(tx *bolt.Tx, key, accountID string, now time.Time) error {
 		if !ok || !catalog.offers(current) || !catalog.offers(snapshot) {
 			return errFreePlanUnavailable
 		}
+		if automatic && (!current.AutoApprove || !snapshot.AutoApprove || current.Revision != snapshot.Revision) {
+			return errFreePlanUnavailable
+		}
 		if e = checkFreeCapacity(tx, b, now, snapshot.Input.StreamLimit, "", catalog.limits()); e != nil {
 			return e
 		}
 	}
 	req.Reviewed, req.DecidedAt, req.Reason, req.AccountID = true, now, "", accountID
-	return putJSON(b, []byte(chatID), req)
+	if err := putJSON(b, []byte(chatID), req); err != nil {
+		return err
+	}
+	if automatic {
+		return addEvent(tx, "telegram.free_auto_approved", accountID)
+	}
+	return nil
 }
 
 func markFreeAccountRemoved(tx *bolt.Tx, id string, now time.Time) error {

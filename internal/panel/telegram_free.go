@@ -418,7 +418,8 @@ func (t *Telegram) handleFreeUpdate(ctx context.Context, c TelegramConfig, from 
 		if !live.FreeAccess || live.Token != c.Token {
 			return
 		}
-		switch store.submitFreePlan(from.ID, token()[:12], reason, challenge.Plan, now) {
+		nonce := token()[:12]
+		switch store.submitFreePlan(from.ID, nonce, reason, challenge.Plan, now) {
 		case nil:
 			_ = store.updateFreeMember(from.ID, now, func(m *freeMember) {
 				m.Started = true
@@ -426,6 +427,18 @@ func (t *Telegram) handleFreeUpdate(ctx context.Context, c TelegramConfig, from 
 					m.Language = language
 				}
 			})
+			if challenge.Plan.AutoApprove {
+				if t.approveVerifiedFree(ctx, c.Token, from.ID, nonce, now) {
+					send("Your request was approved automatically. Open My account to get your configuration when it is ready.",
+						"درخواست شما خودکار تأیید شد. پس از آماده‌شدن، کانفیگ را از «حساب من» بگیرید.",
+						telegramKeyboard{Rows: [][]telegramButton{{button("My account", "حساب من", "status")}}})
+					return
+				}
+				send("Your request was registered. If approval could not be completed automatically, an administrator will review it. Check My account for the current decision.",
+					"درخواست ثبت شد. اگر پذیرش خودکار انجام نشده باشد، مدیر آن را بررسی می‌کند. آخرین وضعیت را در «حساب من» ببینید.",
+					telegramKeyboard{Rows: [][]telegramButton{{button("Track request", "پیگیری درخواست", "status")}}})
+				return
+			}
 			send("Your request was registered. The administrator will review it. Follow the result in My account.", "درخواست ثبت شد و مدیر آن را بررسی می‌کند. نتیجه را در «حساب من» پیگیری کنید.",
 				telegramKeyboard{Rows: [][]telegramButton{{button("Track request", "پیگیری درخواست", "status")}}})
 		case errFreeQueueFull:
@@ -448,6 +461,24 @@ func (t *Telegram) handleFreeUpdate(ctx context.Context, c TelegramConfig, from 
 		send(en, fa,
 			telegramKeyboard{Rows: [][]telegramButton{{button("Request a free configuration", "درخواست کانفیگ رایگان", "request")}}})
 	}
+}
+
+func (t *Telegram) approveVerifiedFree(ctx context.Context, botToken string, user int64, nonce string, now time.Time) bool {
+	if revision, worker := ctx.Value(freePublicConfigKey{}).(uint64); worker {
+		// Order automatic issuance with the administrator's emergency stop and role changes.
+		t.opMu.Lock()
+		defer t.opMu.Unlock()
+		if t.freeRevision != revision {
+			return false
+		}
+	}
+	live := t.config()
+	if ctx.Err() != nil || !live.Enabled || !live.FreeAccess || live.Token != botToken || live.administratorRole(user) != "" {
+		return false
+	}
+	key := strconv.FormatInt(user, 10) + ":" + nonce
+	_, err := t.h.store.issueFree(key, now, true)
+	return err == nil
 }
 
 func freeRetryDate(at time.Time) (en, fa string) {
