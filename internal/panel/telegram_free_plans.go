@@ -159,6 +159,8 @@ func (t *Telegram) freeAdminReply(ctx context.Context, d *telegramConversation, 
 	kind, value, _ := strings.Cut(d.Setting, ":")
 	s := t.h.store
 	switch kind {
+	case "membership":
+		return t.addFreeMembershipChat(ctx, d.FreeRevision, text)
 	case "limit":
 		return t.saveFreeLimit(ctx, d, value, text)
 	case "administrator":

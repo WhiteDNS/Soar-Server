@@ -317,12 +317,14 @@ func (t *Telegram) sendFreeRequestDigest(ctx context.Context, c TelegramConfig, 
 			return errors.Join(result, ctx.Err())
 		}
 		unread := make(map[string]string)
+		var applicants []string
 		for _, r := range pending {
 			if recipient == c.ChatID && r.Notified || slices.Contains(r.NotifiedAdmins, recipient) {
 				continue
 			}
 			chat, _, _ := strings.Cut(r.Key, ":")
 			unread[chat] = r.Key
+			applicants = append(applicants, r.displayUser())
 		}
 		if len(unread) == 0 {
 			continue
@@ -340,6 +342,7 @@ func (t *Telegram) sendFreeRequestDigest(ctx context.Context, c TelegramConfig, 
 			text = telegramPersianDigits.Replace(fmt.Sprintf("🔔 %d درخواست تازه\n%d درخواست در انتظار بررسی است. برای دیدن پلن و دلیل کاربران، صف را باز کنید.", len(unread), len(pending)))
 			button.Text = "مشاهدهٔ درخواست‌ها"
 		}
+		text += "\n\n" + strings.Join(applicants, "\n")
 		owner := live.ChatID
 		live.ChatID = recipient
 		if _, e = t.sendText(ctx, live, text, telegramKeyboard{Rows: [][]telegramButton{{button}}}); e != nil {

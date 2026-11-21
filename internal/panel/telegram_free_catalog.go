@@ -30,13 +30,16 @@ type freePlan struct {
 }
 
 type freeCatalog struct {
-	Revision    uint64
-	Allowed     string
-	Paused      bool
-	RestoreHold bool
-	Plans       []freePlan
-	Text        map[string]string
-	Limits      *freeLimits `json:",omitempty"`
+	Revision     uint64
+	Allowed      string
+	Paused       bool
+	RestoreHold  bool
+	Plans        []freePlan
+	Text         map[string]string
+	Limits       *freeLimits        `json:",omitempty"`
+	JoinRequired bool               `json:",omitempty"`
+	JoinRevision uint64             `json:",omitempty"`
+	JoinChats    []freeRequiredChat `json:",omitempty"`
 }
 
 func defaultFreePlan() freePlan {
@@ -95,6 +98,9 @@ func (c freeCatalog) offers(p freePlan) bool {
 }
 
 func (c freeCatalog) validate() error {
+	if err := c.validateJoinChats(); err != nil {
+		return err
+	}
 	if !validEngines(c.Allowed) || len(c.Plans) > freePlanLimit || len(c.Text) > 6 {
 		return errors.New("invalid free configuration catalogue")
 	}

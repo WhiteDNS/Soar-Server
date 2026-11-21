@@ -42,7 +42,7 @@ func (t *Telegram) showFreeReview(ctx context.Context, action, value, result str
 			if t.language() == "fa" {
 				at = telegramPersianDigits.Replace(at)
 			}
-			_, e = t.notify(ctx, t.config(), t.tr("Telegram ID", "شناسهٔ تلگرام")+" "+chat+" · "+at+"\n"+freePlanSummary(req.plan(), t.tr)+"\n\n"+
+			_, e = t.notify(ctx, t.config(), t.tr("Telegram ID", "شناسهٔ تلگرام")+" "+req.displayUser()+" · "+at+"\n"+freePlanSummary(req.plan(), t.tr)+"\n\n"+
 				t.tr("User explanation", "توضیح کاربر")+"\n"+req.Reason+"\n\n"+
 				t.tr("Approval creates an account using these terms. Rejection starts the configured waiting period. Manage this user can allow an earlier request.",
 					"تأیید، حسابی با همین شرایط می‌سازد. با رد درخواست، مهلت تنظیم‌شده شروع می‌شود. از «مدیریت این کاربر» می‌توانید درخواست زودتر را مجاز کنید."), k)
@@ -58,14 +58,13 @@ func (t *Telegram) showFreeReview(ctx context.Context, action, value, result str
 			chosen = !chosen
 		}
 		mark := "☐"
-		chat, _, _ := strings.Cut(req.Key, ":")
 		if chosen {
 			mark = "☑"
 			selected = append(selected, req.Key)
-			preview = append(preview, chat+" · "+req.plan().Input.Name)
+			preview = append(preview, req.displayUser()+" · "+req.plan().Input.Name)
 		}
 		k.Rows = append(k.Rows, []telegramButton{
-			{Text: chat + " · " + req.plan().Input.Name, Data: "free:requestdetail:" + req.Key},
+			{Text: req.displayUser() + " · " + req.plan().Input.Name, Data: "free:requestdetail:" + req.Key},
 			{Text: mark, Data: "free:select:" + req.Key},
 		})
 	}
@@ -109,10 +108,14 @@ func (t *Telegram) executeFreeReview(ctx context.Context, approve bool, keys []s
 	var outcomes []string
 	recipients := make(map[string][]string)
 	issued := false
-	for _, key := range keys {
+	checks := t.freeReviewProofs(ctx, approve, keys)
+	for i, key := range keys {
 		var e error
 		if approve {
-			_, e = t.h.store.approveFree(key, now)
+			e = checks[i].err
+			if e == nil {
+				_, e = t.h.store.issueFree(key, t.now(), false, checks[i].proof)
+			}
 			issued = issued || e == nil
 		} else {
 			e = t.h.store.db.Update(func(tx *bolt.Tx) error { return reviewFree(tx, key, "", now, false) })
@@ -128,6 +131,10 @@ func (t *Telegram) executeFreeReview(ctx context.Context, approve bool, keys []s
 			t.queueFreeNotice(c, recipient)
 		case errors.Is(e, ErrNotFound):
 			label = t.tr("Expired or already reviewed", "منقضی یا بررسی‌شده")
+		case errors.Is(e, errFreeJoinMissing):
+			label = t.tr("Still pending. The user must join the required chats.", "در انتظار ماند. کاربر باید عضو کانال‌ها و گروه‌های الزامی باشد.")
+		case errors.Is(e, errFreeJoinUnavailable):
+			label = t.tr("Still pending. Telegram could not verify membership. Check bot access or try again.", "در انتظار ماند. بررسی عضویت ممکن نشد. دسترسی ربات را بررسی کنید یا دوباره تلاش کنید.")
 		case errors.Is(e, errFreeDailyLimit):
 			label = t.tr("Still pending. The 24-hour issuance limit is full.", "در انتظار ماند. سقف صدور در ۲۴ ساعت پر است.")
 		case errors.Is(e, errFreePanelSlots):

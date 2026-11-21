@@ -50,6 +50,8 @@ func (t *Telegram) manageFree(ctx context.Context, data string) error {
 		return e
 	case "options":
 		return t.freeOptions(ctx)
+	case "membership":
+		return t.freeMembershipMenu(ctx, value, "")
 	case "limits":
 		return t.freeLimitsMenu(ctx, value, "")
 	case "queue", "select", "selectall", "unselect", "requestdetail", "approve", "reject", "bulkapprove", "bulkreject":
@@ -249,8 +251,11 @@ func (t *Telegram) freeOptions(ctx context.Context) error {
 		}
 		k.Rows = append(k.Rows, []telegramButton{mode})
 	}
-	k.Rows = append(k.Rows, []telegramButton{toggle}, []telegramButton{t.button("Edit public messages", "ویرایش متن‌های عمومی", "free:texts")},
-		[]telegramButton{t.button("Back to dashboard", "بازگشت به داشبورد", "free:manage")})
+	k.Rows = append(k.Rows, []telegramButton{toggle}, []telegramButton{t.button("Edit public messages", "ویرایش متن‌های عمومی", "free:texts")})
+	if telegramActor(ctx).Role == telegramOwner {
+		k.Rows = append(k.Rows, []telegramButton{t.button("Required membership", "عضویت اجباری", "free:membership")})
+	}
+	k.Rows = append(k.Rows, []telegramButton{t.button("Back to dashboard", "بازگشت به داشبورد", "free:manage")})
 	text := t.tr("Public access and messages", "دسترسی و متن‌های عمومی") + "\n" + t.freeAccessSummary(c, catalog)
 	_, e = t.notify(ctx, c, text, k)
 	return e
@@ -306,7 +311,11 @@ func (t *Telegram) executeFree(ctx context.Context, c *telegramConfirmation) err
 		if t.config().administratorRole(c.FreeChat) != "" {
 			return errTelegramUserID
 		}
-		if e := t.h.store.saveFreeCustom(c.FreeChat, *c.FreePlan, c.ID, c.Revision, t.now()); e != nil {
+		proof, err := t.freeIssuanceProof(ctx, c.FreeChat)
+		if err != nil {
+			return err
+		}
+		if e := t.h.store.saveFreeCustom(c.FreeChat, *c.FreePlan, c.ID, c.Revision, t.now(), proof); e != nil {
 			return e
 		}
 		t.queueFreeNotice(t.config(), c.FreeChat)
@@ -320,7 +329,11 @@ func (t *Telegram) executeFree(ctx context.Context, c *telegramConfirmation) err
 		if t.config().administratorRole(c.FreeChat) != "" {
 			return errTelegramUserID
 		}
-		if e := t.h.store.linkFreeAccount(c.FreeChat, c.ID, c.FreeRevision, t.now()); e != nil {
+		proof, err := t.freeIssuanceProof(ctx, c.FreeChat)
+		if err != nil {
+			return err
+		}
+		if e := t.h.store.linkFreeAccount(c.FreeChat, c.ID, c.FreeRevision, t.now(), proof); e != nil {
 			return e
 		}
 		t.queueFreeNotice(t.config(), c.FreeChat)

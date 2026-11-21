@@ -39,6 +39,7 @@ var (
 type telegramFreeRequest struct {
 	Key             string
 	Reason          string `json:",omitempty"`
+	Username        string `json:",omitempty"`
 	AccountID       string `json:",omitempty"`
 	Reviewed        bool
 	At              time.Time
@@ -171,8 +172,15 @@ func (s *Store) setFreeRetry(chatID int64, expected string, allow bool, now time
 }
 
 func (s *Store) submitFreePlan(chatID int64, nonce, reason string, plan freePlan, now time.Time) error {
+	return s.submitFreeApplication(chatID, nonce, reason, "", plan, now)
+}
+
+func (s *Store) submitFreeApplication(chatID int64, nonce, reason, username string, plan freePlan, now time.Time, proof ...freeMembershipProof) error {
 	if chatID <= 0 || len(nonce) != 12 || !validFreeReason(reason) {
 		return errors.New("invalid free configuration request")
+	}
+	if !validTelegramUsername(username) {
+		username = ""
 	}
 	return s.db.Update(func(tx *bolt.Tx) error {
 		catalog, e := readFreeCatalog(tx)
@@ -181,6 +189,9 @@ func (s *Store) submitFreePlan(chatID int64, nonce, reason string, plan freePlan
 		}
 		if catalog.Paused || catalog.RestoreHold {
 			return errFreePaused
+		}
+		if e = catalog.checkJoinProof(chatID, now, proof); e != nil {
+			return e
 		}
 		p, ok := catalog.plan(plan.ID)
 		if !ok || p.Revision != plan.Revision || !catalog.offers(p) {
@@ -201,7 +212,7 @@ func (s *Store) submitFreePlan(chatID int64, nonce, reason string, plan freePlan
 		limits := catalog.limits()
 		var outdated [][]byte
 		pending, recent := 0, 0
-		next := telegramFreeRequest{Key: chat + ":" + nonce, Reason: reason, At: now, Plan: &p}
+		next := telegramFreeRequest{Key: chat + ":" + nonce, Reason: reason, Username: username, At: now, Plan: &p}
 		e = b.ForEach(func(k, raw []byte) error {
 			var req telegramFreeRequest
 			if e := json.Unmarshal(raw, &req); e != nil {
@@ -283,7 +294,7 @@ func (s *Store) approveFree(key string, now time.Time) (Client, error) {
 	return s.issueFree(key, now, false)
 }
 
-func (s *Store) issueFree(key string, now time.Time, automatic bool) (Client, error) {
+func (s *Store) issueFree(key string, now time.Time, automatic bool, proof ...freeMembershipProof) (Client, error) {
 	chat, _, _ := strings.Cut(key, ":")
 	id, e := strconv.ParseInt(chat, 10, 64)
 	if e != nil || id < 1 {
@@ -297,7 +308,7 @@ func (s *Store) issueFree(key string, now time.Time, automatic bool) (Client, er
 		return Client{}, ErrNotFound
 	}
 	return s.create(req.plan().account(chat, now), false, func(tx *bolt.Tx, account Client) error {
-		return reviewFree(tx, key, account.ID, now, automatic)
+		return reviewFree(tx, key, account.ID, now, automatic, proof...)
 	})
 }
 
@@ -331,7 +342,7 @@ func (s *Store) cancelFree(id int64, now time.Time) (bool, error) {
 	return cancelled, err
 }
 
-func reviewFree(tx *bolt.Tx, key, accountID string, now time.Time, automatic bool) error {
+func reviewFree(tx *bolt.Tx, key, accountID string, now time.Time, automatic bool, proof ...freeMembershipProof) error {
 	chatID, _, _ := strings.Cut(key, ":")
 	b := tx.Bucket(meta).Bucket(freeRequests)
 	if b == nil || b.Get([]byte(chatID)) == nil {
@@ -349,6 +360,10 @@ func reviewFree(tx *bolt.Tx, key, accountID string, now time.Time, automatic boo
 		return ErrNotFound
 	}
 	if accountID != "" {
+		user, _ := strconv.ParseInt(chatID, 10, 64)
+		if err := catalog.checkJoinProof(user, now, proof); err != nil {
+			return err
+		}
 		blocked, e := blockedFreeMember(tx, []byte(chatID))
 		if e != nil {
 			return e
@@ -456,7 +471,7 @@ func checkFreeCapacity(tx *bolt.Tx, b *bolt.Bucket, now time.Time, streams int, 
 	return nil
 }
 
-func (s *Store) saveFreeCustom(chatID int64, plan freePlan, expected string, revision uint64, now time.Time) error {
+func (s *Store) saveFreeCustom(chatID int64, plan freePlan, expected string, revision uint64, now time.Time, proof ...freeMembershipProof) error {
 	if e := plan.validate(); e != nil {
 		return e
 	}
@@ -466,6 +481,9 @@ func (s *Store) saveFreeCustom(chatID int64, plan freePlan, expected string, rev
 	save := func(tx *bolt.Tx, account Client) error {
 		catalog, e := readFreeCatalog(tx)
 		if e != nil {
+			return e
+		}
+		if e = catalog.checkJoinProof(chatID, now, proof); e != nil {
 			return e
 		}
 		m, e := readFreeMember(tx.Bucket(meta).Bucket(freeMembers), key)
@@ -533,7 +551,7 @@ func (s *Store) saveFreeCustom(chatID int64, plan freePlan, expected string, rev
 	})
 }
 
-func (s *Store) linkFreeAccount(chatID int64, accountID string, revision uint64, now time.Time) error {
+func (s *Store) linkFreeAccount(chatID int64, accountID string, revision uint64, now time.Time, proof ...freeMembershipProof) error {
 	return s.db.Update(func(tx *bolt.Tx) error {
 		account, e := getClient(tx, accountID)
 		if e != nil {
@@ -548,6 +566,9 @@ func (s *Store) linkFreeAccount(chatID int64, accountID string, revision uint64,
 		}
 		catalog, e := readFreeCatalog(tx)
 		if e != nil {
+			return e
+		}
+		if e = catalog.checkJoinProof(chatID, now, proof); e != nil {
 			return e
 		}
 		chat := strconv.FormatInt(chatID, 10)
@@ -638,7 +659,8 @@ func inspectFreeRequests(tx *bolt.Tx) error {
 		const invalid = "invalid Telegram free configuration record"
 		var req telegramFreeRequest
 		if !validFreeChatID(string(k)) || len(raw) > 128<<10 ||
-			json.Unmarshal(raw, &req) != nil || req.At.IsZero() {
+			json.Unmarshal(raw, &req) != nil || req.At.IsZero() ||
+			(req.Username != "" && !validTelegramUsername(req.Username)) {
 			return errors.New(invalid)
 		}
 		chat, nonce, _ := strings.Cut(req.Key, ":")
