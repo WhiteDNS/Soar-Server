@@ -308,7 +308,7 @@ func (t *Telegram) pollingConnection(generation uint64, err error) {
 	}
 }
 func (t *Telegram) call(ctx context.Context, c TelegramConfig, method string, body any, out any) error {
-	if e := t.waitAPI(ctx, method == "sendMessage" || method == "sendDocument"); e != nil {
+	if e := t.waitAPI(ctx, method == "sendMessage" || method == "editMessageText" || method == "sendDocument"); e != nil {
 		return e
 	}
 	raw, e := json.Marshal(body)
@@ -332,10 +332,11 @@ func (t *Telegram) request(ctx context.Context, req *http.Request, out any) erro
 	}
 	defer resp.Body.Close()
 	var envelope struct {
-		OK         bool            `json:"ok"`
-		Result     json.RawMessage `json:"result"`
-		Code       int             `json:"error_code"`
-		Parameters struct {
+		OK          bool            `json:"ok"`
+		Result      json.RawMessage `json:"result"`
+		Code        int             `json:"error_code"`
+		Description string          `json:"description"`
+		Parameters  struct {
 			Retry int `json:"retry_after"`
 		} `json:"parameters"`
 	}
@@ -348,6 +349,9 @@ func (t *Telegram) request(ctx context.Context, req *http.Request, out any) erro
 			code = resp.StatusCode
 		}
 		t.deferAPI(req.Context(), envelope.Parameters.Retry)
+		if code == http.StatusBadRequest && strings.Contains(envelope.Description, "message is not modified") {
+			return errTelegramMenuUnchanged
+		}
 		return &telegramAPIError{code, envelope.Parameters.Retry}
 	}
 	if out != nil {
@@ -377,6 +381,24 @@ func (t *Telegram) notify(ctx context.Context, c TelegramConfig, text string, ke
 
 func (t *Telegram) sendText(ctx context.Context, c TelegramConfig, text string, markup any) (int64, error) {
 	body := map[string]any{"chat_id": c.ChatID, "text": text, "link_preview_options": map[string]bool{"is_disabled": true}}
+	if keyboard, ok := markup.(telegramKeyboard); ok {
+		body["reply_markup"] = styledTelegramKeyboard(keyboard)
+		menu, _ := ctx.Value(telegramMenuKey{}).(*telegramMenuMessage)
+		if menu != nil && menu.chat == c.ChatID && !menu.used {
+			menu.used = true
+			body["message_id"] = menu.message
+			e := t.call(ctx, c, "editMessageText", body, nil)
+			if e == nil || errors.Is(e, errTelegramMenuUnchanged) {
+				return menu.message, nil
+			}
+			var api *telegramAPIError
+			if !errors.As(e, &api) || api.Code != http.StatusBadRequest {
+				return 0, e
+			}
+			delete(body, "message_id")
+		}
+		markup = body["reply_markup"]
+	}
 	// Telegram rejects explicit null reply_markup; omit it for plain messages.
 	if markup != nil {
 		body["reply_markup"] = markup
@@ -708,6 +730,9 @@ func (t *Telegram) Run(ctx context.Context) {
 	defer func() { stopSchedule(); <-scheduleDone }()
 	backoff := time.Second
 	var registered uint64 = ^uint64(0)
+	var commandsPublic bool
+	var commandsLanguage string
+	var nextRegistration time.Time
 	for ctx.Err() == nil {
 		t.mu.Lock()
 		c, g := t.cfg, t.generation
@@ -720,12 +745,14 @@ func (t *Telegram) Run(ctx context.Context) {
 			}
 			continue
 		}
-		if registered != g && c.ChatID > 0 {
-			commands := []map[string]string{{"command": "start", "description": "Open management / مدیریت"}, {"command": "stats", "description": "Current server stats / آمار سرور"}, {"command": "help", "description": "Help / راهنما"}, {"command": "menu", "description": "Main menu / منو"}, {"command": "settings", "description": "Server settings / تنظیمات سرور"}, {"command": "backup", "description": "Backups / پشتیبان"}, {"command": "restore", "description": "Restore backup / بازیابی"}, {"command": "diagnostics", "description": "Diagnostics / عیب‌یابی"}, {"command": "access", "description": "Panel address / آدرس پنل"}, {"command": "cancel", "description": "Cancel / لغو"}}
-			if e := t.call(ctx, c, "setMyCommands", map[string]any{"commands": commands, "scope": map[string]any{"type": "chat", "chat_id": c.ChatID}}, nil); e != nil {
-				t.connection(e)
+		if c.ChatID > 0 && (registered != g || commandsPublic != c.FreeAccess || commandsLanguage != c.Language) && !time.Now().Before(nextRegistration) {
+			job, cancel := context.WithTimeout(ctx, 5*time.Second)
+			e := t.syncTelegramCommands(job, c)
+			cancel()
+			if e == nil {
+				registered, commandsPublic, commandsLanguage = g, c.FreeAccess, c.Language
 			} else {
-				registered = g
+				nextRegistration = time.Now().Add(30 * time.Second)
 			}
 		}
 		t.opMu.Lock()
@@ -907,6 +934,7 @@ func (t *Telegram) handleUpdate(ctx context.Context, u telegramUpdate) error {
 	}
 	var e error
 	if u.Callback != nil {
+		ctx = withTelegramMenu(ctx, chat.ID, u.Callback.Message.ID)
 		e = t.call(ctx, c, "answerCallbackQuery", map[string]any{"callback_query_id": u.Callback.ID}, nil)
 		if e == nil {
 			e = t.callback(ctx, u.Callback.Data)

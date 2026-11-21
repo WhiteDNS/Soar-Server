@@ -15,9 +15,10 @@ import (
 )
 
 type telegramButton struct {
-	Text string `json:"text"`
-	Data string `json:"callback_data,omitempty"`
-	URL  string `json:"url,omitempty"`
+	Text  string `json:"text"`
+	Data  string `json:"callback_data,omitempty"`
+	URL   string `json:"url,omitempty"`
+	Style string `json:"style,omitempty"`
 }
 type telegramKeyboard struct {
 	Rows [][]telegramButton `json:"inline_keyboard"`
@@ -32,6 +33,7 @@ type telegramConversation struct {
 	Creating              bool
 	FreePlan              *freePlan
 	FreeRevision          uint64
+	FreeChat, MenuID      int64
 	ActiveOnly            bool
 	ListPage              int
 }
@@ -65,12 +67,12 @@ func (t *Telegram) button(en, fa, data string) telegramButton {
 }
 func (t *Telegram) homeKeyboard() telegramKeyboard {
 	return telegramKeyboard{Rows: [][]telegramButton{
+		{t.button("🎁 Free configs", "🎁 داشبورد کانفیگ رایگان", "free:manage")},
 		{t.button("👥 Users", "👥 کاربران", "users:0"), t.button("➕ Add user", "➕ افزودن کاربر", "new")},
 		{t.button("📊 Server status", "📊 وضعیت سرور", "status"), t.button("🔄 Restart", "🔄 راه‌اندازی مجدد", "restart")},
 		{t.button("⬆️ Updates", "⬆️ به‌روزرسانی", "updates"), t.button("⚙️ Preferences", "⚙️ ترجیحات", "prefs")},
 		{t.button("⚙️ Server settings", "⚙️ تنظیمات سرور", "server"), t.button("🩺 Diagnostics", "🩺 عیب‌یابی", "diagnostics")},
 		{t.button("💾 Backups", "💾 پشتیبان و بازیابی", "backups"), t.button("🌐 Panel access", "🌐 دسترسی پنل", "access")},
-		{t.button("🎁 Free configs", "🎁 کانفیگ رایگان", "free:manage")},
 	}}
 }
 func (t *Telegram) home(ctx context.Context) error {
@@ -91,13 +93,19 @@ func (t *Telegram) errorText(e error) string {
 	case errors.Is(e, ErrConflict):
 		return "اطلاعات هم‌زمان تغییر کرده است. فرم را دوباره باز کنید."
 	case errors.Is(e, ErrNotFound):
-		return "حساب پیدا نشد. فهرست را تازه کنید."
+		return "این مورد پیدا نشد. فهرست را تازه کنید."
+	case errors.Is(e, errFreePaused):
+		return "دسترسی عمومی یا پذیرش درخواست متوقف است. تنظیمات عمومی را بررسی کنید."
+	case errors.Is(e, errFreePlanUnavailable):
+		return "این پلن یا یکی از موتورهای آن غیرفعال است. پلن‌ها و موتورهای عمومی را بررسی کنید."
+	case errors.Is(e, errFreeDailyLimit), errors.Is(e, errFreeCapacity):
+		return "ظرفیت صدور حساب رایگان تکمیل شده است."
 	case strings.Contains(e.Error(), "confirmation"):
 		return "تأیید منقضی یا قبلاً استفاده شده است. عملیات را دوباره انتخاب کنید."
 	case strings.Contains(e.Error(), "invalid") || strings.Contains(e.Error(), "must") || strings.Contains(e.Error(), "required"):
-		return "مقدار معتبر نیست؛ راهنمای فیلد را بررسی و دوباره تلاش کنید. (" + e.Error() + ")"
+		return "مقدار واردشده معتبر نیست. راهنمای فیلد را بررسی کنید و دوباره تلاش کنید."
 	default:
-		return "عملیات انجام نشد؛ وضعیت را بررسی و دوباره تلاش کنید. (" + e.Error() + ")"
+		return "عملیات انجام نشد. وضعیت را بررسی کنید و دوباره تلاش کنید."
 	}
 }
 func (t *Telegram) message(ctx context.Context, m telegramMessage) error {
@@ -134,11 +142,15 @@ func (t *Telegram) message(ctx context.Context, m telegramMessage) error {
 	if m.Reply == nil || m.Reply.ID != d.Prompt {
 		return errors.New(t.tr("reply to the current prompt, or use /cancel", "به پیام پرسش فعلی پاسخ دهید یا /cancel را بفرستید"))
 	}
+	ctx = withTelegramMenu(ctx, t.config().ChatID, d.MenuID)
 	if d.Field == "management" {
 		return t.managementReply(ctx, d, text)
 	}
 	if d.Field == "free" {
 		return t.freeAdminReply(ctx, d, text)
+	}
+	if d.FreePlan != nil {
+		return t.freeEditorReply(ctx, d, text)
 	}
 	if d.Field == "search" {
 		q := text
@@ -303,9 +315,9 @@ func (t *Telegram) prompt(ctx context.Context, field string) error {
 	prompts := map[string]string{
 		"name":      t.tr("Reply with the account name (max 160 bytes).", "نام حساب را در پاسخ بفرستید (حداکثر ۱۶۰ بایت)."),
 		"note":      t.tr("Reply with a note (max 2048 bytes); send - to clear.", "یادداشت را در پاسخ بفرستید (حداکثر ۲۰۴۸ بایت)؛ برای حذف - بفرستید."),
-		"quota":     t.tr("Reply with quota in GiB; 0 means unlimited.", "حجم را به GiB در پاسخ بفرستید؛ ۰ یعنی نامحدود."),
+		"quota":     t.tr("Reply with quota in GiB; 0 means unlimited.", "حجم را به گیبی‌بایت در پاسخ بفرستید؛ ۰ یعنی نامحدود."),
 		"expiry":    t.tr("Reply with expiry: YYYY-MM-DD HH:MM (Gregorian, "+t.config().Timezone+"); 0 means no expiry.", "انقضا را با تاریخ میلادی YYYY-MM-DD HH:MM در منطقهٔ "+t.config().Timezone+" بفرستید؛ ۰ یعنی بدون انقضا."),
-		"rate":      t.tr("Reply with speed in KiB/s; 0 means unlimited.", "سرعت را به KiB/s در پاسخ بفرستید؛ ۰ یعنی نامحدود."),
+		"rate":      t.tr("Reply with speed in KiB/s; 0 means unlimited.", "سرعت را به کیبی‌بایت بر ثانیه در پاسخ بفرستید؛ ۰ یعنی نامحدود."),
 		"streams":   t.tr("Reply with TCP stream limit (0–2147483647); 0 means unlimited, not device count.", "سقف جریان TCP را بفرستید (۰ تا ۲۱۴۷۴۸۳۶۴۷)؛ ۰ نامحدود است. تعداد دستگاه نیست."),
 		"soar":      t.tr("Reply with Soar session limit (1–32768).", "سقف نشست Soar را بفرستید (۱ تا ۳۲۷۶۸)."),
 		"masterdns": t.tr("Reply with MasterDNS session limit (1–255).", "سقف نشست MasterDNS را بفرستید (۱ تا ۲۵۵)."),
@@ -320,6 +332,9 @@ func (t *Telegram) prompt(ctx context.Context, field string) error {
 	if e == nil {
 		t.conversation.Field = field
 		t.conversation.Prompt = id
+		if menu, ok := ctx.Value(telegramMenuKey{}).(*telegramMenuMessage); ok {
+			t.conversation.MenuID = menu.message
+		}
 	}
 	return e
 }
@@ -433,8 +448,8 @@ func (t *Telegram) chooseQuota(ctx context.Context) error {
 	}
 	d.Field = ""
 	p := "set:" + d.Key + ":quota:"
-	k := telegramKeyboard{Rows: [][]telegramButton{{t.button("1 GiB", "۱ GiB", p+"1"), t.button("5 GiB", "۵ GiB", p+"5"), t.button("10 GiB", "۱۰ GiB", p+"10"), t.button("20 GiB", "۲۰ GiB", p+"20")}, {t.button("Unlimited", "نامحدود", p+"0"), t.button("Custom", "دلخواه", p+"custom")}, {t.button("❌ Cancel", "❌ لغو", "home")}}}
-	_, e := t.notify(ctx, t.config(), t.tr("📦 Choose account quota.", "📦 حجم حساب را انتخاب کنید."), k)
+	k := telegramKeyboard{Rows: [][]telegramButton{{t.button("1", "۱", p+"1"), t.button("5", "۵", p+"5"), t.button("10", "۱۰", p+"10"), t.button("20", "۲۰", p+"20")}, {t.button("Unlimited", "نامحدود", p+"0"), t.button("Custom", "دلخواه", p+"custom")}, {t.button("❌ Cancel", "❌ لغو", "home")}}}
+	_, e := t.notify(ctx, t.config(), t.tr("📦 Choose account quota in GiB.", "📦 حجم حساب را به گیبی‌بایت انتخاب کنید."), k)
 	return e
 }
 func (t *Telegram) chooseExpiry(ctx context.Context) error {
@@ -472,7 +487,15 @@ func (t *Telegram) draftSummary(d *telegramConversation) string {
 		loc, _ := time.LoadLocation(t.config().Timezone)
 		expiry = time.UnixMilli(in.ExpiresAt).In(loc).Format("2006-01-02 15:04") + " " + loc.String()
 	}
-	return fmt.Sprintf(t.tr("📝 Review account\nName: %s\nEngines: %s\nEnabled: %t\nQuota: %.2f GiB (0 = unlimited)\nExpiry: %s\nSpeed: %.2f KiB/s (0 = unlimited)\nTCP streams: %d (0 = unlimited)\nSessions Soar/Cotten/MasterDNS: %d / %d / %d\nNote: %s", "📝 بررسی حساب\nنام: %s\nموتور: %s\nفعال: %t\nحجم: %.2f GiB (۰ نامحدود)\nانقضا: %s\nسرعت: %.2f KiB/s (۰ نامحدود)\nجریان TCP: %d (۰ نامحدود)\nنشست Soar/Cotten/MasterDNS: %d / %d / %d\nیادداشت: %s"), in.Name, in.Engines, in.Enabled, float64(in.QuotaBytes)/(1<<30), expiry, float64(in.RateBytes)/1024, in.StreamLimit, soar, cotten, master, in.Note)
+	engines := make([]string, 0, len(engineSelections[in.Engines]))
+	for _, engine := range engineSelections[in.Engines] {
+		engines = append(engines, freeEngineName(engine))
+	}
+	enabled := t.tr("No", "خیر")
+	if in.Enabled {
+		enabled = t.tr("Yes", "بله")
+	}
+	return fmt.Sprintf(t.tr("📝 Review account\nName: %s\nEngines: %s\nEnabled: %s\nQuota: %.2f GiB (0 = unlimited)\nExpiry: %s\nSpeed: %.2f KiB/s (0 = unlimited)\nTCP streams: %d (0 = unlimited)\nSessions Soar/Cotten/MasterDNS: %d / %d / %d\nNote: %s", "📝 بررسی حساب\nنام: %s\nموتور: %s\nفعال: %s\nحجم: %.2f گیبی‌بایت (۰ نامحدود)\nانقضا: %s\nسرعت: %.2f کیبی‌بایت بر ثانیه (۰ نامحدود)\nجریان TCP: %d (۰ نامحدود)\nنشست Soar/Cotten/MasterDNS: %d / %d / %d\nیادداشت: %s"), in.Name, strings.Join(engines, " + "), enabled, float64(in.QuotaBytes)/(1<<30), expiry, float64(in.RateBytes)/1024, in.StreamLimit, soar, cotten, master, in.Note)
 }
 func (t *Telegram) review(ctx context.Context) error {
 	d := t.conversation
@@ -748,7 +771,17 @@ func (t *Telegram) updates(ctx context.Context) error {
 }
 func (t *Telegram) preferences(ctx context.Context) error {
 	c := t.config()
-	_, e := t.notify(ctx, c, fmt.Sprintf(t.tr("⚙️ Preferences\nLanguage: %s\nAlerts: %t\nDaily report: %t at %s (%s)\nLast delivered report: %s\nAutomatic backup: %t at %s\nLast delivered backup: %s", "⚙️ ترجیحات\nزبان: %s\nهشدار: %t\nگزارش روزانه: %t ساعت %s (%s)\nآخرین گزارش ارسال‌شده: %s\nپشتیبان خودکار: %t ساعت %s\nآخرین پشتیبان ارسال‌شده: %s"), c.Language, c.Alerts, c.DailyReport, c.ReportTime, c.Timezone, t.state.LastReport, c.AutoBackup, c.BackupTime, t.state.LastBackup), telegramKeyboard{Rows: [][]telegramButton{{t.button("فارسی / English", "فارسی / English", "pref:language")}, {t.button("Toggle alerts", "تغییر وضعیت هشدار", "pref:alerts"), t.button("Toggle daily report", "تغییر گزارش روزانه", "pref:report")}, {t.button("Report time", "ساعت گزارش", "schedule:report_time"), t.button("Timezone", "منطقهٔ زمانی", "schedule:timezone")}, {t.button("Backups", "پشتیبان‌ها", "backups"), t.button("↩️ Menu", "↩️ منو", "home")}}})
+	state := func(on bool) string {
+		if on {
+			return t.tr("On", "روشن")
+		}
+		return t.tr("Off", "خاموش")
+	}
+	language := t.tr("English", "فارسی")
+	if c.Language == "auto" {
+		language = t.tr("Automatic", "خودکار")
+	}
+	_, e := t.notify(ctx, c, fmt.Sprintf(t.tr("⚙️ Preferences\nLanguage: %s\nAlerts: %s\nDaily report: %s at %s (%s)\nLast delivered report: %s\nAutomatic backup: %s at %s\nLast delivered backup: %s", "⚙️ ترجیحات\nزبان: %s\nهشدار: %s\nگزارش روزانه: %s ساعت %s (%s)\nآخرین گزارش ارسال‌شده: %s\nپشتیبان خودکار: %s ساعت %s\nآخرین پشتیبان ارسال‌شده: %s"), language, state(c.Alerts), state(c.DailyReport), c.ReportTime, c.Timezone, t.state.LastReport, state(c.AutoBackup), c.BackupTime, t.state.LastBackup), telegramKeyboard{Rows: [][]telegramButton{{t.button("فارسی / English", "فارسی / English", "pref:language")}, {t.button("Toggle alerts", "تغییر وضعیت هشدار", "pref:alerts"), t.button("Toggle daily report", "تغییر گزارش روزانه", "pref:report")}, {t.button("Report time", "ساعت گزارش", "schedule:report_time"), t.button("Timezone", "منطقهٔ زمانی", "schedule:timezone")}, {t.button("Backups", "پشتیبان‌ها", "backups"), t.button("↩️ Menu", "↩️ منو", "home")}}})
 	return e
 }
 func (t *Telegram) preference(ctx context.Context, field string) error {

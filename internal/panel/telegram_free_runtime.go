@@ -25,15 +25,15 @@ func withFreeLane(ctx context.Context, lane freeLane) context.Context {
 type telegramFreeSend struct{ next, retry time.Time }
 
 type freePublicRate struct {
-	recent map[int64]time.Time
-	all    []time.Time
+	recent, menuRecent map[int64]time.Time
+	all                []time.Time
 }
 
 func freeReadAction(action string) bool {
 	return slices.Contains([]string{"menu", "status", "config", "qr", "link", "guide", "terms", "language", "lang", "opt"}, action)
 }
 
-func (t *Telegram) allowFreeJob(chat int64, now time.Time, action string, owned bool) bool {
+func (t *Telegram) allowFreeJob(chat int64, now time.Time, action string, owned, menu bool) bool {
 	t.freeMu.Lock()
 	defer t.freeMu.Unlock()
 	index, maximum := 0, freeTrafficLimit-4
@@ -45,18 +45,22 @@ func (t *Telegram) allowFreeJob(chat int64, now time.Time, action string, owned 
 	}
 	rate := &t.freeRate[index]
 	rate.all = slices.DeleteFunc(rate.all, func(at time.Time) bool { return !now.Before(at.Add(time.Minute)) })
-	if len(rate.all) >= maximum || now.Before(rate.recent[chat].Add(3*time.Second)) {
+	recent, interval := &rate.recent, 3*time.Second
+	if menu {
+		recent, interval = &rate.menuRecent, 750*time.Millisecond
+	}
+	if len(rate.all) >= maximum || now.Before((*recent)[chat].Add(interval)) {
 		return false
 	}
-	for id, at := range rate.recent {
-		if !now.Before(at.Add(3 * time.Second)) {
-			delete(rate.recent, id)
+	for id, at := range *recent {
+		if !now.Before(at.Add(interval)) {
+			delete(*recent, id)
 		}
 	}
-	if rate.recent == nil {
-		rate.recent = make(map[int64]time.Time)
+	if *recent == nil {
+		*recent = make(map[int64]time.Time)
 	}
-	rate.recent[chat] = now
+	(*recent)[chat] = now
 	rate.all = append(rate.all, now)
 	return true
 }
@@ -236,15 +240,19 @@ func freePlanSummary(p freePlan, tr func(string, string) string) string {
 		}
 		engines += freeEngineName(engine)
 	}
-	text := fmt.Sprintf(tr("%s · %s\n%.2f GiB · %d days · %.1f KiB/s · %d streams",
-		"%s · %s\n%.2f GiB · %d روز · %.1f KiB/s · %d جریان"), p.Input.Name, engines,
+	details := fmt.Sprintf(tr("%.2f GiB · %d days · %.1f KiB/s · %d streams",
+		"%.2f گیبی‌بایت · %d روز · %.1f کیبی‌بایت بر ثانیه · %d اتصال هم‌زمان"),
 		float64(p.Input.QuotaBytes)/(1<<30), p.Days, float64(p.Input.RateBytes)/1024, p.Input.StreamLimit)
 	sessions := map[string]*int{"soar": p.Input.SoarSessionLimit, "cotten": p.Input.CottenSessionLimit, "masterdns": p.Input.MasterDNSSessionLimit}
 	for _, engine := range engineSelections[p.Input.Engines] {
 		if limit := sessions[engine]; limit != nil {
-			text += fmt.Sprintf(tr("\n%s sessions: %d", "\nنشست %s: %d"), freeEngineName(engine), *limit)
+			details += fmt.Sprintf(tr("\n%s sessions: %d", "\nنشست %s: %d"), freeEngineName(engine), *limit)
 		}
 	}
+	if tr("en", "fa") == "fa" {
+		details = telegramPersianDigits.Replace(details)
+	}
+	text := p.Input.Name + " · " + engines + "\n" + details
 	if note := p.Input.Note; note != "" {
 		text += "\n" + note
 	}

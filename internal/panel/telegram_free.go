@@ -35,6 +35,8 @@ func freeAction(u telegramUpdate) (string, string) {
 		}
 		action, value, _ := strings.Cut(p, ":")
 		switch action {
+		case "home":
+			return "menu", ""
 		case "request", "status", "config", "qr", "link", "plan", "language", "lang", "guide", "terms", "cancel", "opt":
 			return action, value
 		}
@@ -80,7 +82,8 @@ func (t *Telegram) handleFreeUpdate(ctx context.Context, c TelegramConfig, from 
 		return
 	}
 	owned := freeReadAction(action) && t.h.store.hasFreeOwner(from.ID)
-	if !t.allowFreeJob(from.ID, now, action, owned) {
+	menu := action == "request" && u.Callback != nil || oneOf(action, "menu", "status", "guide", "terms", "language")
+	if !t.allowFreeJob(from.ID, now, action, owned, menu) {
 		return
 	}
 	ctx = withFreeLane(ctx, freeAdmissionLane)
@@ -90,6 +93,9 @@ func (t *Telegram) handleFreeUpdate(ctx context.Context, c TelegramConfig, from 
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
 	c.ChatID = from.ID
+	if u.Callback != nil {
+		ctx = withTelegramMenu(ctx, c.ChatID, u.Callback.Message.ID)
+	}
 	store := t.h.store
 	member, err := store.freeMember(from.ID)
 	if err != nil || member.Blocked {
@@ -112,11 +118,21 @@ func (t *Telegram) handleFreeUpdate(ctx context.Context, c TelegramConfig, from 
 		}
 		return en
 	}
+	button := func(en, fa, data string) telegramButton {
+		return telegramButton{Text: tr(en, fa), Data: "free:" + data}
+	}
+	back := []telegramButton{button("Main menu", "بازگشت به منوی اصلی", "home")}
 	send := func(en, fa string, markup any) int64 {
 		// A blocked customer chat must not mark the management bot disconnected.
 		live := t.config()
 		if !live.Enabled || !live.FreeAccess || live.Token != c.Token {
 			return 0
+		}
+		if markup == nil {
+			markup = telegramKeyboard{Rows: [][]telegramButton{back}}
+		} else if keyboard, ok := markup.(telegramKeyboard); ok && action != "menu" {
+			keyboard.Rows = append(keyboard.Rows, back)
+			markup = keyboard
 		}
 		id, _ := t.sendText(ctx, c, tr(en, fa), markup)
 		return id
@@ -143,11 +159,9 @@ func (t *Telegram) handleFreeUpdate(ctx context.Context, c TelegramConfig, from 
 			welcome = tr("WhiteDNS free configurations. An administrator reviews new requests.", "کانفیگ رایگان WhiteDNS. مدیر درخواست‌های جدید را بررسی می‌کند.")
 		}
 		send(welcome, welcome, telegramKeyboard{Rows: [][]telegramButton{
-			{{Text: tr("Free plans", "پلن‌های رایگان"), Data: "free:request"}},
-			{{Text: tr("My status", "وضعیت من"), Data: "free:status"}},
-			{{Text: tr("My config", "کانفیگ من"), Data: "free:config"}, {Text: tr("QR code", "کد QR"), Data: "free:qr"}},
-			{{Text: tr("Connection guide", "راهنمای اتصال"), Data: "free:guide"}, {Text: tr("Terms", "شرایط"), Data: "free:terms"}},
-			{{Text: tr("Language", "زبان"), Data: "free:language"}},
+			{button("Get a free configuration", "دریافت کانفیگ رایگان", "request")},
+			{button("My account", "حساب من", "status")},
+			{button("Help", "راهنما", "guide"), button("Language", "زبان", "language")},
 		}})
 		return
 	}
@@ -155,7 +169,7 @@ func (t *Telegram) handleFreeUpdate(ctx context.Context, c TelegramConfig, from 
 	case "language":
 		send("Choose a language or change your broadcast preferences.", "زبان یا تنظیم دریافت پیام همگانی را انتخاب کنید.", telegramKeyboard{Rows: [][]telegramButton{
 			{{Text: "فارسی", Data: "free:lang:fa"}, {Text: "English", Data: "free:lang:en"}},
-			{{Text: tr("Announcements on", "اعلان همگانی روشن"), Data: "free:opt:on"}, {Text: tr("Announcements off", "اعلان همگانی خاموش"), Data: "free:opt:off"}},
+			{button("Enable announcements", "دریافت اعلان‌ها", "opt:on"), button("Turn off announcements", "قطع اعلان‌ها", "opt:off")},
 		}})
 		return
 	case "lang", "opt":
@@ -167,7 +181,11 @@ func (t *Telegram) handleFreeUpdate(ctx context.Context, c TelegramConfig, from 
 					m.OptOut = value == "off"
 				}
 			}); e == nil {
-				send("Preference saved. Send /start for the menu.", "ترجیح ذخیره شد. برای منو /start را بفرستید.", nil)
+				if action == "lang" {
+					language = value
+					back = []telegramButton{button("Main menu", "بازگشت به منوی اصلی", "home")}
+				}
+				send("Preference saved.", "تنظیمات ذخیره شد.", nil)
 			}
 		}
 		return
@@ -178,10 +196,14 @@ func (t *Telegram) handleFreeUpdate(ctx context.Context, c TelegramConfig, from 
 				body = tr("Plans are free. One account per Telegram ID. Requests are reviewed manually. Keep your connection link private.",
 					"پلن‌ها رایگان‌اند. هر شناسهٔ تلگرام یک حساب دارد. درخواست‌ها دستی بررسی می‌شوند. لینک اتصال را خصوصی نگه دارید.")
 			} else {
-				body = tr("Open My config or QR code, select an available engine and import the profile into WhiteDNS.", "در «کانفیگ من» یا «کد QR» موتور را انتخاب کنید و پروفایل را در WhiteDNS وارد کنید.")
+				body = tr("Open My account, choose a link or QR code, then import the profile into WhiteDNS.", "«حساب من» را باز کنید و لینک یا کد QR را بگیرید. سپس کانفیگ را در WhiteDNS وارد کنید.")
 			}
 		}
-		send(body, body, nil)
+		if action == "guide" {
+			send(body, body, telegramKeyboard{Rows: [][]telegramButton{{button("Terms of use", "شرایط استفاده", "terms")}}})
+		} else {
+			send(body, body, nil)
+		}
 		return
 	case "cancel":
 		t.clearFreeChallenge(from.ID)
@@ -219,6 +241,7 @@ func (t *Telegram) handleFreeUpdate(ctx context.Context, c TelegramConfig, from 
 				for _, engine := range engines {
 					k.Rows = append(k.Rows, []telegramButton{{Text: freeEngineName(engine), Data: "free:" + kind + ":" + engine}})
 				}
+				k.Rows = append(k.Rows, []telegramButton{button("My account", "بازگشت به حساب من", "status")})
 				send("Choose an engine.", "موتور را انتخاب کنید.", k)
 				return
 			}
@@ -236,7 +259,7 @@ func (t *Telegram) handleFreeUpdate(ctx context.Context, c TelegramConfig, from 
 			if e != nil {
 				send("Configuration unavailable. Try again later.", "کانفیگ در دسترس نیست. بعداً امتحان کنید.", nil)
 			} else if action != "qr" {
-				send(link, link, nil)
+				_, _ = t.sendText(ctx, c, link, nil)
 			}
 			return
 		}
@@ -248,15 +271,19 @@ func (t *Telegram) handleFreeUpdate(ctx context.Context, c TelegramConfig, from 
 		leftEN, leftFA := "Unlimited", "نامحدود"
 		if account.QuotaBytes > 0 {
 			leftEN = fmt.Sprintf("%.1f MiB", float64(max(0, account.QuotaBytes-account.Used()))/(1<<20))
-			leftFA = leftEN
+			leftFA = telegramPersianDigits.Replace(fmt.Sprintf("%.1f میبی‌بایت", float64(max(0, account.QuotaBytes-account.Used()))/(1<<20)))
 		}
 		expiryEN, expiryFA := "Unlimited", "نامحدود"
 		if account.ExpiresAt > 0 {
 			expiryEN = time.UnixMilli(account.ExpiresAt).UTC().Format("2006-01-02 15:04 UTC")
-			expiryFA = expiryEN
+			expiryFA = telegramPersianDigits.Replace(time.UnixMilli(account.ExpiresAt).UTC().Format("2006-01-02 15:04") + " به وقت جهانی")
+		}
+		var statusKeyboard any
+		if status == "active" {
+			statusKeyboard = telegramKeyboard{Rows: [][]telegramButton{{button("Get link", "دریافت لینک", "config"), button("Get QR code", "دریافت کد QR", "qr")}}}
 		}
 		send(fmt.Sprintf("Status: %s\nUsed: %.1f MiB\nRemaining: %s\nExpires: %s", status, usage, leftEN, expiryEN),
-			fmt.Sprintf("وضعیت: %s\nمصرف: %.1f MiB\nباقی‌مانده: %s\nانقضا: %s", statusFA, usage, leftFA, expiryFA), nil)
+			telegramPersianDigits.Replace(fmt.Sprintf("وضعیت: %s\nمصرف: %.1f میبی‌بایت\nباقی‌مانده: %s\nانقضا: %s", statusFA, usage, leftFA, expiryFA)), statusKeyboard)
 		return
 	}
 	if req.Key != "" {
@@ -287,12 +314,16 @@ func (t *Telegram) handleFreeUpdate(ctx context.Context, c TelegramConfig, from 
 				continue
 			}
 			data := fmt.Sprintf("free:plan:%s:%d", p.ID, p.Revision)
-			plans.Rows = append(plans.Rows, []telegramButton{{Text: fmt.Sprintf("%s · %.2f GiB · %d %s", p.Input.Name, float64(p.Input.QuotaBytes)/(1<<30), p.Days, tr("days", "روز")), Data: data}})
+			label := fmt.Sprintf("%s · %.2f GiB · %d days", p.Input.Name, float64(p.Input.QuotaBytes)/(1<<30), p.Days)
+			if language == "fa" {
+				label = p.Input.Name + telegramPersianDigits.Replace(fmt.Sprintf(" · %.2f گیبی‌بایت · %d روز", float64(p.Input.QuotaBytes)/(1<<30), p.Days))
+			}
+			plans.Rows = append(plans.Rows, []telegramButton{{Text: label, Data: data}})
 			if action == "request" || value == strings.TrimPrefix(data, "free:plan:") {
 				plan = p
 			}
 		}
-		if action == "request" && len(plans.Rows) > 1 {
+		if action == "request" && (len(plans.Rows) > 1 || u.Callback != nil && len(plans.Rows) > 0) {
 			send("Choose a free plan.", "یک پلن رایگان انتخاب کنید.", plans)
 			return
 		}
@@ -336,7 +367,14 @@ func (t *Telegram) handleFreeUpdate(ctx context.Context, c TelegramConfig, from 
 		}
 		switch store.submitFreePlan(from.ID, token()[:12], reason, challenge.Plan, now) {
 		case nil:
-			send("Your request was sent for manual review.", "درخواست شما برای بررسی مدیر ثبت شد.", nil)
+			_ = store.updateFreeMember(from.ID, now, func(m *freeMember) {
+				m.Started = true
+				if m.Language == "" {
+					m.Language = language
+				}
+			})
+			send("Your request was sent for manual review.", "درخواست شما برای بررسی مدیر ثبت شد.",
+				telegramKeyboard{Rows: [][]telegramButton{{button("Track request", "پیگیری درخواست", "status")}}})
 		case errFreeQueueFull:
 			send("The review queue is full. Try again later.", "صف بررسی پر است. بعداً امتحان کنید.", nil)
 		case errFreePlanUnavailable, errFreePaused:
@@ -345,7 +383,8 @@ func (t *Telegram) handleFreeUpdate(ctx context.Context, c TelegramConfig, from 
 			send("Could not submit. Check /free_status or try again later.", "ثبت درخواست انجام نشد. وضعیت را با /free_status بررسی کنید یا بعداً تلاش کنید.", nil)
 		}
 	default:
-		send("Use /free to request access.", "برای درخواست کانفیگ رایگان /free را بفرستید.", nil)
+		send("You do not have an active request or account yet.", "هنوز درخواست باز یا حسابی ندارید.",
+			telegramKeyboard{Rows: [][]telegramButton{{button("Request a free configuration", "درخواست کانفیگ رایگان", "request")}}})
 	}
 }
 

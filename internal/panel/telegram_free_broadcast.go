@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"strconv"
+	"strings"
 	"time"
 
 	bolt "go.etcd.io/bbolt"
@@ -114,7 +115,7 @@ func (t *Telegram) freeBroadcastMenu(ctx context.Context, action, value string) 
 		if value != "all" && value != "active" && value != "fa" && value != "en" {
 			return ErrNotFound
 		}
-		return t.freePrompt(ctx, "broadcast:"+value, 0, nil,
+		return t.freePrompt(ctx, "broadcast:"+value, 0,
 			t.tr("Reply with the announcement (max 2,400 bytes). Review and confirm before sending.", "متن پیام همگانی را بفرستید (حداکثر ۲۴۰۰ بایت). پیش از ارسال پیش‌نمایش را تأیید کنید."))
 	}
 	b, e := t.h.store.freeBroadcast()
@@ -237,6 +238,8 @@ func (t *Telegram) queueFreeNotice(c TelegramConfig, id int64) {
 func (t *Telegram) runFreeDelivery(ctx context.Context) {
 	tick := time.NewTicker(time.Second)
 	defer tick.Stop()
+	requests := time.NewTicker(15 * time.Second)
+	defer requests.Stop()
 	prune := time.NewTicker(time.Minute)
 	defer prune.Stop()
 	for {
@@ -250,16 +253,87 @@ func (t *Telegram) runFreeDelivery(ctx context.Context) {
 				if e == nil && !m.Blocked {
 					c.ChatID = notice.id
 					job, cancel := context.WithTimeout(withFreeLane(ctx, freeBroadcastLane), 2*time.Second)
-					_, _ = t.sendText(job, c, "Request reviewed. Use /free_status.\nدرخواست بررسی شد. نتیجه را با /free_status ببینید.", nil)
+					text, label := "Your request was reviewed.", "My account"
+					if m.Language == "fa" {
+						text, label = "درخواست شما بررسی شد.", "حساب من"
+					}
+					k := telegramKeyboard{Rows: [][]telegramButton{{{Text: label, Data: "free:status"}}}}
+					_, _ = t.sendText(job, c, text, k)
 					cancel()
 				}
 			}
 		case <-tick.C:
 			t.sendFreeBroadcast(ctx)
+		case <-requests.C:
+			c := t.config()
+			job, cancel := context.WithTimeout(withFreeLane(ctx, freeBroadcastLane), 4*time.Second)
+			_ = t.sendFreeRequestDigest(job, c, t.now())
+			cancel()
 		case <-prune.C:
 			_ = t.h.store.pruneFreeRequests(t.now())
 		}
 	}
+}
+
+func (t *Telegram) sendFreeRequestDigest(ctx context.Context, c TelegramConfig, now time.Time) error {
+	if !c.Enabled || !c.FreeAccess || c.ChatID <= 0 || ctx.Err() != nil {
+		return nil
+	}
+	s := t.h.store
+	catalog, e := s.freeCatalog()
+	if e != nil || catalog.RestoreHold {
+		return e
+	}
+	pending, e := s.freePending(now)
+	if e != nil {
+		return e
+	}
+	unread := make(map[string]string)
+	for _, r := range pending {
+		if !r.Notified {
+			chat, _, _ := strings.Cut(r.Key, ":")
+			unread[chat] = r.Key
+		}
+	}
+	if len(unread) == 0 {
+		return nil
+	}
+	live := t.config()
+	if !live.Enabled || !live.FreeAccess || live.Token != c.Token || live.ChatID != c.ChatID {
+		return nil
+	}
+	text := fmt.Sprintf("🔔 %d new request(s)\n%d awaiting review", len(unread), len(pending))
+	button := telegramButton{Text: "Open requests", Data: "free:queue"}
+	if c.Language == "fa" {
+		text = telegramPersianDigits.Replace(fmt.Sprintf("🔔 %d درخواست تازه\n%d درخواست در انتظار بررسی", len(unread), len(pending)))
+		button.Text = "مشاهدهٔ درخواست‌ها"
+	}
+	if _, e = t.sendText(ctx, c, text, telegramKeyboard{Rows: [][]telegramButton{{button}}}); e != nil {
+		return e
+	}
+	return s.db.Update(func(tx *bolt.Tx) error {
+		b := tx.Bucket(meta).Bucket(freeRequests)
+		if b == nil {
+			return nil
+		}
+		for chat, key := range unread {
+			raw := b.Get([]byte(chat))
+			if raw == nil {
+				continue
+			}
+			var r telegramFreeRequest
+			if e := json.Unmarshal(raw, &r); e != nil {
+				return e
+			}
+			if r.Key == key && !r.Reviewed && !r.Notified {
+				r.Notified = true
+				if e := putJSON(b, []byte(chat), r); e != nil {
+					return e
+				}
+			}
+		}
+		return nil
+	})
 }
 
 func (t *Telegram) sendFreeBroadcast(ctx context.Context) {

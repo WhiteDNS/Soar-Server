@@ -53,11 +53,11 @@ func TestTelegramFreePlansSupportEachEngineCombination(t *testing.T) {
 	for _, engine := range []string{"soar", "cotten", "masterdns", "both", "soar_masterdns", "cotten_masterdns", "all"} {
 		p := defaultFreePlan()
 		p.ID, p.Input.Engines, p.Input.Name = token()[:8], engine, engine
-		parsed, _, err := parseFreePlan(p, freePlanForm(p), false)
-		if err != nil || parsed.Input.Engines != engine {
+		choice, err := encodeFreeEngines(engineSelections[engine])
+		if err != nil || choice != engine {
 			t.Fatalf("engine combination %s not editable: %v", engine, err)
 		}
-		plans = append(plans, parsed)
+		plans = append(plans, p)
 	}
 	if err := s.changeFreeCatalog(0, func(c *freeCatalog) error { c.Plans = plans; return nil }); err != nil {
 		t.Fatal(err)

@@ -97,15 +97,13 @@ func (t *Telegram) freePlanMenu(ctx context.Context, action, value string) error
 			return errors.New("free plan capacity reached")
 		}
 		p = defaultFreePlan()
-		p.ID, p.Published, p.Input.Name = token()[:8], false, "New plan"
+		p.ID, p.Published, p.Input.Name = token()[:8], false, t.tr("New plan", "پلن جدید")
 	} else if !ok {
 		return ErrNotFound
 	}
 	switch action {
 	case "plannew", "planedit":
-		return t.freePrompt(ctx, action, catalog.Revision, &p,
-			t.tr("Copy and edit the form below. Engines can be soar, cotten, masterdns or a comma-separated combination.\n\n",
-				"فرم زیر را کپی و ویرایش کنید. موتور را soar، cotten، masterdns یا ترکیبی با ویرگول بنویسید.\n\n")+freePlanForm(p))
+		return t.startFreeEditor(ctx, action, catalog.Revision, p)
 	case "planview":
 		data := fmt.Sprintf("%s:%d", p.ID, p.Revision)
 		button := t.button("Publish", "انتشار", "free:planpublish:"+data)
@@ -143,74 +141,12 @@ func (t *Telegram) freePlanMenu(ctx context.Context, action, value string) error
 	return ErrNotFound
 }
 
-func freePlanForm(p freePlan) string {
-	i := p.Input
-	return fmt.Sprintf("name: %s\nengines: %s\nvolume_mib: %d\ndays: %d\nspeed_kib: %d\nstreams: %d\nsoar_sessions: %d\ncotten_sessions: %d\nmasterdns_sessions: %d\ndescription: %s",
-		i.Name, strings.Join(engineSelections[i.Engines], ","), i.QuotaBytes>>20, p.Days, i.RateBytes>>10, i.StreamLimit,
-		*i.SoarSessionLimit, *i.CottenSessionLimit, *i.MasterDNSSessionLimit, i.Note)
-}
-
-func parseFreePlan(p freePlan, text string, custom bool) (freePlan, int64, error) {
-	fields := make(map[string]string, 11)
-	for _, line := range strings.Split(text, "\n") {
-		key, value, ok := strings.Cut(line, ":")
-		key = strings.TrimSpace(key)
-		if _, exists := fields[key]; !ok || exists {
-			return p, 0, errors.New("invalid plan form; use each field once")
-		}
-		fields[key] = strings.TrimSpace(value)
-	}
-	expected := 10
-	if custom {
-		expected++
-	}
-	if _, ok := fields["description"]; !ok || len(fields) != expected {
-		return p, 0, errors.New("invalid plan form; include all fields shown in the prompt")
-	}
-	engines := strings.FieldsFunc(strings.ToLower(fields["engines"]), func(r rune) bool { return r == ',' || r == '،' || r == '+' || r == ' ' })
-	if len(engines) == 1 && engines[0] == "all" {
-		engines = profileEngines
-	}
-	choice, err := encodeFreeEngines(engines)
-	if err != nil || choice == "" {
-		return p, 0, errors.New("invalid engine selection")
-	}
-	number := func(key string, low, high int64) (int64, error) {
-		value, e := strconv.ParseInt(telegramDigits(fields[key]), 10, 64)
-		if e != nil || value < low || value > high {
-			return 0, fmt.Errorf("invalid %s (%d–%d)", key, low, high)
-		}
-		return value, nil
-	}
-	var id int64
-	if custom {
-		if id, err = number("telegram_id", 1, 1<<52-1); err != nil {
-			return p, 0, err
-		}
-	}
-	nums := make(map[string]int64, 7)
-	for _, spec := range []struct {
-		name string
-		max  int64
-	}{{"volume_mib", 1 << 20}, {"days", 365}, {"speed_kib", 1 << 20}, {"streams", 128},
-		{"soar_sessions", MaxSoarSessionLimit}, {"cotten_sessions", MaxCottenSessionLimit}, {"masterdns_sessions", MaxMasterDNSSessionLimit}} {
-		n, e := number(spec.name, 1, spec.max)
-		if e != nil {
-			return p, 0, e
-		}
-		nums[spec.name] = n
-	}
-	soar, cotten, master := int(nums["soar_sessions"]), int(nums["cotten_sessions"]), int(nums["masterdns_sessions"])
-	p.Input = ClientInput{Name: fields["name"], Note: fields["description"], Enabled: true, Engines: choice,
-		QuotaBytes: nums["volume_mib"] << 20, RateBytes: nums["speed_kib"] << 10, StreamLimit: int(nums["streams"]),
-		SoarSessionLimit: &soar, CottenSessionLimit: &cotten, MasterDNSSessionLimit: &master}
-	p.Days = int(nums["days"])
-	return p, id, p.validate()
-}
-
-func (t *Telegram) freePrompt(ctx context.Context, setting string, revision uint64, plan *freePlan, text string) error {
+func (t *Telegram) freePrompt(ctx context.Context, setting string, revision uint64, text string) error {
 	t.confirmation = nil
-	d := &telegramConversation{Field: "free", Setting: setting, FreeRevision: revision, FreePlan: plan, Expires: t.now().Add(10 * time.Minute)}
+	d := &telegramConversation{Field: "free", Setting: setting, FreeRevision: revision, Expires: t.now().Add(10 * time.Minute)}
+	if menu, ok := ctx.Value(telegramMenuKey{}).(*telegramMenuMessage); ok {
+		d.MenuID = menu.message
+	}
 	t.conversation = d
 	id, e := t.notify(ctx, t.config(), text, map[string]bool{"force_reply": true, "selective": true})
 	if e == nil {
@@ -223,48 +159,6 @@ func (t *Telegram) freeAdminReply(ctx context.Context, d *telegramConversation, 
 	kind, value, _ := strings.Cut(d.Setting, ":")
 	s := t.h.store
 	switch kind {
-	case "plannew", "planedit", "custom":
-		if d.FreePlan == nil {
-			return ErrConflict
-		}
-		p, id, e := parseFreePlan(*d.FreePlan, text, kind == "custom")
-		if e != nil {
-			return e
-		}
-		if kind == "custom" {
-			if id == t.config().ChatID {
-				return errors.New("select a public Telegram user")
-			}
-			owned, e := s.freeRequest(id, t.now())
-			if e != nil {
-				return e
-			}
-			var revision uint64
-			if owned.AccountID != "" {
-				a, err := s.Get(owned.AccountID)
-				if err != nil {
-					return err
-				}
-				revision = a.Revision
-			}
-			return t.confirm(ctx, telegramConfirmation{Action: "free-custom", FreeChat: id, FreePlan: &p, ID: owned.AccountID, Revision: revision},
-				fmt.Sprintf("%s %d\n%s", t.tr("Save custom configuration for Telegram ID", "ذخیرهٔ کانفیگ سفارشی برای شناسهٔ تلگرام"), id, freePlanSummary(p, t.tr)))
-		}
-		if kind == "planedit" {
-			p.Revision++
-		}
-		if e = s.changeFreeCatalog(d.FreeRevision, func(c *freeCatalog) error {
-			if kind == "plannew" {
-				c.Plans = append(c.Plans, p)
-			} else {
-				c.Plans[slices.IndexFunc(c.Plans, func(plan freePlan) bool { return plan.ID == p.ID })] = p
-			}
-			return nil
-		}); e != nil {
-			return e
-		}
-		t.conversation = nil
-		return t.freePlanMenu(ctx, "planview", p.ID)
 	case "text":
 		if text == "-" {
 			text = ""
@@ -305,7 +199,7 @@ func (t *Telegram) freeAdminReply(ctx context.Context, d *telegramConversation, 
 			button = t.button("Unblock", "رفع مسدودی", fmt.Sprintf("free:unblock:%d", id))
 		}
 		t.conversation = nil
-		_, e = t.notify(ctx, t.config(), fmt.Sprintf("Telegram ID %d", id), telegramKeyboard{Rows: [][]telegramButton{{button, t.button("Back", "بازگشت", "free:manage")}}})
+		_, e = t.notify(ctx, t.config(), fmt.Sprintf("%s %d", t.tr("Telegram ID", "شناسهٔ تلگرام"), id), telegramKeyboard{Rows: [][]telegramButton{{button, t.button("Back", "بازگشت", "free:accounts")}}})
 		return e
 	case "broadcast":
 		return t.previewFreeBroadcast(ctx, value, text)

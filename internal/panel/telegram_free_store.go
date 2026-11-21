@@ -40,6 +40,7 @@ type telegramFreeRequest struct {
 	RemovedAt time.Time `json:",omitzero"`
 	Cancelled bool      `json:",omitempty"`
 	Linked    bool      `json:",omitempty"`
+	Notified  bool      `json:",omitempty"`
 }
 
 func (r telegramFreeRequest) decisionTime() time.Time {
