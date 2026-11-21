@@ -19,6 +19,8 @@ const (
 	freeBroadcastLane
 	freeMenuLane
 	freeBusyLane
+	freeMembershipLane
+	freeMembershipAPILane
 )
 
 type freeLaneKey struct{}
@@ -151,6 +153,9 @@ func (t *Telegram) runFreeWorkers(ctx context.Context) func() {
 		if i == 2 {
 			capacity, workers = maxFreeMenuQueue, freeMenuWorkers
 		}
+		if i == 3 {
+			capacity, workers = maxFreeActionQueue, 4
+		}
 		queue := make(chan telegramFreeJob, capacity)
 		t.freeQueues[i] = queue
 		var replies <-chan telegramFreeJob
@@ -188,6 +193,8 @@ func (t *Telegram) runFreeWorkers(ctx context.Context) func() {
 						} else {
 							if i == 0 {
 								jobCtx = withFreeLane(jobCtx, freeAdmissionLane)
+							} else if i == 3 {
+								jobCtx = withFreeLane(jobCtx, freeMembershipLane)
 							}
 							t.handleFreeUpdate(jobCtx, current, job.from, job.update)
 						}
@@ -340,7 +347,9 @@ func (t *Telegram) dispatchFree(ctx context.Context, c TelegramConfig, from tele
 	if freeReadAction(action) && t.h.store.hasFreeOwner(from.ID) {
 		index = 1
 		capacity = limits.OwnerQueue
-	} else if freeMenuAction(action, u) {
+	} else if catalog.JoinRequired && oneOf(action, "request", "joincheck") {
+		index = 3
+	} else if freeMenuAction(action, u) || action == "joincheck" {
 		t.queueFreeMenu(job, action, value, limits)
 		return
 	}

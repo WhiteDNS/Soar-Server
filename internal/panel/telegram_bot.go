@@ -122,6 +122,12 @@ func (t *Telegram) errorText(e error) string {
 		return "این مورد پیدا نشد. فهرست را تازه کنید."
 	case errors.Is(e, errFreePaused):
 		return "دسترسی عمومی یا پذیرش درخواست متوقف است. تنظیمات عمومی را بررسی کنید."
+	case errors.Is(e, errFreeJoinMissing):
+		return "کاربر باید در همهٔ کانال‌ها و گروه‌های الزامی عضو باشد و عضویتش بررسی شود."
+	case errors.Is(e, errFreeJoinUnavailable):
+		return "بررسی عضویت در تلگرام ممکن نشد. دسترسی ربات را بررسی کنید و دوباره تلاش کنید."
+	case errors.Is(e, errFreeJoinChatLimit):
+		return "فهرست عضویت اجباری پر است. پیش از افزودن مورد تازه، یکی از موارد فعلی را حذف کنید."
 	case errors.Is(e, errFreePlanUnavailable):
 		return "این پلن یا یکی از موتورهای آن غیرفعال است. پلن‌ها و موتورهای عمومی را بررسی کنید."
 	case errors.Is(e, errFreeDailyLimit), errors.Is(e, errFreeCapacity):

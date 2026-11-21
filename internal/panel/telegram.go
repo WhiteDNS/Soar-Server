@@ -121,14 +121,19 @@ type Telegram struct {
 	freeAttempts             map[int64][]time.Time
 	freeReplyPending         map[int64]int64 // Guarded by freeMu.
 	freeRate                 [2]freePublicRate
-	freeQueues               [3]chan telegramFreeJob // Guarded by opMu.
+	freeQueues               [4]chan telegramFreeJob // Guarded by opMu.
 	freeReplies              chan telegramFreeJob    // Guarded by opMu.
 	freeBusy                 chan telegramFreeJob
 	freeMenus                map[int64]telegramFreeMenuSlot // Guarded by freeMu.
-	freeReserved             [2]map[int64]struct{}          // Guarded by freeMu.
+	freeReserved             [4]map[int64]struct{}          // Guarded by freeMu.
 	freeRevision             uint64                         // Writes hold opMu and mu.
 	freeTraffic              telegramFreeTraffic
-	freeSend                 [5]telegramFreeSend // Guarded by mu.
+	freeSend                 [7]telegramFreeSend          // Guarded by mu.
+	freeJoinCache            map[int64]freeJoinCacheEntry // Guarded by freeMu.
+	freeJoinBotToken         string                       // Guarded by freeMu.
+	freeJoinLostAccess       map[int64]bool               // Guarded by freeMu.
+	freeJoinNextLookup       time.Time                    // Guarded by freeMu.
+	freeJoinHealth           freeJoinHealth               // Guarded by freeMu.
 	freeEpoch                string
 	freeNotices              chan telegramFreeNotice
 	recovered                bool
@@ -143,8 +148,10 @@ type telegramUser struct {
 	IsBot    bool   `json:"is_bot"`
 }
 type telegramChat struct {
-	ID   int64  `json:"id"`
-	Type string `json:"type"`
+	ID       int64  `json:"id"`
+	Type     string `json:"type"`
+	Username string `json:"username"`
+	Title    string `json:"title"`
 }
 type telegramMessage struct {
 	Document *telegramDocument `json:"document,omitempty"`
@@ -163,9 +170,13 @@ type telegramCallback struct {
 	Message *telegramMessage `json:"message"`
 }
 type telegramUpdate struct {
-	ID       int64             `json:"update_id"`
-	Message  *telegramMessage  `json:"message"`
-	Callback *telegramCallback `json:"callback_query"`
+	ID            int64             `json:"update_id"`
+	Message       *telegramMessage  `json:"message"`
+	Callback      *telegramCallback `json:"callback_query"`
+	BotMembership *struct {
+		Chat   telegramChat       `json:"chat"`
+		Member telegramMembership `json:"new_chat_member"`
+	} `json:"my_chat_member"`
 }
 type telegramAPIError struct{ Code, Retry int }
 
@@ -860,7 +871,7 @@ func (t *Telegram) Run(ctx context.Context) {
 		t.pollCancel = cancel
 		t.mu.Unlock()
 		var updates []telegramUpdate
-		e := t.call(poll, c, "getUpdates", map[string]any{"offset": offset, "timeout": 25, "limit": 50, "allowed_updates": []string{"message", "callback_query"}}, &updates)
+		e := t.call(poll, c, "getUpdates", map[string]any{"offset": offset, "timeout": 25, "limit": 50, "allowed_updates": []string{"message", "callback_query", "my_chat_member"}}, &updates)
 		cancel()
 		t.mu.Lock()
 		current := g == t.generation
@@ -925,6 +936,23 @@ func (t *Telegram) handleUpdate(ctx context.Context, u telegramUpdate) error {
 		return nil
 	}
 	c := t.config()
+	if u.BotMembership != nil {
+		t.state.Offset = u.ID + 1
+		change := u.BotMembership
+		if change.Chat.ID < 0 && change.Member.User.IsBot {
+			catalog, err := t.h.store.freeCatalog()
+			if err != nil {
+				return err
+			}
+			for _, chat := range catalog.JoinChats {
+				if chat.ID == change.Chat.ID {
+					t.noteFreeBotAccess(c.Token, chat.ID, oneOf(change.Member.Status, "administrator", "creator"))
+					break
+				}
+			}
+		}
+		return nil
+	}
 	var from telegramUser
 	var chat telegramChat
 	if u.Message != nil && u.Callback == nil {

@@ -38,7 +38,7 @@ func freeAction(u telegramUpdate) (string, string) {
 		switch action {
 		case "home":
 			return "menu", ""
-		case "request", "status", "config", "qr", "link", "plan", "language", "lang", "guide", "terms", "cancel", "opt":
+		case "request", "joincheck", "status", "config", "qr", "link", "plan", "language", "lang", "guide", "terms", "cancel", "opt":
 			return action, value
 		}
 		return "", ""
@@ -82,6 +82,10 @@ func (t *Telegram) handleFreeUpdate(ctx context.Context, c TelegramConfig, from 
 	if action == "reply" && (challenge.Prompt == 0 || u.Message.Reply.ID != challenge.Prompt || !now.Before(challenge.Expires)) {
 		return
 	}
+	refreshMembership := action == "joincheck"
+	if refreshMembership {
+		action = "request"
+	}
 	store := t.h.store
 	catalog, err := store.freeCatalog()
 	if err != nil {
@@ -93,18 +97,24 @@ func (t *Telegram) handleFreeUpdate(ctx context.Context, c TelegramConfig, from 
 	menu := action == "request" && u.Callback != nil || oneOf(action, "menu", "status", "guide", "terms", "language")
 	lane, _ := ctx.Value(freeLaneKey{}).(freeLane)
 	queuedReply := lane == freeAdmissionLane && action == "reply"
-	if lane != freeMenuLane && !queuedReply && !t.allowFreeJob(from.ID, now, action, owned, menu, limits) {
+	if lane != freeMenuLane && lane != freeMembershipLane && !queuedReply && !t.allowFreeJob(from.ID, now, action, owned, menu, limits) {
 		revision, _ := ctx.Value(freePublicConfigKey{}).(uint64)
 		t.rejectFreeJob(telegramFreeJob{config: c, revision: revision, from: from})
 		return
 	}
 	if lane != freeMenuLane {
-		ctx = withFreeLane(ctx, freeAdmissionLane)
+		if lane != freeMembershipLane {
+			ctx = withFreeLane(ctx, freeAdmissionLane)
+		}
 		if owned {
 			ctx = withFreeLane(ctx, freeOwnerLane)
 		}
 		var cancel context.CancelFunc
-		ctx, cancel = context.WithTimeout(ctx, 2*time.Second)
+		timeout := 2 * time.Second
+		if catalog.JoinRequired && oneOf(action, "request", "plan", "reply") {
+			timeout = 7 * time.Second
+		}
+		ctx, cancel = context.WithTimeout(ctx, timeout)
 		defer cancel()
 	}
 	c.ChatID = from.ID
@@ -153,6 +163,25 @@ func (t *Telegram) handleFreeUpdate(ctx context.Context, c TelegramConfig, from 
 			t.freeTraffic.failed.Add(1)
 		}
 		return id
+	}
+	checkMembership := func(browse bool) (freeMembershipProof, bool) {
+		proof, missing, err := t.checkFreeMembership(ctx, c, catalog, from.ID, browse, refreshMembership)
+		if err == nil && len(missing) == 0 {
+			return proof, true
+		}
+		k := telegramKeyboard{}
+		for _, chat := range missing {
+			k.Rows = append(k.Rows, []telegramButton{{Text: chat.Title, URL: chat.URL}})
+		}
+		k.Rows = append(k.Rows, []telegramButton{button("I joined · Check again", "عضو شدم · بررسی دوباره", "joincheck")})
+		if err != nil {
+			send("Telegram could not verify membership right now. Try checking again shortly.",
+				"بررسی عضویت در تلگرام فعلاً ممکن نیست. کمی بعد دوباره بررسی کنید.", k)
+		} else {
+			send("Join every listed chat to request a free configuration, then tap Check again. If a chat requires approval, wait for its administrator to accept your join request.",
+				"برای درخواست کانفیگ رایگان، عضو همهٔ موارد فهرست شوید و بعد «بررسی دوباره» را بزنید. اگر عضویت نیاز به تأیید دارد، ابتدا منتظر تأیید مدیر همان گروه یا کانال بمانید.", k)
+		}
+		return freeMembershipProof{}, false
 	}
 	if u.Callback != nil {
 		defer func() {
@@ -350,6 +379,11 @@ func (t *Telegram) handleFreeUpdate(ctx context.Context, c TelegramConfig, from 
 			send("The administrator has paused new requests. Open the main menu later to check whether applications are open.", "مدیر پذیرش درخواست تازه را متوقف کرده است. بعداً از منوی اصلی دوباره بررسی کنید.", nil)
 			return
 		}
+		if catalog.JoinRequired {
+			if _, ok := checkMembership(true); !ok {
+				return
+			}
+		}
 		if now.Before(challenge.Expires) {
 			send("A verification code is already open. Reply to that message with the code and why you need the configuration.", "یک کد تأیید فعال دارید. به همان پیام با کد و دلیل درخواستتان پاسخ دهید.", nil)
 			return
@@ -370,7 +404,7 @@ func (t *Telegram) handleFreeUpdate(ctx context.Context, c TelegramConfig, from 
 				plan = p
 			}
 		}
-		if action == "request" && (len(plans.Rows) > 1 || u.Callback != nil && len(plans.Rows) > 0) {
+		if action == "request" && (len(plans.Rows) > 1 || (u.Callback != nil || catalog.JoinRequired) && len(plans.Rows) > 0) {
 			send("Choose a free plan.", "یک پلن رایگان انتخاب کنید.", plans)
 			return
 		}
@@ -406,20 +440,31 @@ func (t *Telegram) handleFreeUpdate(ctx context.Context, c TelegramConfig, from 
 			t.freeMu.Unlock()
 		}
 	case "reply":
-		t.clearFreeChallenge(from.ID)
 		code, reason, _ := strings.Cut(value, " ")
 		reason = strings.TrimSpace(reason)
 		if code != challenge.Code || !validFreeReason(reason) {
+			t.clearFreeChallenge(from.ID)
 			send("The code or explanation was invalid. Get a fresh code and reply with the code, a space, and a reason of 15–240 characters.", "کد یا دلیل درخواست معتبر نبود. کد تازه بگیرید و در پاسخ، کد را با یک فاصله و دلیل ۱۵ تا ۲۴۰ نویسه‌ای بفرستید.",
 				telegramKeyboard{Rows: [][]telegramButton{{button("Get a fresh code", "گرفتن کد تازه", "request")}}})
 			return
 		}
+		proof, ok := checkMembership(false)
+		if !ok {
+			return
+		}
+		now = t.now()
+		if !now.Before(challenge.Expires) {
+			t.clearFreeChallenge(from.ID)
+			send("The verification code expired. Request a new code.", "اعتبار کد تأیید تمام شد. کد تازه بگیرید.", nil)
+			return
+		}
+		t.clearFreeChallenge(from.ID)
 		live := t.config()
 		if !live.FreeAccess || live.Token != c.Token {
 			return
 		}
 		nonce := token()[:12]
-		switch store.submitFreePlan(from.ID, nonce, reason, challenge.Plan, now) {
+		switch store.submitFreeApplication(from.ID, nonce, reason, from.Username, challenge.Plan, now, proof) {
 		case nil:
 			_ = store.updateFreeMember(from.ID, now, func(m *freeMember) {
 				m.Started = true
@@ -428,7 +473,7 @@ func (t *Telegram) handleFreeUpdate(ctx context.Context, c TelegramConfig, from 
 				}
 			})
 			if challenge.Plan.AutoApprove {
-				if t.approveVerifiedFree(ctx, c.Token, from.ID, nonce, now) {
+				if t.approveVerifiedFree(ctx, c.Token, from.ID, nonce, proof) {
 					send("Your request was approved automatically. Open My account to get your configuration when it is ready.",
 						"درخواست شما خودکار تأیید شد. پس از آماده‌شدن، کانفیگ را از «حساب من» بگیرید.",
 						telegramKeyboard{Rows: [][]telegramButton{{button("My account", "حساب من", "status")}}})
@@ -441,6 +486,10 @@ func (t *Telegram) handleFreeUpdate(ctx context.Context, c TelegramConfig, from 
 			}
 			send("Your request was registered. The administrator will review it. Follow the result in My account.", "درخواست ثبت شد و مدیر آن را بررسی می‌کند. نتیجه را در «حساب من» پیگیری کنید.",
 				telegramKeyboard{Rows: [][]telegramButton{{button("Track request", "پیگیری درخواست", "status")}}})
+		case errFreeJoinMissing:
+			send("The membership settings changed. Open the plan list to check the current requirements.",
+				"تنظیمات عضویت تغییر کرده است. فهرست پلن‌ها را باز کنید و دوباره بررسی کنید.",
+				telegramKeyboard{Rows: [][]telegramButton{{button("Open plans", "بازکردن پلن‌ها", "request")}}})
 		case errFreeQueueFull:
 			send("The review queue is full. Try again later.", "صف بررسی پر است. بعداً امتحان کنید.", nil)
 		case errFreeAdmissionLimit:
@@ -463,7 +512,7 @@ func (t *Telegram) handleFreeUpdate(ctx context.Context, c TelegramConfig, from 
 	}
 }
 
-func (t *Telegram) approveVerifiedFree(ctx context.Context, botToken string, user int64, nonce string, now time.Time) bool {
+func (t *Telegram) approveVerifiedFree(ctx context.Context, botToken string, user int64, nonce string, proof freeMembershipProof) bool {
 	if revision, worker := ctx.Value(freePublicConfigKey{}).(uint64); worker {
 		// Order automatic issuance with the administrator's emergency stop and role changes.
 		t.opMu.Lock()
@@ -477,7 +526,7 @@ func (t *Telegram) approveVerifiedFree(ctx context.Context, botToken string, use
 		return false
 	}
 	key := strconv.FormatInt(user, 10) + ":" + nonce
-	_, err := t.h.store.issueFree(key, now, true)
+	_, err := t.h.store.issueFree(key, t.now(), true, proof)
 	return err == nil
 }
 
