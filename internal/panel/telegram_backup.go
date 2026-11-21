@@ -141,7 +141,7 @@ func (t *Telegram) sendBackup(ctx context.Context) error {
 	}
 	var body bytes.Buffer
 	w := multipart.NewWriter(&body)
-	_ = w.WriteField("chat_id", strconv.FormatInt(c.ChatID, 10))
+	_ = w.WriteField("chat_id", strconv.FormatInt(telegramRecipient(ctx, c.ChatID), 10))
 	_ = w.WriteField("caption", fmt.Sprintf(t.tr("💾 Encrypted WhiteDNS backup · %s\nSHA256: %x\nSave your recovery key separately via Backups → Recovery key. Restore by replying with this file to /restore.", "💾 پشتیبان رمزگذاری‌شدهٔ WhiteDNS · %s\nSHA256: %x\nکلید بازیابی را از پشتیبان ← کلید بازیابی جداگانه نگه دارید. برای بازیابی، فایل را در پاسخ به /restore بفرستید."), t.now().Format(time.RFC3339), sha256.Sum256(sealed)))
 	part, e := w.CreateFormFile("document", "whitedns-backup-"+t.now().UTC().Format("20060102-150405")+".wdb")
 	if e != nil {
@@ -162,7 +162,9 @@ func (t *Telegram) sendBackup(ctx context.Context) error {
 	}
 	req.Header.Set("Content-Type", w.FormDataContentType())
 	e = t.request(ctx, req, nil)
-	t.connection(e)
+	if telegramActor(ctx).Role == telegramOwner {
+		t.connection(e)
+	}
 	if e == nil {
 		_ = t.h.store.Audit("telegram.backup_exported", "")
 	}

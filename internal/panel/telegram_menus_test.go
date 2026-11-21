@@ -118,6 +118,46 @@ func TestTelegramMenusEditWithColorAndFallBackOnlyWhenNeeded(t *testing.T) {
 	}
 }
 
+func TestTelegramMenusStyleEveryButtonAndDistinguishActions(t *testing.T) {
+	bot, fake, _ := newTelegramTest(t)
+	mustHandle(t, bot, tgMessage(1, "/start"))
+	for _, row := range fake.keyboards[0].Rows {
+		for _, b := range row {
+			want := "primary"
+			switch b.Data {
+			case "new":
+				want = "success"
+			case "restart":
+				want = "danger"
+			}
+			if b.Style != want {
+				t.Errorf("home button %q has style %q, want %q", b.Data, b.Style, want)
+			}
+		}
+	}
+
+	for _, test := range []struct{ data, want string }{
+		{"free:engines", "primary"},
+		{"free:link:soar", "primary"},
+		{"free:retry:901", "success"},
+		{"free:retryoff:901", "danger"},
+		{"free:opt:on", "success"},
+		{"free:opt:off", "danger"},
+		{"ok:key", "success"},
+		{"action:delete:id", "danger"},
+		{"admins:add", "success"},
+		{"admins:remove:901", "danger"},
+		{"engines", "danger"},
+		{"restore", "danger"},
+		{"home", "primary"},
+		{"", "primary"},
+	} {
+		if got := telegramButtonStyle(test.data); got != test.want {
+			t.Errorf("button %q has style %q, want %q", test.data, got, test.want)
+		}
+	}
+}
+
 func TestTelegramMenusCustomEditorIssuesOnlyAfterConfirmation(t *testing.T) {
 	bot, fake, _ := newTelegramTest(t)
 	c := bot.config()

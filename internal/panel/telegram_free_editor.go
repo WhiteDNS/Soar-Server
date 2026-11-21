@@ -2,6 +2,7 @@ package panel
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"slices"
 	"strconv"
@@ -18,10 +19,51 @@ var freeEditorFields = map[string][2]string{
 }
 
 func (t *Telegram) startFreeEditor(ctx context.Context, kind string, revision uint64, p freePlan) error {
+	return t.startFreeEditorFor(ctx, kind, revision, p, 0)
+}
+
+func (t *Telegram) startFreeEditorFor(ctx context.Context, kind string, revision uint64, p freePlan, id int64) error {
 	t.confirmation = nil
 	d := &telegramConversation{Key: token()[:8], Setting: kind, FreeRevision: revision, FreePlan: &p, Expires: t.now().Add(10 * time.Minute)}
+	if id != 0 {
+		if e := t.setFreeEditorRecipient(d, id); e != nil {
+			return e
+		}
+	}
 	t.conversation = d
 	return t.showFreeEditor(ctx, d, "", "")
+}
+
+func (t *Telegram) setFreeEditorRecipient(d *telegramConversation, id int64) error {
+	s := t.h.store
+	owned, e := s.freeRequest(id, t.now())
+	if e != nil {
+		return e
+	}
+	var account Client
+	if owned.AccountID != "" {
+		account, e = s.Get(owned.AccountID)
+		if errors.Is(e, ErrNotFound) && !owned.RetryAllowed {
+			return errFreeRetryRequired
+		}
+		if e != nil && !errors.Is(e, ErrNotFound) {
+			return e
+		}
+	}
+	if account.ID != "" {
+		p := owned.plan()
+		p.ID = "custom"
+		in := accountInput(account)
+		in.Name = strings.TrimPrefix(in.Name, "Telegram · ")
+		in.Note = p.Input.Note
+		p.Input = in
+		if p.validate() != nil {
+			return errFreeExistingPlan
+		}
+		*d.FreePlan = p
+	}
+	d.FreeChat, d.ID, d.FreeRevision = id, account.ID, account.Revision
+	return nil
 }
 
 func (t *Telegram) showFreeEditor(ctx context.Context, d *telegramConversation, page, message string) error {
@@ -151,10 +193,13 @@ func (t *Telegram) freeEditorReply(ctx context.Context, d *telegramConversation,
 		}
 		switch d.Field {
 		case "chat":
-			if !validFreeChatID(v) || n == t.config().ChatID {
+			if !validFreeChatID(v) || t.config().administratorRole(n) != "" {
 				return t.promptFreeEditor(ctx, d, "chat", t.tr("Enter a public user's Telegram ID.\n", "شناسهٔ عددی یک کاربر عمومی را بفرستید.\n"))
 			}
-			d.FreeChat = n
+			if e := t.setFreeEditorRecipient(d, n); e != nil {
+				return t.promptFreeEditor(ctx, d, "chat", t.errorText(e)+"\n")
+			}
+			return t.showFreeEditor(ctx, d, "main", "")
 		case "quota":
 			if n > 1<<20 {
 				return t.promptFreeEditor(ctx, d, "quota", t.tr("The maximum is 1,048,576 MiB.\n", "حداکثر حجم ۱٬۰۴۸٬۵۷۶ مبی‌بایت است.\n"))
@@ -198,20 +243,11 @@ func (t *Telegram) saveFreeEditor(ctx context.Context, d *telegramConversation) 
 		if d.FreeChat == 0 {
 			return t.showFreeEditor(ctx, d, "", t.tr("\nChoose a recipient before saving.", "\nپیش از ذخیره گیرنده را انتخاب کنید."))
 		}
-		owned, e := s.freeRequest(d.FreeChat, t.now())
-		if e != nil {
-			return e
-		}
-		var revision uint64
-		if owned.AccountID != "" {
-			a, err := s.Get(owned.AccountID)
-			if err != nil {
-				return err
-			}
-			revision = a.Revision
+		if t.config().administratorRole(d.FreeChat) != "" {
+			return errTelegramUserID
 		}
 		d.Field, d.Prompt = "", 0
-		return t.confirm(ctx, telegramConfirmation{Action: "free-custom", FreeChat: d.FreeChat, FreePlan: &p, ID: owned.AccountID, Revision: revision},
+		return t.confirm(ctx, telegramConfirmation{Action: "free-custom", FreeChat: d.FreeChat, FreePlan: &p, ID: d.ID, Revision: d.FreeRevision},
 			fmt.Sprintf("%s %d\n%s", t.tr("Save custom configuration for Telegram ID", "ذخیرهٔ کانفیگ سفارشی برای شناسهٔ تلگرام"), d.FreeChat, freePlanSummary(p, t.tr)))
 	}
 	if e := s.changeFreeCatalog(d.FreeRevision, func(c *freeCatalog) error {

@@ -60,7 +60,10 @@ func TestTelegramEncryptedBackupRoundTripAndTampering(t *testing.T) {
 
 func TestTelegramSchedulerExpiresRestorePreviews(t *testing.T) {
 	now := time.Now()
-	bot := &Telegram{now: func() time.Time { return now }, cfg: defaultTelegramConfig(), confirmation: &telegramConfirmation{Backup: make([]byte, 8192), Expires: now.Add(-time.Second)}, conversation: &telegramConversation{Expires: now.Add(-time.Second)}}
+	bot := &Telegram{now: func() time.Time { return now }, cfg: defaultTelegramConfig(), telegramDialogue: telegramDialogue{
+		confirmation: &telegramConfirmation{Backup: make([]byte, 8192), Expires: now.Add(-time.Second)},
+		conversation: &telegramConversation{Expires: now.Add(-time.Second)},
+	}}
 	ctx, cancel := context.WithTimeout(context.Background(), 1200*time.Millisecond)
 	defer cancel()
 	bot.runSchedule(ctx)

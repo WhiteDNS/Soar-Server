@@ -175,3 +175,107 @@ func TestTelegramFreeFloodDoesNotReachProvisioningOrManagement(t *testing.T) {
 		t.Fatal("public traffic consumed the management allowance")
 	}
 }
+
+func TestTelegramFreeRetryRetainsIssuanceAndRequiresTheCurrentDecision(t *testing.T) {
+	bot, _, _ := newTelegramTest(t)
+	s, now := bot.h.store, time.Now()
+	const chat = 901
+	submit := func(id int64) error {
+		return s.submitFree(id, token()[:12], "Test request for a new configuration.", now)
+	}
+	if err := submit(chat); err != nil {
+		t.Fatal(err)
+	}
+	req, _ := s.freeRequest(chat, now)
+	account, err := s.approveFree(req.Key, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = s.setFreeRetry(chat, req.Key, true, now); err == nil {
+		t.Fatal("retry enabled while the account still exists")
+	}
+	if err = s.Delete(account.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err = submit(chat); err != ErrConflict {
+		t.Fatalf("the cooldown did not block a new request: %v", err)
+	}
+	if err = s.setFreeRetry(chat, req.Key, true, now); err != nil {
+		t.Fatal(err)
+	}
+	if err = s.setFreeRetry(chat, req.Key, false, now); err != nil {
+		t.Fatal(err)
+	}
+	if err = submit(chat); err != ErrConflict {
+		t.Fatalf("revoking permission did not restore the cooldown: %v", err)
+	}
+	if err = s.setFreeRetry(chat, req.Key, true, now); err != nil {
+		t.Fatal(err)
+	}
+	if err = submit(chat); err != nil {
+		t.Fatal(err)
+	}
+	if err = s.setFreeRetry(chat, req.Key, true, now); err == nil {
+		t.Fatal("a stale decision changed a replacement request")
+	}
+	for i := int64(1); i < freeDailyLimit; i++ {
+		if err = submit(i); err != nil {
+			t.Fatal(err)
+		}
+		r, _ := s.freeRequest(i, now)
+		if _, err = s.approveFree(r.Key, now); err != nil {
+			t.Fatal(err)
+		}
+	}
+	replacement, _ := s.freeRequest(chat, now)
+	if _, err = s.approveFree(replacement.Key, now); err != errFreeDailyLimit {
+		t.Fatalf("issuing a replacement did not count the removed account: %v", err)
+	}
+}
+
+func TestTelegramFreeRetryExplainsCooldownAndReopensThePlanMenu(t *testing.T) {
+	bot, fake, _ := newTelegramTest(t)
+	c := bot.config()
+	c.Language = "fa"
+	bot.mu.Lock()
+	bot.cfg = c
+	bot.mu.Unlock()
+	s, now := bot.h.store, time.Now()
+	bot.now = func() time.Time { return now }
+	const chat int64 = 901
+	mustHandle(t, bot, tgCallback(1, "free:enable"))
+	if err := s.submitFree(chat, token()[:12], "Test request for a new configuration.", now); err != nil {
+		t.Fatal(err)
+	}
+	r, _ := s.freeRequest(chat, now)
+	account, err := s.approveFree(r.Key, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = s.Delete(account.ID); err != nil {
+		t.Fatal(err)
+	}
+	pressRequest := func(updateID int64) string {
+		u := freePublic(tgCallback(updateID, "free:request"), chat)
+		u.Callback.From.Language = "fa"
+		mustHandle(t, bot, u)
+		return fake.texts[len(fake.texts)-1]
+	}
+	if message := pressRequest(2); !strings.Contains(message, "کانفیگ قبلی") || !strings.Contains(message, "دوباره درخواست بدهید") {
+		t.Fatalf("the user did not get timing and next steps: %q", message)
+	}
+	mustHandle(t, bot, tgCallback(3, "free:member:901"))
+	k := fake.keyboards[len(fake.keyboards)-1]
+	if len(k.Rows) < 2 || k.Rows[1][0].Data != "free:retry:901" {
+		t.Fatalf("the manager did not get the retry control: %+v", k)
+	}
+	mustHandle(t, bot, tgCallback(4, k.Rows[1][0].Data))
+	if bot.confirmation == nil || bot.confirmation.Action != "free-retry" {
+		t.Fatal("the override was not confirmed")
+	}
+	mustHandle(t, bot, tgCallback(5, "ok:"+bot.confirmation.Key))
+	now = now.Add(time.Second)
+	if message := pressRequest(6); message != "یک پلن رایگان انتخاب کنید." {
+		t.Fatalf("retry grant did not reopen applications: %q", message)
+	}
+}

@@ -3,6 +3,7 @@ package panel
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"mime/multipart"
 	"net/http"
@@ -98,7 +99,7 @@ func (t *Telegram) handleFreeUpdate(ctx context.Context, c TelegramConfig, from 
 	}
 	store := t.h.store
 	member, err := store.freeMember(from.ID)
-	if err != nil || member.Blocked {
+	if err != nil {
 		return
 	}
 	catalog, err := store.freeCatalog()
@@ -142,6 +143,11 @@ func (t *Telegram) handleFreeUpdate(ctx context.Context, c TelegramConfig, from 
 			_ = t.call(ctx, c, "answerCallbackQuery", map[string]string{"callback_query_id": u.Callback.ID}, nil)
 		}()
 	}
+	if member.Blocked {
+		send("The administrator has restricted this Telegram account. Ask the service administrator to review your access.",
+			"دسترسی این شناسه به‌دست مدیر محدود شده است. برای بازبینی دسترسی با مسئول سرویس تماس بگیرید.", nil)
+		return
+	}
 	if catalog.RestoreHold {
 		send("Public service is paused while the administrator reviews the restored backup.",
 			"سرویس عمومی تا پایان بررسی بکاپ بازیابی‌شده متوقف است.", nil)
@@ -156,7 +162,7 @@ func (t *Telegram) handleFreeUpdate(ctx context.Context, c TelegramConfig, from 
 		})
 		welcome := catalog.Text["welcome:"+language]
 		if welcome == "" {
-			welcome = tr("WhiteDNS free configurations. An administrator reviews new requests.", "کانفیگ رایگان WhiteDNS. مدیر درخواست‌های جدید را بررسی می‌کند.")
+			welcome = tr("To get a free configuration, choose a plan and reply to the verification message. Follow the decision in My account.", "برای دریافت کانفیگ رایگان، یک پلن انتخاب کنید و به پیام بررسی پاسخ بدهید. نتیجه را در «حساب من» ببینید.")
 		}
 		send(welcome, welcome, telegramKeyboard{Rows: [][]telegramButton{
 			{button("Get a free configuration", "دریافت کانفیگ رایگان", "request")},
@@ -208,9 +214,9 @@ func (t *Telegram) handleFreeUpdate(ctx context.Context, c TelegramConfig, from 
 	case "cancel":
 		t.clearFreeChallenge(from.ID)
 		if cancelled, e := store.cancelFree(from.ID, now); e == nil && cancelled {
-			send("Your pending request was cancelled.", "درخواست در انتظار شما لغو شد.", nil)
+			send("You cancelled your pending request. You can apply again in 24 hours.", "درخواست شما لغو شد. ۲۴ ساعت دیگر می‌توانید دوباره درخواست بدهید.", nil)
 		} else if e == nil {
-			send("There is no pending request to cancel.", "درخواستی برای لغو وجود ندارد.", nil)
+			send("There is no pending request to cancel. Open My account to see your current status.", "درخواست بازی برای لغو ندارید. وضعیت را در «حساب من» ببینید.", nil)
 		}
 		return
 	}
@@ -219,12 +225,21 @@ func (t *Telegram) handleFreeUpdate(ctx context.Context, c TelegramConfig, from 
 		send("Service unavailable. Try again later.", "سرویس موقتاً در دسترس نیست. بعداً امتحان کنید.", nil)
 		return
 	}
+	retryEN, retryFA := freeRetryDate(req.retryAt())
+	var account Client
 	if req.AccountID != "" {
-		account, err := store.Get(req.AccountID)
-		if err != nil {
-			send("This account is unavailable.", "این حساب در دسترس نیست.", nil)
+		account, err = store.Get(req.AccountID)
+		if errors.Is(err, ErrNotFound) && !req.RetryAllowed {
+			send("Your previous configuration is no longer available. You can request a new one from "+retryEN+".",
+				"کانفیگ قبلی دیگر در پنل موجود نیست. از "+retryFA+" می‌توانید دوباره درخواست بدهید.", nil)
 			return
 		}
+		if err != nil && !errors.Is(err, ErrNotFound) {
+			send("We could not read your account. Open My account again in a moment.", "خواندن حساب فعلاً ممکن نیست. کمی بعد دوباره «حساب من» را باز کنید.", nil)
+			return
+		}
+	}
+	if account.ID != "" {
 		status := account.Status(now)
 		if status == "active" && (action == "config" || action == "link" || action == "qr") {
 			if !t.freeAccountReady(account) {
@@ -282,17 +297,26 @@ func (t *Telegram) handleFreeUpdate(ctx context.Context, c TelegramConfig, from 
 		if status == "active" {
 			statusKeyboard = telegramKeyboard{Rows: [][]telegramButton{{button("Get link", "دریافت لینک", "config"), button("Get QR code", "دریافت کد QR", "qr")}}}
 		}
-		send(fmt.Sprintf("Status: %s\nUsed: %.1f MiB\nRemaining: %s\nExpires: %s", status, usage, leftEN, expiryEN),
-			telegramPersianDigits.Replace(fmt.Sprintf("وضعیت: %s\nمصرف: %.1f میبی‌بایت\nباقی‌مانده: %s\nانقضا: %s", statusFA, usage, leftFA, expiryFA)), statusKeyboard)
+		nextEN, nextFA := "", ""
+		switch status {
+		case "active":
+			nextEN, nextFA = "\nUse the buttons below to get your link or QR code.", "\nبا دکمه‌های پایین لینک یا کد QR را بگیرید."
+		case "Preparing":
+			nextEN, nextFA = "\nCheck My account again shortly.", "\nکمی بعد دوباره «حساب من» را باز کنید."
+		case "disabled", "expired", "exhausted":
+			nextEN, nextFA = "\nAsk the service administrator to activate or renew this account.", "\nبرای فعال‌سازی یا تمدید حساب با مسئول سرویس تماس بگیرید."
+		}
+		send(fmt.Sprintf("Status: %s\nUsed: %.1f MiB\nRemaining: %s\nExpires: %s", status, usage, leftEN, expiryEN)+nextEN,
+			telegramPersianDigits.Replace(fmt.Sprintf("وضعیت: %s\nمصرف: %.1f میبی‌بایت\nباقی‌مانده: %s\nانقضا: %s", statusFA, usage, leftFA, expiryFA))+nextFA, statusKeyboard)
 		return
 	}
-	if req.Key != "" {
+	if req.Key != "" && !req.RetryAllowed {
 		if req.Cancelled {
-			send("You cancelled this request. You can apply again after 24 hours.", "درخواست لغو شد. پس از ۲۴ ساعت می‌توانید دوباره درخواست بدهید.", nil)
+			send("You cancelled this request. You can apply again from "+retryEN+".", "درخواست را لغو کرده‌اید. از "+retryFA+" می‌توانید دوباره درخواست بدهید.", nil)
 		} else if req.Reviewed {
-			send("Request declined. Try again 24 hours after review.", "درخواست رد شد. ۲۴ ساعت پس از بررسی می‌توانید دوباره درخواست بدهید.", nil)
+			send("The administrator declined your request. You can apply again from "+retryEN+".", "مدیر درخواست را رد کرد. از "+retryFA+" می‌توانید دوباره درخواست بدهید.", nil)
 		} else {
-			send("Your request is waiting for review.", "درخواست شما در انتظار بررسی است.",
+			send("Your request is waiting for the administrator. Check My account for the result. You can cancel below if you changed your mind.", "درخواست در انتظار بررسی مدیر است. نتیجه در «حساب من» می‌آید. اگر منصرف شده‌اید، می‌توانید درخواست را لغو کنید.",
 				telegramKeyboard{Rows: [][]telegramButton{{{Text: tr("Cancel request", "لغو درخواست"), Data: "free:cancel"}}}})
 		}
 		return
@@ -300,11 +324,11 @@ func (t *Telegram) handleFreeUpdate(ctx context.Context, c TelegramConfig, from 
 	switch action {
 	case "request", "plan":
 		if catalog.Paused || catalog.RestoreHold {
-			send("New requests are paused.", "پذیرش درخواست جدید متوقف است.", nil)
+			send("The administrator has paused new requests. Open the main menu later to check whether applications are open.", "مدیر پذیرش درخواست تازه را متوقف کرده است. بعداً از منوی اصلی دوباره بررسی کنید.", nil)
 			return
 		}
 		if now.Before(challenge.Expires) {
-			send("Reply to the challenge already sent to you.", "به پیام چالش قبلی پاسخ دهید.", nil)
+			send("A verification code is already open. Reply to that message with the code and why you need the configuration.", "یک کد تأیید فعال دارید. به همان پیام با کد و دلیل درخواستتان پاسخ دهید.", nil)
 			return
 		}
 		var plan freePlan
@@ -328,7 +352,12 @@ func (t *Telegram) handleFreeUpdate(ctx context.Context, c TelegramConfig, from 
 			return
 		}
 		if plan.ID == "" {
-			send("This plan is unavailable. Open the plan list again.", "این پلن در دسترس نیست. فهرست پلن‌ها را دوباره باز کنید.", nil)
+			if action == "request" {
+				send("No free plans are available right now. Check again later for published plans.", "در حال حاضر پلن رایگانی برای درخواست وجود ندارد. بعداً دوباره فهرست پلن‌ها را بررسی کنید.", nil)
+			} else {
+				send("This plan has changed or been withdrawn. Choose again from the current plans.", "این پلن تغییر کرده یا از عرضه خارج شده است. از فهرست پلن‌های فعلی دوباره انتخاب کنید.",
+					telegramKeyboard{Rows: [][]telegramButton{{button("See current plans", "مشاهدهٔ پلن‌های فعلی", "request")}}})
+			}
 			return
 		}
 		pending, _, e := store.freeQueue(now)
@@ -358,7 +387,8 @@ func (t *Telegram) handleFreeUpdate(ctx context.Context, c TelegramConfig, from 
 		code, reason, _ := strings.Cut(value, " ")
 		reason = strings.TrimSpace(reason)
 		if code != challenge.Code || !validFreeReason(reason) {
-			send("Invalid reply. Use /free to request a fresh code.", "پاسخ معتبر نیست. برای کد تازه /free را بفرستید.", nil)
+			send("The code or explanation was invalid. Get a fresh code and reply with the code, a space, and a reason of 15–240 characters.", "کد یا دلیل درخواست معتبر نبود. کد تازه بگیرید و در پاسخ، کد را با یک فاصله و دلیل ۱۵ تا ۲۴۰ نویسه‌ای بفرستید.",
+				telegramKeyboard{Rows: [][]telegramButton{{button("Get a fresh code", "گرفتن کد تازه", "request")}}})
 			return
 		}
 		live := t.config()
@@ -373,19 +403,31 @@ func (t *Telegram) handleFreeUpdate(ctx context.Context, c TelegramConfig, from 
 					m.Language = language
 				}
 			})
-			send("Your request was sent for manual review.", "درخواست شما برای بررسی مدیر ثبت شد.",
+			send("Your request was registered. The administrator will review it. Follow the result in My account.", "درخواست ثبت شد و مدیر آن را بررسی می‌کند. نتیجه را در «حساب من» پیگیری کنید.",
 				telegramKeyboard{Rows: [][]telegramButton{{button("Track request", "پیگیری درخواست", "status")}}})
 		case errFreeQueueFull:
 			send("The review queue is full. Try again later.", "صف بررسی پر است. بعداً امتحان کنید.", nil)
 		case errFreePlanUnavailable, errFreePaused:
 			send("The plan changed or requests are paused. Open the plan list again.", "پلن عوض شده یا پذیرش متوقف است. فهرست پلن‌ها را دوباره باز کنید.", nil)
+		case ErrConflict:
+			send("Your request status changed. Open My account to see the current decision.", "وضعیت درخواست شما تغییر کرده است. آخرین وضعیت را در «حساب من» ببینید.",
+				telegramKeyboard{Rows: [][]telegramButton{{button("My account", "حساب من", "status")}}})
 		default:
 			send("Could not submit. Check /free_status or try again later.", "ثبت درخواست انجام نشد. وضعیت را با /free_status بررسی کنید یا بعداً تلاش کنید.", nil)
 		}
 	default:
-		send("You do not have an active request or account yet.", "هنوز درخواست باز یا حسابی ندارید.",
+		en, fa := "You do not have an active request or account yet.", "هنوز درخواست باز یا حسابی ندارید."
+		if req.RetryAllowed {
+			en, fa = "The administrator has allowed a new request. Choose a free plan to apply again.", "مدیر اجازهٔ درخواست دوباره داده است. یک پلن رایگان انتخاب کنید و درخواست تازه بفرستید."
+		}
+		send(en, fa,
 			telegramKeyboard{Rows: [][]telegramButton{{button("Request a free configuration", "درخواست کانفیگ رایگان", "request")}}})
 	}
+}
+
+func freeRetryDate(at time.Time) (en, fa string) {
+	date := at.UTC().Format("2006-01-02 15:04")
+	return date + " UTC", telegramPersianDigits.Replace(date) + " به وقت جهانی"
 }
 
 func validFreeReason(reason string) bool {

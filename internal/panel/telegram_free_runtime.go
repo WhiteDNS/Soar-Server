@@ -136,7 +136,8 @@ func (t *Telegram) runFreeWorkers(ctx context.Context) func() {
 					}
 				}
 				current := t.config()
-				if current.Enabled && current.FreeAccess && current.Token == job.config.Token && current.ChatID == job.config.ChatID {
+				if current.Enabled && current.FreeAccess && current.Token == job.config.Token && current.ChatID == job.config.ChatID &&
+					current.administratorRole(job.from.ID) == "" {
 					t.handleFreeUpdate(ctx, current, job.from, job.update)
 				}
 				if job.reply != 0 {

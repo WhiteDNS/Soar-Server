@@ -21,15 +21,15 @@ See [the Persian setup and recovery guide](telegram-emergency-management.fa.md).
 در BotFather با دستور `/newbot` یک ربات اختصاصی برای همین سرور بسازید. فقط توکن
 را در «تنظیمات سرور ← مدیریت با تلگرام» ذخیره کنید. «اتصال حساب تلگرام من» را
 بزنید و در تلگرام با حساب خودتان Start را انتخاب کنید. شناسهٔ چت خودکار و فقط
-برای همین مدیر ثبت می‌شود؛ وارد کردن دستی آن لازم نیست.
+برای مالک ربات ثبت می‌شود؛ وارد کردن دستی آن لازم نیست.
 
 Keep the connection link private: whoever opens it before it expires can become
-this server's Telegram administrator. A plain `/start` from an unknown person
+this server's Telegram bot owner. A plain `/start` from an unknown person
 never grants access. The link is issued only inside the authenticated dashboard,
 requires a private chat with matching sender/chat IDs, and is consumed durably
 before access is granted. Replacing the bot token requires fresh pairing.
-Previously paired installations retain their administrator without re-entering
-an ID. Disconnect Telegram before pairing a different administrator.
+Previously paired installations retain the same owner without re-entering an ID.
+Disconnect Telegram before pairing a different owner.
 
 The token is a secret. The panel never displays a saved token: leave its input
 blank to preserve it. Use **Disable bot** to pause management and notifications
@@ -59,13 +59,26 @@ forms last fifteen minutes. `/cancel` discards the current form. `/menu` returns
 home; `/stats` returns current server resources, uptime, version, account counts, active TCP streams and usage totals; `/settings` opens server settings; `/backup`, `/restore`, `/diagnostics` and `/access` open the corresponding management menus. Preferences are available from the main menu; `/help` describes the controls. Concurrent
 web edits invalidate stale account confirmations.
 
-Only the configured sender in the configured **private** chat is authorized.
-Groups, channels, forwarded callback identities and other Telegram users cannot
-manage the server. Keep the administrator's Telegram account secure: possession
-of that account authorizes button-confirmed operations without a panel password.
-Web password checks remain unchanged.
+Management accepts authorized senders in their matching **private** chats. The
+owner can open **Free configs → Bot administrators** to add up to eight
+administrators by numeric Telegram ID, choose their role, change it, or remove
+them. Added administrators open the bot and send `/start`. Each administrator
+has a separate form and confirmation. Changing a role or removing an administrator
+invalidates their open forms and confirmations immediately.
 
-سرور فقط پیام و دکمهٔ مدیر تعیین‌شده در چت خصوصی را می‌پذیرد. عملیات نوشتن، حذف،
+- **Free configurations** manages the public service, plans, requests,
+  Telegram users and broadcasts.
+- **Full management** also includes server settings, all panel accounts,
+  maintenance, and access to encrypted backups and the recovery key.
+
+Only the owner grants, changes or removes these roles. Disconnecting or
+replacing the bot owner or token revokes the additional administrator list.
+
+مالک از «داشبورد کانفیگ رایگان ← مدیران ربات»، شناسهٔ عددی هر مدیر را وارد
+می‌کند و نقش «مدیر کانفیگ رایگان» یا «مدیر کامل ربات» را انتخاب می‌کند.
+برای تغییر نقش یا حذف، شناسه را در همان فهرست باز کنید. مدیر کامل به
+پشتیبان‌ها و کلید بازیابی هم دسترسی دارد. ربات پیام مدیریتی را در گفت‌وگوی
+خصوصی همان مدیر می‌پذیرد. عملیات نوشتن، حذف،
 تعویض کلید، صفر کردن مصرف و نگهداری پس از بررسی و تأیید انجام می‌شوند. تأییدها
 یک‌بارمصرف و پنج‌دقیقه‌ای هستند. فرم‌ها پس از پانزده دقیقه منقضی می‌شوند. تغییر
 هم‌زمان از پنل، تأیید قدیمی حساب را نامعتبر می‌کند. رمز پنل را در تلگرام نفرستید.
@@ -98,14 +111,22 @@ The dashboard provides request review with individual and selected approvals
 and rejections, statistics, all and active account lists, search, individual
 and selected account deletion, custom configurations, Telegram access controls,
 and editing of English and Persian greetings, terms and connection instructions.
-New pending requests are grouped into one private administrator notification per
-15-second check, with a button to open the queue. Delivery is retried after a
-Telegram error as long as the requests are still pending.
+New pending requests are grouped into one notification per administrator per
+15-second check, with a button to open the queue. Delivery is tracked
+independently for each administrator.
 To link an existing account, open it from **Users** and choose **Link to Telegram
 user**. The account must have finite limits and the recipient must have opened
 the bot. Bulk deletion is confirmed against the account revisions shown in the
 preview. A custom configuration for an existing linked account edits the same
 account and preserves the keys and usage history.
+
+Open **Accounts → Manage a Telegram user** and enter the numeric Telegram ID,
+or open the user from a pending request. This page shows the request or account,
+manual blocks and the original deadline to submit another request. For a
+declined or cancelled request, or an account removed from the panel, the
+administrator can confirm **Allow one early retry** or withdraw the exception
+before it is used. A new request still goes through verification, approval,
+and the system's admission and issuance limits.
 
 The public chat's Telegram **Menu** offers quick commands for the main menu,
 applications, account status, help and language. Inline navigation updates the
@@ -120,6 +141,12 @@ CottenDNS and MasterDNS start on demand when the first DNS query arrives.
 «مشاهدهٔ درخواست‌ها» در گفت‌وگوی خصوصی مدیر می‌آید. پس از فعال‌کردن دسترسی
 عمومی، کاربر از دکمهٔ Menu تلگرام یا منوی درون پیام به درخواست رایگان، حساب،
 راهنما و انتخاب زبان دسترسی دارد.
+
+در «حساب‌ها ← مدیریت کاربر تلگرام»، وضعیت درخواست، مسدودی یا زمان پایان
+مهلت را با شناسهٔ عددی ببینید. برای درخواست رد یا لغوشده و کانفیگ حذف‌شده،
+«اجازهٔ یک درخواست مجدد» را بعد از بازبینی تأیید کنید. تا قبل از استفاده،
+امکان لغو این اجازه هم وجود دارد. مهلت و مسیر بعدی در پیام کاربر نمایش داده
+می‌شوند.
 
 **Pause applications** stops new requests. Administrators can still review
 saved requests and existing owners can retrieve their links. **Emergency stop**

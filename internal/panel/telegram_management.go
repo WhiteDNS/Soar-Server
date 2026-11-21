@@ -174,7 +174,7 @@ func (t *Telegram) managementCallback(ctx context.Context, data string) (bool, e
 		}
 		id := strings.TrimPrefix(data, "access-apply:")
 		p := t.h.access.Plan()
-		if p == nil || p.ID != id || p.owner != t.accessOwner() || p.State != "ready" {
+		if p == nil || p.ID != id || p.owner != t.accessOwner(ctx) || p.State != "ready" {
 			return true, errors.New("access preview expired or is not ready")
 		}
 		return true, t.confirm(ctx, telegramConfirmation{Action: "access-apply", ID: id}, t.tr("Activate this panel address and sign out current dashboard sessions?\n", "این آدرس پنل فعال و نشست‌های داشبورد خارج شوند؟\n")+p.URL)
@@ -339,7 +339,7 @@ func (t *Telegram) executeManagement(ctx context.Context, c *telegramConfirmatio
 		if t.h.ops != nil {
 			firewall = t.h.ops.AllowHTTPS
 		}
-		p, e := t.h.access.Prepare(t.config().Origin, t.accessOwner(), c.Access, firewall)
+		p, e := t.h.access.Prepare(t.config().Origin, t.accessOwner(ctx), c.Access, firewall)
 		if e != nil {
 			return true, e
 		}
@@ -349,7 +349,7 @@ func (t *Telegram) executeManagement(ctx context.Context, c *telegramConfirmatio
 		if t.h.access == nil {
 			return true, errors.New("access settings unavailable")
 		}
-		next, e := t.h.access.Apply(c.ID, t.accessOwner())
+		next, e := t.h.access.Apply(c.ID, t.accessOwner(ctx))
 		if e != nil {
 			return true, e
 		}
@@ -406,7 +406,9 @@ func (t *Telegram) floodStatus(ctx context.Context) error {
 	return e
 }
 
-func (t *Telegram) accessOwner() string { return fmt.Sprintf("telegram:%d", t.config().ChatID) }
+func (t *Telegram) accessOwner(ctx context.Context) string {
+	return fmt.Sprintf("telegram:%d", telegramRecipient(ctx, t.config().ChatID))
+}
 
 func (t *Telegram) accessMenu(ctx context.Context) error {
 	if t.h.access == nil {
@@ -416,7 +418,7 @@ func (t *Telegram) accessMenu(ctx context.Context) error {
 	c := t.h.access.Config()
 	text := t.tr("🌐 Panel access\n", "🌐 دسترسی پنل\n") + telegramJSON(c)
 	k := telegramKeyboard{Rows: [][]telegramButton{{t.button("Edit domain / HTTPS / path", "تغییر دامنه / HTTPS / مسیر", "access-edit"), t.button("Refresh", "تازه‌سازی", "access")}}}
-	if p := t.h.access.Plan(); p != nil && p.owner == t.accessOwner() {
+	if p := t.h.access.Plan(); p != nil && p.owner == t.accessOwner(ctx) {
 		text += "\n" + p.State + "\n" + p.URL + "\n" + p.Error
 		if p.State == "ready" {
 			k.Rows = append(k.Rows, []telegramButton{t.button("Activate prepared address", "فعال‌سازی آدرس آماده‌شده", "access-apply:"+p.ID)})

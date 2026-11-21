@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -66,7 +67,7 @@ func TestTelegramDelayedSettingsPreserveCredentialChanges(t *testing.T) {
 				t.Fatal("delayed settings restored revoked credentials or administrator")
 			}
 			reloaded, e := NewTelegram(bot.h, bot.file)
-			if e != nil || reloaded.config() != cfg {
+			if e != nil || !reflect.DeepEqual(reloaded.config(), cfg) {
 				t.Fatal("credential change not preserved on disk", e)
 			}
 		})

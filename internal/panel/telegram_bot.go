@@ -54,6 +54,7 @@ type telegramConfirmation struct {
 	FreeChat                 int64
 	FreeRevision             uint64
 	FreeText                 string
+	AdminRole, AdminBefore   string
 }
 
 func (t *Telegram) tr(en, fa string) string {
@@ -79,6 +80,9 @@ func (t *Telegram) home(ctx context.Context) error {
 	t.conversation = nil
 	t.confirmation = nil
 	t.freeSelected, t.freeDeleteSelected = nil, nil
+	if telegramActor(ctx).Role == telegramFreeAdmin {
+		return t.freeDashboard(ctx)
+	}
 	_, e := t.notify(ctx, t.config(), t.tr("🛠️ WhiteDNS server management\nChoose an action.", "🛠️ مدیریت سرور WhiteDNS\nیک عملیات انتخاب کنید."), t.homeKeyboard())
 	return e
 }
@@ -90,6 +94,18 @@ func (t *Telegram) errorText(e error) string {
 		return e.Error()
 	}
 	switch {
+	case errors.Is(e, errTelegramAdminPermission):
+		return "نقش فعلی شما اجازهٔ این کار را نمی‌دهد. داشبورد نقش خود را باز کنید. تغییر نقش در اختیار مالک ربات است."
+	case errors.Is(e, errTelegramUserID):
+		return "شناسه معتبر نیست یا متعلق به مدیر ربات است. شناسهٔ عددی فرد موردنظر را بررسی کنید."
+	case errors.Is(e, errTelegramAdminLimit):
+		return "فهرست مدیران پر است. برای افزودن مدیر تازه، مالک باید یکی از مدیران را حذف کند."
+	case errors.Is(e, errFreeRetryRequired):
+		return "حساب قبلی حذف شده است. در «مدیریت کاربر تلگرام»، مهلت را ببینید یا اجازهٔ درخواست مجدد بدهید."
+	case errors.Is(e, errFreeExistingPlan):
+		return "تنظیمات حساب فعلی خارج از حدود پلن رایگان است. نام، حجم، سرعت و سقف اتصال را در صفحهٔ همان حساب در پنل بررسی کنید."
+	case errors.Is(e, errTelegramReplyRequired):
+		return "به آخرین پیام فرم پاسخ دهید. برای بستن فرم و بازگشت به منو، /cancel را بفرستید."
 	case errors.Is(e, ErrConflict):
 		return "اطلاعات هم‌زمان تغییر کرده است. فرم را دوباره باز کنید."
 	case errors.Is(e, ErrNotFound):
@@ -111,6 +127,18 @@ func (t *Telegram) errorText(e error) string {
 func (t *Telegram) message(ctx context.Context, m telegramMessage) error {
 	text := strings.TrimSpace(m.Text)
 	command := strings.SplitN(strings.Split(text, " ")[0], "@", 2)[0]
+	role := telegramActor(ctx).Role
+	if role != telegramOwner && command == "/start" {
+		t.updateAdministratorCommands(ctx, t.config(), m.From.ID, role)
+	}
+	if role == telegramFreeAdmin {
+		if m.Document != nil || strings.HasPrefix(command, "/") && !oneOf(command, "/start", "/menu", "/admin", "/cancel", "/help") {
+			return errTelegramAdminPermission
+		}
+		if command == "/help" {
+			return t.manageFree(ctx, "manage")
+		}
+	}
 	switch command {
 	case "/start", "/menu", "/cancel":
 		return t.home(ctx)
@@ -140,9 +168,9 @@ func (t *Telegram) message(ctx context.Context, m telegramMessage) error {
 		return t.home(ctx)
 	}
 	if m.Reply == nil || m.Reply.ID != d.Prompt {
-		return errors.New(t.tr("reply to the current prompt, or use /cancel", "به پیام پرسش فعلی پاسخ دهید یا /cancel را بفرستید"))
+		return errTelegramReplyRequired
 	}
-	ctx = withTelegramMenu(ctx, t.config().ChatID, d.MenuID)
+	ctx = withTelegramMenu(ctx, telegramRecipient(ctx, t.config().ChatID), d.MenuID)
 	if d.Field == "management" {
 		return t.managementReply(ctx, d, text)
 	}
@@ -172,6 +200,13 @@ func (t *Telegram) message(ctx context.Context, m telegramMessage) error {
 	return t.review(ctx)
 }
 func (t *Telegram) callback(ctx context.Context, data string) error {
+	role := telegramActor(ctx).Role
+	if role == telegramFreeAdmin && data != "home" && !strings.HasPrefix(data, "ok:") && !allowedFreeAdminAction(data) {
+		return errTelegramAdminPermission
+	}
+	if value, ok := strings.CutPrefix(data, "admins:"); ok {
+		return t.administratorMenu(ctx, value)
+	}
 	if strings.HasPrefix(data, "free:") {
 		return t.manageFree(ctx, strings.TrimPrefix(data, "free:"))
 	}
@@ -625,9 +660,16 @@ func (t *Telegram) confirm(ctx context.Context, c telegramConfirmation, text str
 }
 func (t *Telegram) execute(ctx context.Context, key string) error {
 	c := t.confirmation
-	t.confirmation = nil
 	if c == nil || c.Key != key || !t.now().Before(c.Expires) {
 		return errors.New("confirmation expired or already used")
+	}
+	t.confirmation = nil
+	if telegramActor(ctx).Role == telegramFreeAdmin && !strings.HasPrefix(c.Action, "free-") {
+		return errTelegramAdminPermission
+	}
+	if c.Action == "administrator" {
+		t.conversation = nil
+		return t.updateTelegramAdministrator(ctx, c)
 	}
 	if strings.HasPrefix(c.Action, "free-") {
 		t.conversation = nil
@@ -640,8 +682,9 @@ func (t *Telegram) execute(ctx context.Context, key string) error {
 	t.state.PendingAction = c.Action
 	t.state.PendingSince = t.now().UnixMilli()
 	t.state.PendingJob = ""
+	t.state.PendingChat = telegramRecipient(ctx, t.config().ChatID)
 	if e := t.save(); e != nil {
-		t.state.PendingAction, t.state.PendingSince = "", 0
+		t.state.PendingAction, t.state.PendingSince, t.state.PendingChat = "", 0, 0
 		return errors.New("cannot persist action; nothing was executed")
 	}
 	if c.Action == "restart" || c.Action == "update" || c.Action == "restore" {
@@ -707,6 +750,7 @@ func (t *Telegram) execute(ctx context.Context, key string) error {
 func (t *Telegram) finishAction(err error) error {
 	t.state.PendingAction = ""
 	t.state.PendingJob = ""
+	t.state.PendingChat = 0
 	t.state.PendingSince = 0
 	if e := t.save(); e != nil {
 		return errors.New("action result could not be persisted; check current state before retrying")
@@ -744,10 +788,12 @@ func (t *Telegram) links(ctx context.Context, id string) error {
 	for _, s := range all {
 		text := html.EscapeString(s.name) + "\n<pre>" + html.EscapeString(s.link) + "</pre>"
 		e = t.call(ctx, c, "sendMessage", map[string]any{
-			"chat_id": c.ChatID, "text": text, "parse_mode": "HTML",
+			"chat_id": telegramRecipient(ctx, c.ChatID), "text": text, "parse_mode": "HTML",
 			"link_preview_options": map[string]bool{"is_disabled": true},
 		}, nil)
-		t.connection(e)
+		if telegramActor(ctx).Role == telegramOwner {
+			t.connection(e)
+		}
 		if e != nil {
 			return e
 		}

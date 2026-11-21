@@ -20,22 +20,23 @@ import (
 )
 
 type TelegramConfig struct {
-	FreeAccess  bool   `json:"free_access,omitempty"`
-	AutoBackup  bool   `json:"auto_backup"`
-	BackupTime  string `json:"backup_time"`
-	BackupKey   string `json:"backup_key,omitempty"` // Private encryption key; never included in HTTP views or DB backups.
-	Token       string `json:"token"`
-	ChatID      int64  `json:"chat_id"`
-	Enabled     bool   `json:"enabled"`
-	Language    string `json:"language"`
-	Alerts      bool   `json:"alerts"`
-	DailyReport bool   `json:"daily_report"`
-	ReportTime  string `json:"report_time"`
-	Timezone    string `json:"timezone"`
-	Origin      string `json:"origin"`
-	Username    string `json:"username"`
-	PairToken   string `json:"pair_token,omitempty"`
-	PairExpires int64  `json:"pair_expires,omitempty"`
+	Administrators []telegramAdministrator `json:"administrators,omitempty"`
+	FreeAccess     bool                    `json:"free_access,omitempty"`
+	AutoBackup     bool                    `json:"auto_backup"`
+	BackupTime     string                  `json:"backup_time"`
+	BackupKey      string                  `json:"backup_key,omitempty"` // Private encryption key; never included in HTTP views or DB backups.
+	Token          string                  `json:"token"`
+	ChatID         int64                   `json:"chat_id"`
+	Enabled        bool                    `json:"enabled"`
+	Language       string                  `json:"language"`
+	Alerts         bool                    `json:"alerts"`
+	DailyReport    bool                    `json:"daily_report"`
+	ReportTime     string                  `json:"report_time"`
+	Timezone       string                  `json:"timezone"`
+	Origin         string                  `json:"origin"`
+	Username       string                  `json:"username"`
+	PairToken      string                  `json:"pair_token,omitempty"`
+	PairExpires    int64                   `json:"pair_expires,omitempty"`
 }
 type telegramState struct {
 	ReportError             string            `json:"report_error,omitempty"`
@@ -60,6 +61,7 @@ type telegramState struct {
 	PendingAction           string            `json:"pending_action,omitempty"`
 	PendingSince            int64             `json:"pending_since,omitempty"`
 	PendingJob              string            `json:"pending_job,omitempty"`
+	PendingChat             int64             `json:"pending_chat,omitempty"`
 }
 type telegramDisk struct {
 	Config TelegramConfig `json:"config"`
@@ -89,8 +91,10 @@ type TelegramView struct {
 	PairExpires int64  `json:"pair_expires,omitempty"`
 }
 type Telegram struct {
-	mu                       sync.Mutex // Configuration and public connection status; never held during I/O.
-	opMu                     sync.Mutex // Serialize reconfiguration with dispatch and persistent state.
+	telegramDialogue
+	adminDialogues           map[int64]telegramDialogue // Guarded by opMu.
+	mu                       sync.Mutex                 // Configuration and public connection status; never held during I/O.
+	opMu                     sync.Mutex                 // Serialize reconfiguration with dispatch and persistent state.
 	cfg                      TelegramConfig
 	state                    telegramState
 	file                     string
@@ -117,12 +121,8 @@ type Telegram struct {
 	freeQueues               [2]chan telegramFreeJob // Guarded by opMu.
 	freeReplies              chan telegramFreeJob    // Guarded by opMu.
 	freeSend                 [3]telegramFreeSend     // Guarded by mu.
-	freeSelected             []string
-	freeDeleteSelected       []string
 	freeEpoch                string
 	freeNotices              chan telegramFreeNotice
-	conversation             *telegramConversation
-	confirmation             *telegramConfirmation
 	recovered                bool
 	lastReport, lastBackup   string // Public delivery state, guarded by mu.
 	reportError, backupError string
@@ -227,6 +227,9 @@ func NewTelegram(h *HTTP, file string) (*Telegram, error) {
 var telegramTokenPattern = regexp.MustCompile(`^[0-9]{5,20}:[A-Za-z0-9_-]{20,100}$`)
 
 func validateTelegramConfig(c TelegramConfig, required bool) error {
+	if !validTelegramAdministrators(c) {
+		return errors.New("invalid Telegram administrator list")
+	}
 	if c.BackupTime != "" {
 		if _, e := time.Parse("15:04", c.BackupTime); e != nil || len(c.BackupTime) != 5 {
 			return errors.New("backup time must use HH:MM")
@@ -362,6 +365,7 @@ func (t *Telegram) request(ctx context.Context, req *http.Request, out any) erro
 	return nil
 }
 func (t *Telegram) notify(ctx context.Context, c TelegramConfig, text string, keyboard any) (int64, error) {
+	c.ChatID = telegramRecipient(ctx, c.ChatID)
 	var lastID int64
 	parts := telegramTextParts(text)
 	for i, part := range parts {
@@ -370,7 +374,9 @@ func (t *Telegram) notify(ctx context.Context, c TelegramConfig, text string, ke
 			markup = keyboard
 		}
 		id, e := t.sendText(ctx, c, part, markup)
-		t.connection(e)
+		if telegramActor(ctx).Role == telegramOwner {
+			t.connection(e)
+		}
 		if e != nil {
 			return lastID, e
 		}
@@ -497,6 +503,10 @@ func (t *Telegram) configureLocked(ctx context.Context, c TelegramConfig) error 
 		c.ChatID = 0
 		c.FreeAccess = false
 	}
+	c.Administrators = nil
+	if old.Token == c.Token && old.ChatID == c.ChatID {
+		c.Administrators = old.Administrators
+	}
 	if e := validateTelegramConfig(c, true); e != nil {
 		return e
 	}
@@ -568,8 +578,8 @@ func (t *Telegram) configureLocked(ctx context.Context, c TelegramConfig) error 
 		t.clearFreeChallenge(0)
 		t.freeEpoch = token()[:8]
 	}
-	t.conversation = nil
-	t.confirmation = nil
+	t.telegramDialogue = telegramDialogue{}
+	t.adminDialogues = nil
 	t.reportRetry, t.backupRetry = time.Time{}, time.Time{}
 	_ = t.h.store.Audit("telegram.configured", "")
 	select {
@@ -605,8 +615,8 @@ func (t *Telegram) disconnect() error {
 	t.state = telegramState{}
 	t.clearFreeChallenge(0)
 	t.freeEpoch = token()[:8]
-	t.conversation = nil
-	t.confirmation = nil
+	t.telegramDialogue = telegramDialogue{}
+	t.adminDialogues = nil
 	t.recovered = false
 	_ = t.h.store.Audit("telegram.disconnected", "")
 	select {
@@ -861,12 +871,13 @@ func (t *Telegram) handleUpdate(ctx context.Context, u telegramUpdate) error {
 		chat = u.Callback.Message.Chat
 	}
 	private := chat.Type == "private" && chat.ID > 0 && from.ID == chat.ID && !from.IsBot
+	role := c.administratorRole(chat.ID)
 	pairing := false
 	if private && c.ChatID == 0 && u.Message != nil && c.PairToken != "" && t.now().UnixMilli() < c.PairExpires {
 		parts := strings.Fields(u.Message.Text)
 		pairing = len(parts) == 2 && parts[0] == "/start" && hmac.Equal([]byte(parts[1]), []byte(c.PairToken))
 	}
-	if !c.Enabled || !private || (!pairing && chat.ID != c.ChatID) {
+	if !c.Enabled || !private || (!pairing && role == "") {
 		// Public requests have their own one-use challenge and transactional state.
 		// Floods of ignored updates must not force a disk write for each update.
 		t.state.Offset = u.ID + 1
@@ -914,10 +925,10 @@ func (t *Telegram) handleUpdate(ctx context.Context, u telegramUpdate) error {
 		t.confirmation = nil
 		t.recovered = false
 		_ = t.h.store.Audit("telegram.paired", "")
-		_, e := t.notify(ctx, c, t.tr("✅ Telegram connected. Only this private chat can manage the server.", "✅ تلگرام متصل شد. فقط همین گفت‌وگوی خصوصی می‌تواند سرور را مدیریت کند."), t.homeKeyboard())
+		_, e := t.notify(ctx, c, t.tr("✅ Telegram connected. This private chat is the owner. To delegate access, open Bot administrators from the free configuration dashboard.", "✅ تلگرام متصل شد. این گفت‌وگوی خصوصی متعلق به مالک ربات است. برای واگذاری دسترسی، از داشبورد کانفیگ رایگان وارد «مدیران ربات» شوید."), t.homeKeyboard())
 		return e
 	}
-	if c.Language == "auto" {
+	if role == telegramOwner && c.Language == "auto" {
 		c.Language = "en"
 		if strings.HasPrefix(from.Language, "fa") {
 			c.Language = "fa"
@@ -928,6 +939,10 @@ func (t *Telegram) handleUpdate(ctx context.Context, u telegramUpdate) error {
 		if e := t.save(); e != nil {
 			return errors.New("cannot save Telegram language")
 		}
+	}
+	ctx = context.WithValue(ctx, telegramActorKey{}, telegramAdministrator{ID: chat.ID, Role: role})
+	if role != telegramOwner {
+		defer t.enterTelegramDialogue(chat.ID)()
 	}
 	if t.conversation != nil && !t.now().Before(t.conversation.Expires) {
 		t.conversation = nil
@@ -943,7 +958,11 @@ func (t *Telegram) handleUpdate(ctx context.Context, u telegramUpdate) error {
 		e = t.message(ctx, *u.Message)
 	}
 	if e != nil {
-		_, sendErr := t.notify(ctx, t.config(), t.tr("❌ Action failed: ", "❌ عملیات ناموفق: ")+t.errorText(e), t.homeKeyboard())
+		keyboard := t.homeKeyboard()
+		if role == telegramFreeAdmin {
+			keyboard = telegramKeyboard{Rows: [][]telegramButton{{t.button("Open the free configuration dashboard", "بازگشت به داشبورد کانفیگ رایگان", "free:manage")}}}
+		}
+		_, sendErr := t.notify(ctx, t.config(), t.tr("❌ Action failed: ", "❌ عملیات ناموفق: ")+t.errorText(e), keyboard)
 		if sendErr != nil {
 			return sendErr
 		}
