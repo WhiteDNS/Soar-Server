@@ -10,6 +10,8 @@ import (
 
 type telegramCommand struct{ name, en, fa string }
 
+const telegramLanguageLabel = "🌐 فارسی / English"
+
 func administratorCommands(role string) []telegramCommand {
 	if role == telegramFreeAdmin {
 		return []telegramCommand{
@@ -57,6 +59,7 @@ func (t *Telegram) updateAdministratorCommands(ctx context.Context, c TelegramCo
 		_ = t.call(job, c, "deleteMyCommands", map[string]any{"scope": scope}, nil)
 		return
 	}
+	c.Language = c.administratorLanguage(id)
 	_ = t.setTelegramCommands(job, c, scope, "", administratorCommands(role))
 }
 

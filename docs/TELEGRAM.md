@@ -40,8 +40,9 @@ in BotFather, then save the replacement in the dashboard.
 
 ## Management / مدیریت
 
-The bot supports Persian and English. The first authorized message selects the
-initial language; change it under **Preferences**. Use buttons to list/search
+The bot supports Persian and English. Choose **فارسی / English** at the top of
+the first user or administrator menu. Each administrator can save a chat
+language. Use buttons to list/search
 users, add/edit accounts, change engines and all account limits, enable/disable,
 reset usage, disconnect connections, delete accounts, rotate tunnel keys or the
 subscription URL, and receive subscription/direct connection strings in copyable

@@ -93,6 +93,7 @@ type TelegramView struct {
 type Telegram struct {
 	telegramDialogue
 	adminDialogues           map[int64]telegramDialogue // Guarded by opMu.
+	activeAdminLanguage      string                     // Guarded by mu.
 	mu                       sync.Mutex                 // Configuration and public connection status; never held during I/O.
 	opMu                     sync.Mutex                 // Serialize reconfiguration with dispatch and persistent state.
 	cfg                      TelegramConfig
@@ -942,7 +943,7 @@ func (t *Telegram) handleUpdate(ctx context.Context, u telegramUpdate) error {
 	}
 	ctx = context.WithValue(ctx, telegramActorKey{}, telegramAdministrator{ID: chat.ID, Role: role})
 	if role != telegramOwner {
-		defer t.enterTelegramDialogue(chat.ID)()
+		defer t.enterTelegramDialogue(c, from)()
 	}
 	if t.conversation != nil && !t.now().Before(t.conversation.Expires) {
 		t.conversation = nil

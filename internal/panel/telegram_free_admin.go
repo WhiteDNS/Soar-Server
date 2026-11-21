@@ -195,6 +195,7 @@ func (t *Telegram) freeDashboard(ctx context.Context) error {
 		return e
 	}
 	k := telegramKeyboard{Rows: [][]telegramButton{
+		{{Text: telegramLanguageLabel, Data: "adminlang:free"}},
 		{t.button(fmt.Sprintf("Requests (%d)", n), telegramPersianDigits.Replace(fmt.Sprintf("درخواست‌ها (%d)", n)), "free:queue")},
 		{t.button("Plans and engines", "پلن‌ها و موتورها", "free:plans"), t.button("Accounts", "حساب‌ها", "free:accounts")},
 		{t.button("Statistics", "آمار", "free:stats"), t.button("Broadcast", "پیام همگانی", "free:broadcast")},

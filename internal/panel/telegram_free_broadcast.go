@@ -331,7 +331,7 @@ func (t *Telegram) sendFreeRequestDigest(ctx context.Context, c TelegramConfig, 
 		}
 		text := fmt.Sprintf("🔔 %d new request(s)\n%d awaiting review. Open the queue to see the plans and reasons.", len(unread), len(pending))
 		button := telegramButton{Text: "Open requests", Data: "free:queue"}
-		if live.Language == "fa" {
+		if live.administratorLanguage(recipient) == "fa" {
 			text = telegramPersianDigits.Replace(fmt.Sprintf("🔔 %d درخواست تازه\n%d درخواست در انتظار بررسی است. برای دیدن پلن و دلیل کاربران، صف را باز کنید.", len(unread), len(pending)))
 			button.Text = "مشاهدهٔ درخواست‌ها"
 		}

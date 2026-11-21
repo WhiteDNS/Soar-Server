@@ -24,8 +24,9 @@ var (
 )
 
 type telegramAdministrator struct {
-	ID   int64  `json:"id"`
-	Role string `json:"role"`
+	ID       int64  `json:"id"`
+	Role     string `json:"role"`
+	Language string `json:"language,omitempty"`
 }
 
 type telegramDialogue struct {
@@ -53,12 +54,22 @@ func validTelegramAdministrators(c TelegramConfig) bool {
 	}
 	seen := map[int64]bool{c.ChatID: true}
 	for _, admin := range c.Administrators {
-		if admin.ID < 1 || admin.ID >= 1<<52 || seen[admin.ID] || !oneOf(admin.Role, telegramFreeAdmin, telegramFullAdmin) {
+		if admin.ID < 1 || admin.ID >= 1<<52 || seen[admin.ID] || !oneOf(admin.Role, telegramFreeAdmin, telegramFullAdmin) ||
+			!oneOf(admin.Language, "", "fa", "en") {
 			return false
 		}
 		seen[admin.ID] = true
 	}
 	return true
+}
+
+func (c TelegramConfig) administratorLanguage(id int64) string {
+	for _, admin := range c.Administrators {
+		if admin.ID == id && admin.Language != "" {
+			return admin.Language
+		}
+	}
+	return c.Language
 }
 
 type telegramActorKey struct{}
@@ -78,16 +89,78 @@ func telegramRecipient(ctx context.Context, fallback int64) int64 {
 	return fallback
 }
 
-func (t *Telegram) enterTelegramDialogue(id int64) func() {
+func (t *Telegram) enterTelegramDialogue(c TelegramConfig, from telegramUser) func() {
+	id := from.ID
 	if t.adminDialogues == nil {
 		t.adminDialogues = make(map[int64]telegramDialogue)
 	}
 	owner := t.telegramDialogue
 	t.telegramDialogue = t.adminDialogues[id]
+	language := c.administratorLanguage(id)
+	if language == "auto" {
+		language = "en"
+		if strings.HasPrefix(from.Language, "fa") {
+			language = "fa"
+		}
+	}
+	t.mu.Lock()
+	t.activeAdminLanguage = language
+	t.mu.Unlock()
 	return func() {
 		t.adminDialogues[id] = t.telegramDialogue
 		t.telegramDialogue = owner
+		t.mu.Lock()
+		t.activeAdminLanguage = ""
+		t.mu.Unlock()
 	}
+}
+
+func (t *Telegram) setAdministratorLanguage(ctx context.Context, language string) error {
+	c := t.config()
+	actor := telegramActor(ctx)
+	if actor.Role == telegramOwner {
+		c.Language = language
+		return t.savePreferences(c)
+	}
+	index := slices.IndexFunc(c.Administrators, func(a telegramAdministrator) bool { return a.ID == actor.ID })
+	if index < 0 {
+		return errTelegramAdminPermission
+	}
+	c.Administrators = slices.Clone(c.Administrators)
+	c.Administrators[index].Language = language
+	if e := WritePrivateJSON(t.file, telegramDisk{Config: c, State: t.state}); e != nil {
+		return errors.New("cannot save Telegram language")
+	}
+	t.mu.Lock()
+	t.cfg = c
+	t.activeAdminLanguage = language
+	t.mu.Unlock()
+	t.updateAdministratorCommands(ctx, c, actor.ID, actor.Role)
+	return nil
+}
+
+func (t *Telegram) administratorLanguageMenu(ctx context.Context, data string) error {
+	page, language, _ := strings.Cut(data, ":")
+	if !oneOf(page, "home", "free") || !oneOf(language, "", "fa", "en") {
+		return ErrNotFound
+	}
+	back := page
+	if page == "free" {
+		back = "free:manage"
+	}
+	if language == "" {
+		prefix := "adminlang:" + page + ":"
+		k := telegramKeyboard{Rows: [][]telegramButton{
+			{{Text: "فارسی", Data: prefix + "fa"}, {Text: "English", Data: prefix + "en"}},
+			{{Text: "بازگشت / Back", Data: back}},
+		}}
+		_, e := t.notify(ctx, t.config(), "زبان را انتخاب کنید / Choose your language", k)
+		return e
+	}
+	if e := t.setAdministratorLanguage(ctx, language); e != nil {
+		return e
+	}
+	return t.callback(ctx, back)
 }
 
 func (t *Telegram) administratorName(role string) string {

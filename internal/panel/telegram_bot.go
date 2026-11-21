@@ -57,8 +57,17 @@ type telegramConfirmation struct {
 	AdminRole, AdminBefore   string
 }
 
+func (t *Telegram) language() string {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.activeAdminLanguage != "" {
+		return t.activeAdminLanguage
+	}
+	return t.cfg.Language
+}
+
 func (t *Telegram) tr(en, fa string) string {
-	if t.config().Language == "fa" {
+	if t.language() == "fa" {
 		return fa
 	}
 	return en
@@ -68,6 +77,7 @@ func (t *Telegram) button(en, fa, data string) telegramButton {
 }
 func (t *Telegram) homeKeyboard() telegramKeyboard {
 	return telegramKeyboard{Rows: [][]telegramButton{
+		{{Text: telegramLanguageLabel, Data: "adminlang:home"}},
 		{t.button("🎁 Free configs", "🎁 داشبورد کانفیگ رایگان", "free:manage")},
 		{t.button("👥 Users", "👥 کاربران", "users:0"), t.button("➕ Add user", "➕ افزودن کاربر", "new")},
 		{t.button("📊 Server status", "📊 وضعیت سرور", "status"), t.button("🔄 Restart", "🔄 راه‌اندازی مجدد", "restart")},
@@ -90,7 +100,7 @@ func (t *Telegram) backKeyboard() telegramKeyboard {
 	return telegramKeyboard{Rows: [][]telegramButton{{t.button("↩️ Back to menu", "↩️ بازگشت به منو", "home")}}}
 }
 func (t *Telegram) errorText(e error) string {
-	if t.config().Language != "fa" {
+	if t.language() != "fa" {
 		return e.Error()
 	}
 	switch {
@@ -129,7 +139,9 @@ func (t *Telegram) message(ctx context.Context, m telegramMessage) error {
 	command := strings.SplitN(strings.Split(text, " ")[0], "@", 2)[0]
 	role := telegramActor(ctx).Role
 	if role != telegramOwner && command == "/start" {
-		t.updateAdministratorCommands(ctx, t.config(), m.From.ID, role)
+		c := t.config()
+		c.Language = t.language()
+		t.updateAdministratorCommands(ctx, c, m.From.ID, role)
 	}
 	if role == telegramFreeAdmin {
 		if m.Document != nil || strings.HasPrefix(command, "/") && !oneOf(command, "/start", "/menu", "/admin", "/cancel", "/help") {
@@ -201,6 +213,9 @@ func (t *Telegram) message(ctx context.Context, m telegramMessage) error {
 }
 func (t *Telegram) callback(ctx context.Context, data string) error {
 	role := telegramActor(ctx).Role
+	if value, ok := strings.CutPrefix(data, "adminlang:"); ok {
+		return t.administratorLanguageMenu(ctx, value)
+	}
 	if role == telegramFreeAdmin && data != "home" && !strings.HasPrefix(data, "ok:") && !allowedFreeAdminAction(data) {
 		return errTelegramAdminPermission
 	}
@@ -617,7 +632,7 @@ func (t *Telegram) userPage(ctx context.Context, page int, query string, activeO
 }
 func (t *Telegram) accountStatus(c Client) string {
 	s := c.Status(t.now())
-	if t.config().Language == "fa" {
+	if t.language() == "fa" {
 		return map[string]string{"active": "فعال", "disabled": "غیرفعال", "expired": "منقضی", "exhausted": "حجم تمام‌شده"}[s]
 	}
 	return s
@@ -824,7 +839,7 @@ func (t *Telegram) preferences(ctx context.Context) error {
 		return t.tr("Off", "خاموش")
 	}
 	language := t.tr("English", "فارسی")
-	if c.Language == "auto" {
+	if t.language() == "auto" {
 		language = t.tr("Automatic", "خودکار")
 	}
 	_, e := t.notify(ctx, c, fmt.Sprintf(t.tr("⚙️ Preferences\nLanguage: %s\nAlerts: %s\nDaily report: %s at %s (%s)\nLast delivered report: %s\nAutomatic backup: %s at %s\nLast delivered backup: %s", "⚙️ ترجیحات\nزبان: %s\nهشدار: %s\nگزارش روزانه: %s ساعت %s (%s)\nآخرین گزارش ارسال‌شده: %s\nپشتیبان خودکار: %s ساعت %s\nآخرین پشتیبان ارسال‌شده: %s"), language, state(c.Alerts), state(c.DailyReport), c.ReportTime, c.Timezone, t.state.LastReport, state(c.AutoBackup), c.BackupTime, t.state.LastBackup), telegramKeyboard{Rows: [][]telegramButton{{t.button("فارسی / English", "فارسی / English", "pref:language")}, {t.button("Toggle alerts", "تغییر وضعیت هشدار", "pref:alerts"), t.button("Toggle daily report", "تغییر گزارش روزانه", "pref:report")}, {t.button("Report time", "ساعت گزارش", "schedule:report_time"), t.button("Timezone", "منطقهٔ زمانی", "schedule:timezone")}, {t.button("Backups", "پشتیبان‌ها", "backups"), t.button("↩️ Menu", "↩️ منو", "home")}}})
@@ -835,10 +850,14 @@ func (t *Telegram) preference(ctx context.Context, field string) error {
 	c := old
 	switch field {
 	case "language":
-		c.Language = "fa"
-		if old.Language == "fa" {
-			c.Language = "en"
+		language := "fa"
+		if t.language() == "fa" {
+			language = "en"
 		}
+		if e := t.setAdministratorLanguage(ctx, language); e != nil {
+			return e
+		}
+		return t.preferences(ctx)
 	case "alerts":
 		c.Alerts = !c.Alerts
 	case "report":

@@ -122,6 +122,7 @@ func (t *Telegram) handleFreeUpdate(ctx context.Context, c TelegramConfig, from 
 	button := func(en, fa, data string) telegramButton {
 		return telegramButton{Text: tr(en, fa), Data: "free:" + data}
 	}
+	languageButton := telegramButton{Text: telegramLanguageLabel, Data: "free:language"}
 	back := []telegramButton{button("Main menu", "بازگشت به منوی اصلی", "home")}
 	send := func(en, fa string, markup any) int64 {
 		// A blocked customer chat must not mark the management bot disconnected.
@@ -143,14 +144,16 @@ func (t *Telegram) handleFreeUpdate(ctx context.Context, c TelegramConfig, from 
 			_ = t.call(ctx, c, "answerCallbackQuery", map[string]string{"callback_query_id": u.Callback.ID}, nil)
 		}()
 	}
-	if member.Blocked {
+	if member.Blocked && action != "language" && action != "lang" {
 		send("The administrator has restricted this Telegram account. Ask the service administrator to review your access.",
-			"دسترسی این شناسه به‌دست مدیر محدود شده است. برای بازبینی دسترسی با مسئول سرویس تماس بگیرید.", nil)
+			"دسترسی این شناسه به‌دست مدیر محدود شده است. برای بازبینی دسترسی با مسئول سرویس تماس بگیرید.",
+			telegramKeyboard{Rows: [][]telegramButton{{languageButton}}})
 		return
 	}
-	if catalog.RestoreHold {
+	if catalog.RestoreHold && action != "language" && action != "lang" {
 		send("Public service is paused while the administrator reviews the restored backup.",
-			"سرویس عمومی تا پایان بررسی بکاپ بازیابی‌شده متوقف است.", nil)
+			"سرویس عمومی تا پایان بررسی بکاپ بازیابی‌شده متوقف است.",
+			telegramKeyboard{Rows: [][]telegramButton{{languageButton}}})
 		return
 	}
 	if action == "menu" {
@@ -165,15 +168,17 @@ func (t *Telegram) handleFreeUpdate(ctx context.Context, c TelegramConfig, from 
 			welcome = tr("To get a free configuration, choose a plan and reply to the verification message. Follow the decision in My account.", "برای دریافت کانفیگ رایگان، یک پلن انتخاب کنید و به پیام بررسی پاسخ بدهید. نتیجه را در «حساب من» ببینید.")
 		}
 		send(welcome, welcome, telegramKeyboard{Rows: [][]telegramButton{
+			{languageButton},
 			{button("Get a free configuration", "دریافت کانفیگ رایگان", "request")},
 			{button("My account", "حساب من", "status")},
-			{button("Help", "راهنما", "guide"), button("Language", "زبان", "language")},
+			{button("Help", "راهنما", "guide")},
 		}})
 		return
 	}
 	switch action {
 	case "language":
-		send("Choose a language or change your broadcast preferences.", "زبان یا تنظیم دریافت پیام همگانی را انتخاب کنید.", telegramKeyboard{Rows: [][]telegramButton{
+		title := "زبان را انتخاب کنید / Choose your language"
+		send(title, title, telegramKeyboard{Rows: [][]telegramButton{
 			{{Text: "فارسی", Data: "free:lang:fa"}, {Text: "English", Data: "free:lang:en"}},
 			{button("Enable announcements", "دریافت اعلان‌ها", "opt:on"), button("Turn off announcements", "قطع اعلان‌ها", "opt:off")},
 		}})

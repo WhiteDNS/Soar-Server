@@ -158,6 +158,59 @@ func TestTelegramMenusStyleEveryButtonAndDistinguishActions(t *testing.T) {
 	}
 }
 
+func TestTelegramMenusExposeLanguageFirstForUsersAndAdministrators(t *testing.T) {
+	bot, fake, _ := newTelegramTest(t)
+	c := bot.config()
+	c.Language, c.FreeAccess = "en", true
+	c.Administrators = []telegramAdministrator{{ID: 801, Role: telegramFreeAdmin}, {ID: 802, Role: telegramFullAdmin}}
+	bot.mu.Lock()
+	bot.cfg = c
+	bot.mu.Unlock()
+	now := bot.now()
+	bot.now = func() time.Time { return now }
+	assertTop := func(data string) {
+		t.Helper()
+		rows := fake.keyboards[len(fake.keyboards)-1].Rows
+		if len(rows) == 0 || len(rows[0]) != 1 || rows[0][0].Data != data || rows[0][0].Text != telegramLanguageLabel {
+			t.Fatalf("language is not at the top of the first menu: %+v", rows)
+		}
+	}
+	mustHandle(t, bot, tgMessage(1, "/start"))
+	assertTop("adminlang:home")
+	mustHandle(t, bot, tgMessage(2, "/admin"))
+	assertTop("adminlang:free")
+	mustHandle(t, bot, freePublic(tgMessage(3, "/start"), 801))
+	assertTop("adminlang:free")
+	mustHandle(t, bot, freePublic(tgMessage(4, "/start"), 802))
+	assertTop("adminlang:home")
+	mustHandle(t, bot, freePublic(tgMessage(5, "/start"), 803))
+	assertTop("free:language")
+	now = now.Add(4 * time.Second)
+	mustHandle(t, bot, freePublic(tgCallback(6, "free:language"), 803))
+	if text := fake.texts[len(fake.texts)-1]; !strings.Contains(text, "زبان را انتخاب کنید") || !strings.Contains(text, "Choose your language") {
+		t.Fatalf("public language chooser is not bilingual: %q", text)
+	}
+	now = now.Add(4 * time.Second)
+	mustHandle(t, bot, freePublic(tgCallback(7, "free:lang:fa"), 803))
+	if m, _ := bot.h.store.freeMember(803); m.Language != "fa" || !strings.Contains(fake.texts[len(fake.texts)-1], "ذخیره شد") {
+		t.Fatal("public language was not changed")
+	}
+	mustHandle(t, bot, freePublic(tgCallback(8, "adminlang:free"), 801))
+	if text := fake.texts[len(fake.texts)-1]; !strings.Contains(text, "زبان را انتخاب کنید") || !strings.Contains(text, "Choose your language") {
+		t.Fatalf("administrator language chooser is not bilingual: %q", text)
+	}
+	mustHandle(t, bot, freePublic(tgCallback(9, "adminlang:free:fa"), 801))
+	if c := bot.config(); c.Language != "en" || c.administratorLanguage(801) != "fa" ||
+		c.administratorLanguage(802) != "en" || !strings.Contains(fake.texts[len(fake.texts)-1], "داشبورد کانفیگ رایگان") {
+		t.Fatal("delegate language was not changed independently")
+	}
+	mustHandle(t, bot, tgCallback(10, "adminlang:home:fa"))
+	assertTop("adminlang:home")
+	if bot.config().Language != "fa" || !strings.Contains(fake.texts[len(fake.texts)-1], "مدیریت سرور") {
+		t.Fatal("owner could not choose Persian on the first screen")
+	}
+}
+
 func TestTelegramMenusCustomEditorIssuesOnlyAfterConfirmation(t *testing.T) {
 	bot, fake, _ := newTelegramTest(t)
 	c := bot.config()

@@ -35,7 +35,7 @@ func (t *Telegram) freeReviewMenu(ctx context.Context, action, value string) err
 				{t.button("Manage this user", "مدیریت این کاربر", "free:member:"+chat), t.button("Back to requests", "بازگشت به درخواست‌ها", "free:queue")},
 			}}
 			at := req.At.UTC().Format("2006-01-02 15:04") + t.tr(" UTC", " به وقت جهانی")
-			if t.config().Language == "fa" {
+			if t.language() == "fa" {
 				at = telegramPersianDigits.Replace(at)
 			}
 			_, e = t.notify(ctx, t.config(), t.tr("Telegram ID", "شناسهٔ تلگرام")+" "+chat+" · "+at+"\n"+freePlanSummary(req.plan(), t.tr)+"\n\n"+
@@ -84,7 +84,7 @@ func (t *Telegram) freeReviewMenu(ctx context.Context, action, value string) err
 	text := t.tr("No pending requests.", "درخواستی در انتظار بررسی نیست.")
 	if len(list) != 0 {
 		text = fmt.Sprintf(t.tr("Pending requests: %d · Selected: %d", "درخواست‌های در انتظار: %d · انتخاب‌شده: %d"), len(list), len(selected))
-		if t.config().Language == "fa" {
+		if t.language() == "fa" {
 			text = telegramPersianDigits.Replace(text)
 		}
 		text += "\n" + t.tr("Open a request to review it, or use the checkboxes for group review.", "برای بررسی، درخواست را باز کنید. برای بررسی گروهی، گزینه‌های کنار درخواست‌ها را علامت بزنید.")
