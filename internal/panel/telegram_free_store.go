@@ -24,23 +24,29 @@ const (
 )
 
 var (
-	freeRequests      = []byte("telegram_free_requests")
-	errFreeQueueFull  = errors.New("free configuration queue is full")
-	errFreeDailyLimit = errors.New("daily free configuration limit reached")
+	freeRequests         = []byte("telegram_free_requests")
+	errFreeQueueFull     = errors.New("free configuration queue is full")
+	errFreeDailyLimit    = errors.New("daily free configuration limit reached")
+	errFreeRetryRequired = errors.New("the previous account was removed; open Manage a Telegram user to review the waiting period or allow a new request")
+	errFreeExistingPlan  = errors.New("existing account settings are outside free plan limits; review the account's name, quota, speed and connection limits in the panel")
 )
 
 type telegramFreeRequest struct {
-	Key       string
-	Reason    string `json:",omitempty"`
-	AccountID string `json:",omitempty"`
-	Reviewed  bool
-	At        time.Time
-	Plan      *freePlan `json:",omitempty"`
-	DecidedAt time.Time `json:",omitzero"`
-	RemovedAt time.Time `json:",omitzero"`
-	Cancelled bool      `json:",omitempty"`
-	Linked    bool      `json:",omitempty"`
-	Notified  bool      `json:",omitempty"`
+	Key             string
+	Reason          string `json:",omitempty"`
+	AccountID       string `json:",omitempty"`
+	Reviewed        bool
+	At              time.Time
+	Plan            *freePlan   `json:",omitempty"`
+	DecidedAt       time.Time   `json:",omitzero"`
+	RemovedAt       time.Time   `json:",omitzero"`
+	Cancelled       bool        `json:",omitempty"`
+	Linked          bool        `json:",omitempty"`
+	Notified        bool        `json:",omitempty"`
+	NotifiedAdmins  []int64     `json:",omitempty"`
+	RetryAllowed    bool        `json:",omitempty"`
+	PriorAdmissions []time.Time `json:",omitempty"`
+	PriorIssuances  []time.Time `json:",omitempty"`
 }
 
 func (r telegramFreeRequest) decisionTime() time.Time {
@@ -79,8 +85,68 @@ func (s *Store) freeRequest(chatID int64, now time.Time) (req telegramFreeReques
 }
 
 func expiredFreeRequest(tx *bolt.Tx, req telegramFreeRequest, now time.Time) bool {
-	return !now.Before(maxTime(req.decisionTime(), req.RemovedAt).Add(freeCooldown)) &&
-		(req.AccountID == "" || tx.Bucket(clients).Get([]byte(req.AccountID)) == nil)
+	return !now.Before(req.retryAt()) && !freeAccountExists(tx, req)
+}
+
+func (r telegramFreeRequest) retryAt() time.Time {
+	return maxTime(r.decisionTime(), r.RemovedAt).Add(freeCooldown)
+}
+
+func freeAccountExists(tx *bolt.Tx, r telegramFreeRequest) bool {
+	return r.AccountID != "" && tx.Bucket(clients).Get([]byte(r.AccountID)) != nil
+}
+
+func recentFreeEvents(times []time.Time, now time.Time) int {
+	count := 0
+	for _, at := range times {
+		if now.Before(at.Add(freeCooldown)) {
+			count++
+		}
+	}
+	return count
+}
+
+func (r *telegramFreeRequest) inheritFreeEvents(previous telegramFreeRequest, now time.Time) {
+	for _, at := range append(previous.PriorAdmissions, previous.At) {
+		if !at.IsZero() && now.Before(at.Add(freeCooldown)) {
+			r.PriorAdmissions = append(r.PriorAdmissions, at)
+		}
+	}
+	issued := previous.PriorIssuances
+	if previous.AccountID != "" {
+		issued = append(issued, previous.decisionTime())
+	}
+	for _, at := range issued {
+		if now.Before(at.Add(freeCooldown)) {
+			r.PriorIssuances = append(r.PriorIssuances, at)
+		}
+	}
+}
+
+func (s *Store) setFreeRetry(chatID int64, expected string, allow bool, now time.Time) error {
+	return s.db.Update(func(tx *bolt.Tx) error {
+		b := tx.Bucket(meta).Bucket(freeRequests)
+		key := []byte(strconv.FormatInt(chatID, 10))
+		if b == nil || b.Get(key) == nil {
+			return ErrConflict
+		}
+		var req telegramFreeRequest
+		if e := json.Unmarshal(b.Get(key), &req); e != nil {
+			return e
+		}
+		if req.Key != expected || !req.Reviewed || freeAccountExists(tx, req) || expiredFreeRequest(tx, req, now) || req.RetryAllowed == allow {
+			return ErrConflict
+		}
+		req.RetryAllowed = allow
+		if e := putJSON(b, key, req); e != nil {
+			return e
+		}
+		action := "telegram.free_retry_revoked"
+		if allow {
+			action = "telegram.free_retry_allowed"
+		}
+		return addEvent(tx, action, string(key))
+	})
 }
 
 func (s *Store) submitFreePlan(chatID int64, nonce, reason string, plan freePlan, now time.Time) error {
@@ -113,6 +179,7 @@ func (s *Store) submitFreePlan(chatID int64, nonce, reason string, plan freePlan
 		}
 		var outdated [][]byte
 		pending, recent := 0, 0
+		next := telegramFreeRequest{Key: chat + ":" + nonce, Reason: reason, At: now, Plan: &p}
 		e = b.ForEach(func(k, raw []byte) error {
 			var req telegramFreeRequest
 			if e := json.Unmarshal(raw, &req); e != nil {
@@ -121,11 +188,15 @@ func (s *Store) submitFreePlan(chatID int64, nonce, reason string, plan freePlan
 			if now.Before(req.At.Add(freeCooldown)) {
 				recent++
 			}
+			recent += recentFreeEvents(req.PriorAdmissions, now)
 			switch {
 			case expiredFreeRequest(tx, req, now):
 				outdated = append(outdated, append([]byte(nil), k...))
 			case string(k) == chat:
-				return ErrConflict
+				if !req.RetryAllowed || !req.Reviewed || freeAccountExists(tx, req) {
+					return ErrConflict
+				}
+				next.inheritFreeEvents(req, now)
 			case !req.Reviewed:
 				pending++
 			}
@@ -142,7 +213,7 @@ func (s *Store) submitFreePlan(chatID int64, nonce, reason string, plan freePlan
 				return e
 			}
 		}
-		return putJSON(b, []byte(chat), telegramFreeRequest{Key: chat + ":" + nonce, Reason: reason, At: now, Plan: &p})
+		return putJSON(b, []byte(chat), next)
 	})
 }
 
@@ -296,6 +367,7 @@ func checkFreeCapacity(tx *bolt.Tx, b *bolt.Bucket, now time.Time, streams int, 
 		if e := json.Unmarshal(raw, &previous); e != nil {
 			return e
 		}
+		issued += recentFreeEvents(previous.PriorIssuances, now)
 		if previous.AccountID != "" {
 			if now.Before(previous.decisionTime().Add(freeCooldown)) {
 				issued++
@@ -356,7 +428,8 @@ func (s *Store) saveFreeCustom(chatID int64, plan freePlan, expected string, rev
 			if e = json.Unmarshal(raw, &req); e != nil {
 				return e
 			}
-			if req.AccountID != expected && !expiredFreeRequest(tx, req, now) {
+			if req.AccountID != expected && !expiredFreeRequest(tx, req, now) &&
+				(!req.RetryAllowed || !req.Reviewed || freeAccountExists(tx, req)) {
 				return ErrConflict
 			}
 		}
@@ -367,8 +440,10 @@ func (s *Store) saveFreeCustom(chatID int64, plan freePlan, expected string, rev
 			if e = checkFreeCapacity(tx, b, now, in.StreamLimit, ""); e != nil {
 				return e
 			}
-			if req.At.IsZero() || expiredFreeRequest(tx, req, now) {
+			if req.At.IsZero() || req.RetryAllowed || expiredFreeRequest(tx, req, now) {
+				previous := req
 				req = telegramFreeRequest{Key: chat + ":" + token()[:12], At: now}
+				req.inheritFreeEvents(previous, now)
 			}
 			req.AccountID, req.DecidedAt = account.ID, now
 		} else if e = checkFreeCapacity(tx, b, now, in.StreamLimit, expected); e != nil {
@@ -431,13 +506,21 @@ func (s *Store) linkFreeAccount(chatID int64, accountID string, revision uint64,
 		if e != nil {
 			return e
 		}
+		next := telegramFreeRequest{Key: chat + ":" + token()[:12], AccountID: accountID,
+			At: now, DecidedAt: now, Reviewed: true, Linked: true}
 		if e = b.ForEach(func(k, raw []byte) error {
 			var req telegramFreeRequest
 			if e := json.Unmarshal(raw, &req); e != nil {
 				return e
 			}
-			if req.AccountID == accountID || (string(k) == chat && req.AccountID != "" && !expiredFreeRequest(tx, req, now)) {
+			if req.AccountID == accountID {
 				return ErrConflict
+			}
+			if string(k) == chat {
+				if req.AccountID != "" && !expiredFreeRequest(tx, req, now) && (!req.RetryAllowed || freeAccountExists(tx, req)) {
+					return ErrConflict
+				}
+				next.inheritFreeEvents(req, now)
 			}
 			return nil
 		}); e != nil {
@@ -446,8 +529,7 @@ func (s *Store) linkFreeAccount(chatID int64, accountID string, revision uint64,
 		if e = checkFreeCapacity(tx, b, now, account.StreamLimit, ""); e != nil {
 			return e
 		}
-		return putJSON(b, []byte(chat), telegramFreeRequest{Key: chat + ":" + token()[:12], AccountID: accountID,
-			At: now, DecidedAt: now, Reviewed: true, Linked: true})
+		return putJSON(b, []byte(chat), next)
 	})
 }
 
@@ -507,6 +589,11 @@ func inspectFreeRequests(tx *bolt.Tx) error {
 			return errors.New(invalid)
 		}
 		if req.Plan != nil && req.Plan.validate() != nil {
+			return errors.New(invalid)
+		}
+		if req.RetryAllowed && (!req.Reviewed || freeAccountExists(tx, req)) ||
+			len(req.PriorAdmissions) > freeAdmissionLimit+freeDailyLimit || len(req.PriorIssuances) > freeDailyLimit ||
+			len(req.NotifiedAdmins) > telegramMaxAdmins {
 			return errors.New(invalid)
 		}
 		if req.AccountID != "" {

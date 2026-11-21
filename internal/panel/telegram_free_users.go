@@ -48,6 +48,7 @@ func (t *Telegram) freeStatsMenu(ctx context.Context) error {
 			if e := json.Unmarshal(raw, &r); e != nil {
 				return e
 			}
+			issued += recentFreeEvents(r.PriorIssuances, now)
 			switch {
 			case r.AccountID != "":
 				if now.Before(r.decisionTime().Add(freeCooldown)) {

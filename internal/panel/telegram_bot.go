@@ -54,10 +54,20 @@ type telegramConfirmation struct {
 	FreeChat                 int64
 	FreeRevision             uint64
 	FreeText                 string
+	AdminRole, AdminBefore   string
+}
+
+func (t *Telegram) language() string {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.activeAdminLanguage != "" {
+		return t.activeAdminLanguage
+	}
+	return t.cfg.Language
 }
 
 func (t *Telegram) tr(en, fa string) string {
-	if t.config().Language == "fa" {
+	if t.language() == "fa" {
 		return fa
 	}
 	return en
@@ -67,6 +77,7 @@ func (t *Telegram) button(en, fa, data string) telegramButton {
 }
 func (t *Telegram) homeKeyboard() telegramKeyboard {
 	return telegramKeyboard{Rows: [][]telegramButton{
+		{{Text: telegramLanguageLabel, Data: "adminlang:home"}},
 		{t.button("🎁 Free configs", "🎁 داشبورد کانفیگ رایگان", "free:manage")},
 		{t.button("👥 Users", "👥 کاربران", "users:0"), t.button("➕ Add user", "➕ افزودن کاربر", "new")},
 		{t.button("📊 Server status", "📊 وضعیت سرور", "status"), t.button("🔄 Restart", "🔄 راه‌اندازی مجدد", "restart")},
@@ -79,6 +90,9 @@ func (t *Telegram) home(ctx context.Context) error {
 	t.conversation = nil
 	t.confirmation = nil
 	t.freeSelected, t.freeDeleteSelected = nil, nil
+	if telegramActor(ctx).Role == telegramFreeAdmin {
+		return t.freeDashboard(ctx)
+	}
 	_, e := t.notify(ctx, t.config(), t.tr("🛠️ WhiteDNS server management\nChoose an action.", "🛠️ مدیریت سرور WhiteDNS\nیک عملیات انتخاب کنید."), t.homeKeyboard())
 	return e
 }
@@ -86,10 +100,22 @@ func (t *Telegram) backKeyboard() telegramKeyboard {
 	return telegramKeyboard{Rows: [][]telegramButton{{t.button("↩️ Back to menu", "↩️ بازگشت به منو", "home")}}}
 }
 func (t *Telegram) errorText(e error) string {
-	if t.config().Language != "fa" {
+	if t.language() != "fa" {
 		return e.Error()
 	}
 	switch {
+	case errors.Is(e, errTelegramAdminPermission):
+		return "نقش فعلی شما اجازهٔ این کار را نمی‌دهد. داشبورد نقش خود را باز کنید. تغییر نقش در اختیار مالک ربات است."
+	case errors.Is(e, errTelegramUserID):
+		return "شناسه معتبر نیست یا متعلق به مدیر ربات است. شناسهٔ عددی فرد موردنظر را بررسی کنید."
+	case errors.Is(e, errTelegramAdminLimit):
+		return "فهرست مدیران پر است. برای افزودن مدیر تازه، مالک باید یکی از مدیران را حذف کند."
+	case errors.Is(e, errFreeRetryRequired):
+		return "حساب قبلی حذف شده است. در «مدیریت کاربر تلگرام»، مهلت را ببینید یا اجازهٔ درخواست مجدد بدهید."
+	case errors.Is(e, errFreeExistingPlan):
+		return "تنظیمات حساب فعلی خارج از حدود پلن رایگان است. نام، حجم، سرعت و سقف اتصال را در صفحهٔ همان حساب در پنل بررسی کنید."
+	case errors.Is(e, errTelegramReplyRequired):
+		return "به آخرین پیام فرم پاسخ دهید. برای بستن فرم و بازگشت به منو، /cancel را بفرستید."
 	case errors.Is(e, ErrConflict):
 		return "اطلاعات هم‌زمان تغییر کرده است. فرم را دوباره باز کنید."
 	case errors.Is(e, ErrNotFound):
@@ -111,6 +137,20 @@ func (t *Telegram) errorText(e error) string {
 func (t *Telegram) message(ctx context.Context, m telegramMessage) error {
 	text := strings.TrimSpace(m.Text)
 	command := strings.SplitN(strings.Split(text, " ")[0], "@", 2)[0]
+	role := telegramActor(ctx).Role
+	if role != telegramOwner && command == "/start" {
+		c := t.config()
+		c.Language = t.language()
+		t.updateAdministratorCommands(ctx, c, m.From.ID, role)
+	}
+	if role == telegramFreeAdmin {
+		if m.Document != nil || strings.HasPrefix(command, "/") && !oneOf(command, "/start", "/menu", "/admin", "/cancel", "/help") {
+			return errTelegramAdminPermission
+		}
+		if command == "/help" {
+			return t.manageFree(ctx, "manage")
+		}
+	}
 	switch command {
 	case "/start", "/menu", "/cancel":
 		return t.home(ctx)
@@ -140,9 +180,9 @@ func (t *Telegram) message(ctx context.Context, m telegramMessage) error {
 		return t.home(ctx)
 	}
 	if m.Reply == nil || m.Reply.ID != d.Prompt {
-		return errors.New(t.tr("reply to the current prompt, or use /cancel", "به پیام پرسش فعلی پاسخ دهید یا /cancel را بفرستید"))
+		return errTelegramReplyRequired
 	}
-	ctx = withTelegramMenu(ctx, t.config().ChatID, d.MenuID)
+	ctx = withTelegramMenu(ctx, telegramRecipient(ctx, t.config().ChatID), d.MenuID)
 	if d.Field == "management" {
 		return t.managementReply(ctx, d, text)
 	}
@@ -172,6 +212,16 @@ func (t *Telegram) message(ctx context.Context, m telegramMessage) error {
 	return t.review(ctx)
 }
 func (t *Telegram) callback(ctx context.Context, data string) error {
+	role := telegramActor(ctx).Role
+	if value, ok := strings.CutPrefix(data, "adminlang:"); ok {
+		return t.administratorLanguageMenu(ctx, value)
+	}
+	if role == telegramFreeAdmin && data != "home" && !strings.HasPrefix(data, "ok:") && !allowedFreeAdminAction(data) {
+		return errTelegramAdminPermission
+	}
+	if value, ok := strings.CutPrefix(data, "admins:"); ok {
+		return t.administratorMenu(ctx, value)
+	}
 	if strings.HasPrefix(data, "free:") {
 		return t.manageFree(ctx, strings.TrimPrefix(data, "free:"))
 	}
@@ -582,7 +632,7 @@ func (t *Telegram) userPage(ctx context.Context, page int, query string, activeO
 }
 func (t *Telegram) accountStatus(c Client) string {
 	s := c.Status(t.now())
-	if t.config().Language == "fa" {
+	if t.language() == "fa" {
 		return map[string]string{"active": "فعال", "disabled": "غیرفعال", "expired": "منقضی", "exhausted": "حجم تمام‌شده"}[s]
 	}
 	return s
@@ -625,9 +675,16 @@ func (t *Telegram) confirm(ctx context.Context, c telegramConfirmation, text str
 }
 func (t *Telegram) execute(ctx context.Context, key string) error {
 	c := t.confirmation
-	t.confirmation = nil
 	if c == nil || c.Key != key || !t.now().Before(c.Expires) {
 		return errors.New("confirmation expired or already used")
+	}
+	t.confirmation = nil
+	if telegramActor(ctx).Role == telegramFreeAdmin && !strings.HasPrefix(c.Action, "free-") {
+		return errTelegramAdminPermission
+	}
+	if c.Action == "administrator" {
+		t.conversation = nil
+		return t.updateTelegramAdministrator(ctx, c)
 	}
 	if strings.HasPrefix(c.Action, "free-") {
 		t.conversation = nil
@@ -640,8 +697,9 @@ func (t *Telegram) execute(ctx context.Context, key string) error {
 	t.state.PendingAction = c.Action
 	t.state.PendingSince = t.now().UnixMilli()
 	t.state.PendingJob = ""
+	t.state.PendingChat = telegramRecipient(ctx, t.config().ChatID)
 	if e := t.save(); e != nil {
-		t.state.PendingAction, t.state.PendingSince = "", 0
+		t.state.PendingAction, t.state.PendingSince, t.state.PendingChat = "", 0, 0
 		return errors.New("cannot persist action; nothing was executed")
 	}
 	if c.Action == "restart" || c.Action == "update" || c.Action == "restore" {
@@ -707,6 +765,7 @@ func (t *Telegram) execute(ctx context.Context, key string) error {
 func (t *Telegram) finishAction(err error) error {
 	t.state.PendingAction = ""
 	t.state.PendingJob = ""
+	t.state.PendingChat = 0
 	t.state.PendingSince = 0
 	if e := t.save(); e != nil {
 		return errors.New("action result could not be persisted; check current state before retrying")
@@ -744,10 +803,12 @@ func (t *Telegram) links(ctx context.Context, id string) error {
 	for _, s := range all {
 		text := html.EscapeString(s.name) + "\n<pre>" + html.EscapeString(s.link) + "</pre>"
 		e = t.call(ctx, c, "sendMessage", map[string]any{
-			"chat_id": c.ChatID, "text": text, "parse_mode": "HTML",
+			"chat_id": telegramRecipient(ctx, c.ChatID), "text": text, "parse_mode": "HTML",
 			"link_preview_options": map[string]bool{"is_disabled": true},
 		}, nil)
-		t.connection(e)
+		if telegramActor(ctx).Role == telegramOwner {
+			t.connection(e)
+		}
 		if e != nil {
 			return e
 		}
@@ -778,7 +839,7 @@ func (t *Telegram) preferences(ctx context.Context) error {
 		return t.tr("Off", "خاموش")
 	}
 	language := t.tr("English", "فارسی")
-	if c.Language == "auto" {
+	if t.language() == "auto" {
 		language = t.tr("Automatic", "خودکار")
 	}
 	_, e := t.notify(ctx, c, fmt.Sprintf(t.tr("⚙️ Preferences\nLanguage: %s\nAlerts: %s\nDaily report: %s at %s (%s)\nLast delivered report: %s\nAutomatic backup: %s at %s\nLast delivered backup: %s", "⚙️ ترجیحات\nزبان: %s\nهشدار: %s\nگزارش روزانه: %s ساعت %s (%s)\nآخرین گزارش ارسال‌شده: %s\nپشتیبان خودکار: %s ساعت %s\nآخرین پشتیبان ارسال‌شده: %s"), language, state(c.Alerts), state(c.DailyReport), c.ReportTime, c.Timezone, t.state.LastReport, state(c.AutoBackup), c.BackupTime, t.state.LastBackup), telegramKeyboard{Rows: [][]telegramButton{{t.button("فارسی / English", "فارسی / English", "pref:language")}, {t.button("Toggle alerts", "تغییر وضعیت هشدار", "pref:alerts"), t.button("Toggle daily report", "تغییر گزارش روزانه", "pref:report")}, {t.button("Report time", "ساعت گزارش", "schedule:report_time"), t.button("Timezone", "منطقهٔ زمانی", "schedule:timezone")}, {t.button("Backups", "پشتیبان‌ها", "backups"), t.button("↩️ Menu", "↩️ منو", "home")}}})
@@ -789,10 +850,14 @@ func (t *Telegram) preference(ctx context.Context, field string) error {
 	c := old
 	switch field {
 	case "language":
-		c.Language = "fa"
-		if old.Language == "fa" {
-			c.Language = "en"
+		language := "fa"
+		if t.language() == "fa" {
+			language = "en"
 		}
+		if e := t.setAdministratorLanguage(ctx, language); e != nil {
+			return e
+		}
+		return t.preferences(ctx)
 	case "alerts":
 		c.Alerts = !c.Alerts
 	case "report":

@@ -32,14 +32,16 @@ func (t *Telegram) freeReviewMenu(ctx context.Context, action, value string) err
 			key := req.Key + "@" + t.freeEpoch
 			k := telegramKeyboard{Rows: [][]telegramButton{
 				{t.button("Approve", "تأیید", "free:approve:"+key), t.button("Reject", "رد", "free:reject:"+key)},
-				{t.button("Block requester", "مسدودکردن کاربر", "free:block:"+chat), t.button("Back to requests", "بازگشت به درخواست‌ها", "free:queue")},
+				{t.button("Manage this user", "مدیریت این کاربر", "free:member:"+chat), t.button("Back to requests", "بازگشت به درخواست‌ها", "free:queue")},
 			}}
 			at := req.At.UTC().Format("2006-01-02 15:04") + t.tr(" UTC", " به وقت جهانی")
-			if t.config().Language == "fa" {
+			if t.language() == "fa" {
 				at = telegramPersianDigits.Replace(at)
 			}
 			_, e = t.notify(ctx, t.config(), t.tr("Telegram ID", "شناسهٔ تلگرام")+" "+chat+" · "+at+"\n"+freePlanSummary(req.plan(), t.tr)+"\n\n"+
-				t.tr("User explanation", "توضیح کاربر")+"\n"+req.Reason, k)
+				t.tr("User explanation", "توضیح کاربر")+"\n"+req.Reason+"\n\n"+
+				t.tr("Approval creates an account using these terms. Rejection starts a 24-hour wait; you can allow another request from Manage this user.",
+					"تأیید، حسابی با همین شرایط می‌سازد. رد، مهلت ۲۴ساعته را آغاز می‌کند. از «مدیریت این کاربر» می‌توانید درخواست دوباره را مجاز کنید."), k)
 			return e
 		}
 		return ErrNotFound
@@ -82,7 +84,7 @@ func (t *Telegram) freeReviewMenu(ctx context.Context, action, value string) err
 	text := t.tr("No pending requests.", "درخواستی در انتظار بررسی نیست.")
 	if len(list) != 0 {
 		text = fmt.Sprintf(t.tr("Pending requests: %d · Selected: %d", "درخواست‌های در انتظار: %d · انتخاب‌شده: %d"), len(list), len(selected))
-		if t.config().Language == "fa" {
+		if t.language() == "fa" {
 			text = telegramPersianDigits.Replace(text)
 		}
 		text += "\n" + t.tr("Open a request to review it, or use the checkboxes for group review.", "برای بررسی، درخواست را باز کنید. برای بررسی گروهی، گزینه‌های کنار درخواست‌ها را علامت بزنید.")
@@ -108,9 +110,9 @@ func (t *Telegram) executeFreeReview(ctx context.Context, approve bool, keys []s
 			e = t.h.store.db.Update(func(tx *bolt.Tx) error { return reviewFree(tx, key, "", now) })
 		}
 		id, _, _ := strings.Cut(key, ":")
-		label := t.tr("Approved", "تأیید شد")
+		label := t.tr("Approved. The user can get their config from My account when it is ready.", "تأیید شد. پس از آماده‌شدن، کانفیگ از «حساب من» قابل دریافت است.")
 		if !approve {
-			label = t.tr("Rejected", "رد شد")
+			label = t.tr("Declined. The user can apply again once the waiting period ends.", "رد شد. کاربر پس از پایان مهلت می‌تواند دوباره درخواست بدهد.")
 		}
 		switch {
 		case e == nil:
@@ -119,9 +121,9 @@ func (t *Telegram) executeFreeReview(ctx context.Context, approve bool, keys []s
 		case errors.Is(e, ErrNotFound):
 			label = t.tr("Expired or already reviewed", "منقضی یا بررسی‌شده")
 		case errors.Is(e, errFreeDailyLimit), errors.Is(e, errFreeCapacity):
-			label = t.tr("Still pending · issuance capacity reached", "در انتظار · سقف صدور پر است")
+			label = t.tr("Still pending. Issuance capacity is full; check Statistics before retrying.", "در انتظار ماند. سقف صدور پر است؛ پیش از تلاش دوباره «آمار» را بررسی کنید.")
 		case errors.Is(e, errFreePlanUnavailable), errors.Is(e, errFreePaused):
-			label = t.tr("Still pending · plan or access unavailable", "در انتظار · پلن یا دسترسی متوقف است")
+			label = t.tr("Still pending. Check the plan, public access and the user's block status.", "در انتظار ماند. پلن، دسترسی عمومی و وضعیت مسدودی کاربر را بررسی کنید.")
 		default:
 			label = t.tr("Failed to save · check the queue", "ذخیره نشد · صف را بررسی کنید")
 		}

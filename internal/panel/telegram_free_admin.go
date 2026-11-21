@@ -36,13 +36,17 @@ func (t *Telegram) manageFree(ctx context.Context, data string) error {
 		return t.freeStatsMenu(ctx)
 	case "accounts":
 		k := telegramKeyboard{Rows: [][]telegramButton{
-			{t.button("All accounts", "همهٔ حساب‌ها", "users:0"), t.button("Active accounts", "حساب‌های فعال", "activeusers:0")},
-			{t.button("Search", "جست‌وجوی حساب", "search")},
 			{t.button("Custom config", "ساخت یا تمدید سفارشی", "free:custom")},
-			{t.button("Telegram access", "مسدودی کاربران تلگرام", "free:access")},
+			{t.button("Manage a Telegram user", "مدیریت کاربر تلگرام", "free:access")},
 			{t.button("Back to dashboard", "بازگشت به داشبورد", "free:manage")},
 		}}
-		_, e := t.notify(ctx, t.config(), t.tr("Accounts\nFind an existing account or issue a custom configuration.", "حساب‌ها\nیک حساب موجود را پیدا کنید یا کانفیگ سفارشی بسازید."), k)
+		if telegramActor(ctx).Role != telegramFreeAdmin {
+			k.Rows = append([][]telegramButton{
+				{t.button("All accounts", "همهٔ حساب‌ها", "users:0"), t.button("Active accounts", "حساب‌های فعال", "activeusers:0")},
+				{t.button("Search", "جست‌وجوی حساب", "search")},
+			}, k.Rows...)
+		}
+		_, e := t.notify(ctx, t.config(), t.tr("Accounts\nManage a Telegram user to check their request, allow a retry, or change access.", "حساب‌ها\nاز «مدیریت کاربر تلگرام» می‌توانید وضعیت درخواست، اجازهٔ درخواست دوباره و دسترسی کاربر را بررسی کنید."), k)
 		return e
 	case "options":
 		return t.freeOptions(ctx)
@@ -73,15 +77,44 @@ func (t *Telegram) manageFree(ctx context.Context, data string) error {
 		}
 		return t.freePrompt(ctx, "text:"+value, c.Revision,
 			t.tr("Reply with the new text (max 2,400 bytes). Send - for the default.\n\n", "متن جدید را در پاسخ بفرستید (حداکثر ۲۴۰۰ بایت). برای متن پیش‌فرض - بفرستید.\n\n")+c.Text[value])
-	case "block", "unblock":
+	case "member", "block", "unblock", "retry", "retryoff", "customfor":
 		id, e := strconv.ParseInt(value, 10, 64)
-		if e != nil || id < 1 || id == t.config().ChatID {
-			return errors.New("invalid Telegram ID")
+		if e != nil || !validFreeChatID(value) || t.config().administratorRole(id) != "" {
+			return errTelegramUserID
 		}
-		return t.confirm(ctx, telegramConfirmation{Action: "free-" + action, FreeChat: id},
-			t.tr("Change public bot access for Telegram ID ", "تغییر دسترسی عمومی ربات برای شناسهٔ تلگرام ")+value)
+		switch action {
+		case "member":
+			return t.freeMemberMenu(ctx, id)
+		case "block":
+			return t.confirm(ctx, telegramConfirmation{Action: "free-block", FreeChat: id},
+				t.tr("Block this user's Telegram requests and link retrieval? Any existing tunnel follows its account settings.", "درخواست و دریافت لینک برای این شناسه در ربات مسدود شود؟ اتصال فعلی تابع تنظیمات حساب پنل می‌ماند.")+"\n"+value)
+		case "unblock":
+			return t.confirm(ctx, telegramConfirmation{Action: "free-unblock", FreeChat: id},
+				t.tr("Allow this user to use the bot again? The waiting period for another request still applies.", "این شناسه دوباره بتواند از ربات استفاده کند؟ مهلت درخواست مجدد همچنان برقرار است.")+"\n"+value)
+		case "retry", "retryoff":
+			req, err := t.h.store.freeRequest(id, t.now())
+			if err != nil {
+				return err
+			}
+			if req.Key == "" || !req.Reviewed || req.RetryAllowed == (action == "retry") || t.h.store.hasFreeOwner(id) {
+				return ErrConflict
+			}
+			text := t.tr("Allow one new request before the waiting period ends? The new request still needs verification and approval.", "پیش از پایان مهلت، اجازهٔ یک درخواست دوباره داده شود؟ درخواست تازه همچنان به کد بررسی و تأیید مدیر نیاز دارد.")
+			if action == "retryoff" {
+				text = t.tr("Withdraw this exception? The user must wait until the original deadline.", "اجازهٔ درخواست مجدد لغو شود؟ کاربر باید تا پایان مهلت اولیه صبر کند.")
+			}
+			return t.confirm(ctx, telegramConfirmation{Action: "free-" + action, ID: req.Key, FreeChat: id}, text+"\n"+value)
+		case "customfor":
+			req, err := t.h.store.freeRequest(id, t.now())
+			if err != nil {
+				return err
+			}
+			p := req.plan()
+			p.ID = "custom"
+			return t.startFreeEditorFor(ctx, "custom", 0, p, id)
+		}
 	case "access":
-		return t.freePrompt(ctx, "access", 0, t.tr("Reply with the numeric Telegram ID to manage its public access.", "شناسهٔ عددی تلگرام را برای مدیریت دسترسی عمومی بفرستید."))
+		return t.freePrompt(ctx, "access", 0, t.tr("Reply with the numeric Telegram ID. Use the ID shown in the request details to see the account, access and retry status.", "شناسهٔ عددی تلگرام را در پاسخ بفرستید. شناسه در جزئیات درخواست دیده می‌شود و با آن می‌توانید حساب، مسدودی و مهلت درخواست دوباره را بررسی کنید."))
 	case "custom":
 		p := defaultFreePlan()
 		p.ID, p.Input.Name = "custom", t.tr("Custom account", "حساب سفارشی")
@@ -162,12 +195,18 @@ func (t *Telegram) freeDashboard(ctx context.Context) error {
 		return e
 	}
 	k := telegramKeyboard{Rows: [][]telegramButton{
+		{{Text: telegramLanguageLabel, Data: "adminlang:free"}},
 		{t.button(fmt.Sprintf("Requests (%d)", n), telegramPersianDigits.Replace(fmt.Sprintf("درخواست‌ها (%d)", n)), "free:queue")},
 		{t.button("Plans and engines", "پلن‌ها و موتورها", "free:plans"), t.button("Accounts", "حساب‌ها", "free:accounts")},
 		{t.button("Statistics", "آمار", "free:stats"), t.button("Broadcast", "پیام همگانی", "free:broadcast")},
 		{t.button("Public access and messages", "دسترسی و متن‌های عمومی", "free:options")},
-		{t.button("Server management", "مدیریت سرور", "home")},
 	}}
+	if telegramActor(ctx).Role == telegramOwner {
+		k.Rows = append(k.Rows, []telegramButton{t.button("Bot administrators", "مدیران ربات", "admins:list")})
+	}
+	if telegramActor(ctx).Role != telegramFreeAdmin {
+		k.Rows = append(k.Rows, []telegramButton{t.button("Server management", "مدیریت سرور", "home")})
+	}
 	_, e = t.notify(ctx, c, t.tr("Free configurations", "داشبورد کانفیگ رایگان")+"\n"+t.freeAccessSummary(c, catalog), k)
 	return e
 }
@@ -226,10 +265,26 @@ func (t *Telegram) executeFree(ctx context.Context, c *telegramConfirmation) err
 			return e
 		}
 	case "free-block", "free-unblock":
+		if t.config().administratorRole(c.FreeChat) != "" {
+			return errTelegramUserID
+		}
 		if e := t.h.store.updateFreeMember(c.FreeChat, t.now(), func(m *freeMember) { m.Blocked = c.Action == "free-block" }); e != nil {
 			return e
 		}
 		t.clearFreeChallenge(c.FreeChat)
+		return t.freeMemberMenu(ctx, c.FreeChat)
+	case "free-retry", "free-retryoff":
+		if t.config().administratorRole(c.FreeChat) != "" {
+			return errTelegramUserID
+		}
+		if e := t.h.store.setFreeRetry(c.FreeChat, c.ID, c.Action == "free-retry", t.now()); e != nil {
+			return e
+		}
+		t.clearFreeChallenge(c.FreeChat)
+		if c.Action == "free-retry" {
+			t.queueFreeNotice(t.config(), c.FreeChat)
+		}
+		return t.freeMemberMenu(ctx, c.FreeChat)
 	case "free-delete-plan":
 		if e := t.h.store.changeFreeCatalog(c.FreeRevision, func(catalog *freeCatalog) error {
 			catalog.Plans = slices.DeleteFunc(catalog.Plans, func(p freePlan) bool { return p.ID == c.ID })
@@ -242,6 +297,9 @@ func (t *Telegram) executeFree(ctx context.Context, c *telegramConfirmation) err
 		if !t.config().FreeAccess || c.FreePlan == nil {
 			return errFreePaused
 		}
+		if t.config().administratorRole(c.FreeChat) != "" {
+			return errTelegramUserID
+		}
 		if e := t.h.store.saveFreeCustom(c.FreeChat, *c.FreePlan, c.ID, c.Revision, t.now()); e != nil {
 			return e
 		}
@@ -252,6 +310,9 @@ func (t *Telegram) executeFree(ctx context.Context, c *telegramConfirmation) err
 	case "free-link-user":
 		if !t.config().FreeAccess {
 			return errFreePaused
+		}
+		if t.config().administratorRole(c.FreeChat) != "" {
+			return errTelegramUserID
 		}
 		if e := t.h.store.linkFreeAccount(c.FreeChat, c.ID, c.FreeRevision, t.now()); e != nil {
 			return e

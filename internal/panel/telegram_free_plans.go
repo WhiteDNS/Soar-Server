@@ -159,6 +159,8 @@ func (t *Telegram) freeAdminReply(ctx context.Context, d *telegramConversation, 
 	kind, value, _ := strings.Cut(d.Setting, ":")
 	s := t.h.store
 	switch kind {
+	case "administrator":
+		return t.administratorMenu(ctx, "roles:"+telegramDigits(text))
 	case "text":
 		if text == "-" {
 			text = ""
@@ -175,9 +177,10 @@ func (t *Telegram) freeAdminReply(ctx context.Context, d *telegramConversation, 
 		t.conversation = nil
 		return t.manageFree(ctx, "texts")
 	case "access", "linkuser":
-		id, e := strconv.ParseInt(telegramDigits(text), 10, 64)
-		if e != nil || id < 1 || id == t.config().ChatID {
-			return errors.New("invalid Telegram ID")
+		text = telegramDigits(text)
+		id, e := strconv.ParseInt(text, 10, 64)
+		if e != nil || !validFreeChatID(text) || t.config().administratorRole(id) != "" {
+			return errTelegramUserID
 		}
 		if kind == "linkuser" {
 			a, e := s.Get(value)
@@ -190,17 +193,8 @@ func (t *Telegram) freeAdminReply(ctx context.Context, d *telegramConversation, 
 			return t.confirm(ctx, telegramConfirmation{Action: "free-link-user", ID: value, FreeChat: id, FreeRevision: a.Revision},
 				fmt.Sprintf(t.tr("Link %s to Telegram ID %d? This gives the recipient access to the connection links.", "حساب %s به شناسهٔ تلگرام %d متصل شود؟ گیرنده به لینک‌های اتصال دسترسی پیدا می‌کند."), a.Name+" · "+a.Zone, id))
 		}
-		m, e := s.freeMember(id)
-		if e != nil {
-			return e
-		}
-		button := t.button("Block", "مسدودکردن", fmt.Sprintf("free:block:%d", id))
-		if m.Blocked {
-			button = t.button("Unblock", "رفع مسدودی", fmt.Sprintf("free:unblock:%d", id))
-		}
 		t.conversation = nil
-		_, e = t.notify(ctx, t.config(), fmt.Sprintf("%s %d", t.tr("Telegram ID", "شناسهٔ تلگرام"), id), telegramKeyboard{Rows: [][]telegramButton{{button, t.button("Back", "بازگشت", "free:accounts")}}})
-		return e
+		return t.freeMemberMenu(ctx, id)
 	case "broadcast":
 		return t.previewFreeBroadcast(ctx, value, text)
 	}

@@ -5,12 +5,22 @@ import (
 	"errors"
 	"slices"
 	"strings"
+	"time"
 )
 
 type telegramCommand struct{ name, en, fa string }
 
-func (t *Telegram) syncTelegramCommands(ctx context.Context, c TelegramConfig) error {
-	admin := []telegramCommand{
+const telegramLanguageLabel = "🌐 فارسی / English"
+
+func administratorCommands(role string) []telegramCommand {
+	if role == telegramFreeAdmin {
+		return []telegramCommand{
+			{"admin", "Free configuration dashboard", "داشبورد کانفیگ رایگان"},
+			{"start", "Open the dashboard", "بازکردن داشبورد"},
+			{"cancel", "Cancel the current form", "لغو فرم جاری"},
+		}
+	}
+	return []telegramCommand{
 		{"admin", "Free configuration dashboard", "داشبورد کانفیگ رایگان"},
 		{"start", "Management menu", "منوی مدیریت سرور"},
 		{"menu", "Management menu", "منوی مدیریت سرور"},
@@ -23,6 +33,37 @@ func (t *Telegram) syncTelegramCommands(ctx context.Context, c TelegramConfig) e
 		{"help", "Help", "راهنما"},
 		{"cancel", "Cancel", "لغو"},
 	}
+}
+
+func (t *Telegram) setTelegramCommands(ctx context.Context, c TelegramConfig, scope map[string]any, language string, commands []telegramCommand) error {
+	list := make([]map[string]string, 0, len(commands))
+	for _, command := range commands {
+		description := command.en
+		if language == "fa" || language == "" && scope["type"] == "chat" && c.Language == "fa" {
+			description = command.fa
+		}
+		list = append(list, map[string]string{"command": command.name, "description": description})
+	}
+	body := map[string]any{"commands": list, "scope": scope}
+	if language != "" {
+		body["language_code"] = language
+	}
+	return t.call(ctx, c, "setMyCommands", body, nil)
+}
+
+func (t *Telegram) updateAdministratorCommands(ctx context.Context, c TelegramConfig, id int64, role string) {
+	job, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+	scope := map[string]any{"type": "chat", "chat_id": id}
+	if role == "" {
+		_ = t.call(job, c, "deleteMyCommands", map[string]any{"scope": scope}, nil)
+		return
+	}
+	c.Language = c.administratorLanguage(id)
+	_ = t.setTelegramCommands(job, c, scope, "", administratorCommands(role))
+}
+
+func (t *Telegram) syncTelegramCommands(ctx context.Context, c TelegramConfig) error {
 	public := []telegramCommand{}
 	if c.FreeAccess {
 		public = []telegramCommand{
@@ -33,31 +74,22 @@ func (t *Telegram) syncTelegramCommands(ctx context.Context, c TelegramConfig) e
 			{"language", "Change language", "تغییر زبان"},
 		}
 	}
-	set := func(scope map[string]any, language string, commands []telegramCommand) error {
-		list := make([]map[string]string, 0, len(commands))
-		for _, command := range commands {
-			description := command.en
-			if language == "fa" || language == "" && scope["type"] == "chat" && c.Language == "fa" {
-				description = command.fa
-			}
-			list = append(list, map[string]string{"command": command.name, "description": description})
-		}
-		body := map[string]any{"commands": list, "scope": scope}
-		if language != "" {
-			body["language_code"] = language
-		}
-		return t.call(ctx, c, "setMyCommands", body, nil)
-	}
-	if e := set(map[string]any{"type": "chat", "chat_id": c.ChatID}, "", admin); e != nil {
+	if e := t.setTelegramCommands(ctx, c, map[string]any{"type": "chat", "chat_id": c.ChatID}, "", administratorCommands(telegramOwner)); e != nil {
 		return e
 	}
 	private := map[string]any{"type": "all_private_chats"}
 	for _, language := range []string{"", "fa"} {
-		if e := set(private, language, public); e != nil {
+		if e := t.setTelegramCommands(ctx, c, private, language, public); e != nil {
 			return e
 		}
 	}
-	return t.call(ctx, c, "setChatMenuButton", map[string]any{"menu_button": map[string]string{"type": "commands"}}, nil)
+	if e := t.call(ctx, c, "setChatMenuButton", map[string]any{"menu_button": map[string]string{"type": "commands"}}, nil); e != nil {
+		return e
+	}
+	for _, admin := range c.Administrators {
+		t.updateAdministratorCommands(ctx, c, admin.ID, admin.Role)
+	}
+	return nil
 }
 
 type telegramMenuKey struct{}
@@ -79,18 +111,24 @@ var telegramPersianDigits = strings.NewReplacer("0", "۰", "1", "۱", "2", "۲",
 
 func telegramButtonStyle(data string) string {
 	action, arg, _ := strings.Cut(data, ":")
-	if action == "free" {
-		action, _, _ = strings.Cut(arg, ":")
+	switch action {
+	case "engines":
+		return "danger"
+	case "free", "action", "admins":
+		action, arg, _ = strings.Cut(arg, ":")
+		if action == "opt" {
+			action += ":" + arg
+		}
 	}
 	switch action {
-	case "ok", "approve", "bulkapprove", "resume", "enable", "planpublish", "restoreresume", "link", "save":
+	case "ok", "new", "add", "plannew", "approve", "bulkapprove", "resume", "enable", "planpublish", "restoreresume", "save", "retry", "unblock", "release", "access-apply", "opt:on":
 		return "success"
-	case "reject", "bulkreject", "disable", "pause", "planhide", "plandelete", "deleteusers", "broadcaststop", "cancel", "block":
+	case "reject", "bulkreject", "disable", "pause", "planhide", "plandelete", "delete", "deleteusers", "remove", "broadcaststop", "cancel", "block", "retryoff",
+		"restart", "restore", "disconnect", "reset", "rotate", "subscription-rotate", "opt:off":
 		return "danger"
-	case "request", "queue", "status", "guide", "config", "qr", "plan", "plans", "users", "accounts", "stats", "settings", "options", "manage", "broadcast", "custom", "requestdetail":
+	default:
 		return "primary"
 	}
-	return ""
 }
 
 func styledTelegramKeyboard(k telegramKeyboard) telegramKeyboard {

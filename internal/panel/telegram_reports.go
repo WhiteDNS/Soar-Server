@@ -2,7 +2,9 @@ package panel
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"net/http"
 	"sort"
 	"strings"
 	"time"
@@ -92,6 +94,18 @@ func (t *Telegram) tick(ctx context.Context) {
 	}
 	if t.state.PendingAction != "" {
 		action := t.state.PendingAction
+		notifyResult := func(text string) error {
+			if id := t.state.PendingChat; c.administratorRole(id) == telegramFullAdmin {
+				delegate := context.WithValue(ctx, telegramActorKey{}, telegramAdministrator{ID: id, Role: telegramFullAdmin})
+				_, e := t.notify(delegate, c, text, nil)
+				var api *telegramAPIError
+				if !errors.As(e, &api) || api.Code != http.StatusForbidden && api.Code != http.StatusBadRequest {
+					return e
+				}
+			}
+			_, e := t.notify(ctx, c, text, nil)
+			return e
+		}
 		if action == "update" || action == "restart" || action == "restore" {
 			if t.h.ops != nil {
 				job, e := t.h.ops.Status(ctx)
@@ -99,7 +113,7 @@ func (t *Telegram) tick(ctx context.Context) {
 					match := job.ID == t.state.PendingJob || (t.state.PendingJob == "" && job.Kind == action && job.Started >= t.state.PendingSince)
 					if match && job.State != "running" {
 						text := t.tr("🛠️ Maintenance result: ", "🛠️ نتیجهٔ نگهداری: ") + job.State + "\n" + job.Message
-						if _, e = t.notify(ctx, c, text, nil); e != nil {
+						if e = notifyResult(text); e != nil {
 							return
 						}
 						if e = t.finishAction(nil); e != nil {
@@ -107,7 +121,7 @@ func (t *Telegram) tick(ctx context.Context) {
 							return
 						}
 					} else if !match && t.now().UnixMilli()-t.state.PendingSince > 5*60*1000 {
-						if _, e = t.notify(ctx, c, t.tr("⚠️ Maintenance result is uncertain. Check server status before retrying.", "⚠️ نتیجهٔ نگهداری مشخص نیست. پیش از تلاش دوباره وضعیت سرور را بررسی کنید."), nil); e != nil {
+						if e = notifyResult(t.tr("⚠️ Maintenance result is uncertain. Check server status before retrying.", "⚠️ نتیجهٔ نگهداری مشخص نیست. پیش از تلاش دوباره وضعیت سرور را بررسی کنید.")); e != nil {
 							return
 						}
 						if e = t.finishAction(nil); e != nil {
@@ -118,7 +132,7 @@ func (t *Telegram) tick(ctx context.Context) {
 				}
 			}
 		} else {
-			if _, e := t.notify(ctx, c, t.tr("⚠️ An account action was interrupted. Check current account state before retrying; it will not be replayed.", "⚠️ یک عملیات حساب قطع شده است. پیش از تلاش دوباره وضعیت فعلی حساب را بررسی کنید؛ عملیات تکرار نمی‌شود."), nil); e != nil {
+			if e := notifyResult(t.tr("⚠️ An account action was interrupted. Check current account state before retrying; it will not be replayed.", "⚠️ یک عملیات حساب قطع شده است. پیش از تلاش دوباره وضعیت فعلی حساب را بررسی کنید؛ عملیات تکرار نمی‌شود.")); e != nil {
 				return
 			}
 			if e := t.finishAction(nil); e != nil {
