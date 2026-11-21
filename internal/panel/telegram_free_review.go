@@ -44,8 +44,8 @@ func (t *Telegram) showFreeReview(ctx context.Context, action, value, result str
 			}
 			_, e = t.notify(ctx, t.config(), t.tr("Telegram ID", "شناسهٔ تلگرام")+" "+chat+" · "+at+"\n"+freePlanSummary(req.plan(), t.tr)+"\n\n"+
 				t.tr("User explanation", "توضیح کاربر")+"\n"+req.Reason+"\n\n"+
-				t.tr("Approval creates an account using these terms. Rejection starts a 24-hour wait; you can allow another request from Manage this user.",
-					"تأیید، حسابی با همین شرایط می‌سازد. رد، مهلت ۲۴ساعته را آغاز می‌کند. از «مدیریت این کاربر» می‌توانید درخواست دوباره را مجاز کنید."), k)
+				t.tr("Approval creates an account using these terms. Rejection starts the configured waiting period. Manage this user can allow an earlier request.",
+					"تأیید، حسابی با همین شرایط می‌سازد. با رد درخواست، مهلت تنظیم‌شده شروع می‌شود. از «مدیریت این کاربر» می‌توانید درخواست زودتر را مجاز کنید."), k)
 			return e
 		}
 		result = t.tr("This request expired or was already reviewed. The list is up to date.", "این درخواست منقضی شده یا قبلاً بررسی شده است. فهرست به‌روز است.")
@@ -106,7 +106,8 @@ func (t *Telegram) executeFreeReview(ctx context.Context, approve bool, keys []s
 		return errFreePaused
 	}
 	now := t.now()
-	lines := []string{}
+	var outcomes []string
+	recipients := make(map[string][]string)
 	issued := false
 	for _, key := range keys {
 		var e error
@@ -127,14 +128,27 @@ func (t *Telegram) executeFreeReview(ctx context.Context, approve bool, keys []s
 			t.queueFreeNotice(c, recipient)
 		case errors.Is(e, ErrNotFound):
 			label = t.tr("Expired or already reviewed", "منقضی یا بررسی‌شده")
-		case errors.Is(e, errFreeDailyLimit), errors.Is(e, errFreeCapacity):
-			label = t.tr("Still pending. Issuance capacity is full; check Statistics before retrying.", "در انتظار ماند. سقف صدور پر است؛ پیش از تلاش دوباره «آمار» را بررسی کنید.")
+		case errors.Is(e, errFreeDailyLimit):
+			label = t.tr("Still pending. The 24-hour issuance limit is full.", "در انتظار ماند. سقف صدور در ۲۴ ساعت پر است.")
+		case errors.Is(e, errFreePanelSlots):
+			label = t.tr("Still pending. The remaining panel slots are reserved.", "در انتظار ماند. جاهای باقیماندهٔ پنل محفوظ‌اند.")
+		case errors.Is(e, errFreeAccountSlots):
+			label = t.tr("Still pending. The free account limit is full.", "در انتظار ماند. سقف تعداد حساب‌های رایگان پر است.")
+		case errors.Is(e, errFreeStreamSlots):
+			label = t.tr("Still pending. The plan exceeds the available stream budget.", "در انتظار ماند. بودجهٔ اتصال باقی‌مانده برای این پلن کافی نیست.")
 		case errors.Is(e, errFreePlanUnavailable), errors.Is(e, errFreePaused):
 			label = t.tr("Still pending. Check the plan, public access and the user's block status.", "در انتظار ماند. پلن، دسترسی عمومی و وضعیت مسدودی کاربر را بررسی کنید.")
 		default:
 			label = t.tr("Failed to save · check the queue", "ذخیره نشد · صف را بررسی کنید")
 		}
-		lines = append(lines, id+" · "+label)
+		if _, exists := recipients[label]; !exists {
+			outcomes = append(outcomes, label)
+		}
+		recipients[label] = append(recipients[label], id)
+	}
+	lines := make([]string, 0, len(outcomes))
+	for _, outcome := range outcomes {
+		lines = append(lines, strings.Join(recipients[outcome], ", ")+" · "+outcome)
 	}
 	t.freeSelected = nil
 	err := t.showFreeReview(ctx, "queue", "", strings.Join(lines, "\n"))

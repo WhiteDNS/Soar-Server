@@ -28,7 +28,6 @@ const (
 	freeMenuCapacity = 600
 	freeMenuWorkers  = 12
 	freeMenuLifetime = 90 * time.Second
-	freeMenuCooldown = 750 * time.Millisecond
 )
 
 type telegramFreeTraffic struct {
@@ -50,21 +49,21 @@ func freeReadAction(action string) bool {
 	return slices.Contains([]string{"menu", "status", "config", "qr", "link", "guide", "terms", "language", "lang", "opt"}, action)
 }
 
-func (t *Telegram) allowFreeJob(chat int64, now time.Time, action string, owned, menu bool) bool {
+func (t *Telegram) allowFreeJob(chat int64, now time.Time, action string, owned, menu bool, limits freeLimits) bool {
 	t.freeMu.Lock()
 	defer t.freeMu.Unlock()
-	index, maximum := 0, freeTrafficLimit-4
+	index, maximum := 0, limits.ApplicationsMinute
 	if action == "reply" {
-		maximum = freeTrafficLimit
+		maximum += 4
 	}
 	if owned {
-		index, maximum = 1, 30
+		index, maximum = 1, limits.OwnerMinute
 	}
 	rate := &t.freeRate[index]
 	rate.all = slices.DeleteFunc(rate.all, func(at time.Time) bool { return !now.Before(at.Add(time.Minute)) })
-	recent, interval := &rate.recent, 3*time.Second
+	recent, interval := &rate.recent, time.Duration(limits.ActionSeconds)*time.Second
 	if menu {
-		recent, interval = &rate.menuRecent, 750*time.Millisecond
+		recent, interval = &rate.menuRecent, time.Duration(limits.MenuDelayMS)*time.Millisecond
 	}
 	if len(rate.all) >= maximum || now.Before((*recent)[chat].Add(interval)) {
 		return false
@@ -82,7 +81,7 @@ func (t *Telegram) allowFreeJob(chat int64, now time.Time, action string, owned,
 	return true
 }
 
-func (t *Telegram) allowFreeChallenge(id int64, now time.Time) bool {
+func (t *Telegram) allowFreeChallenge(id int64, now time.Time, maximum int) bool {
 	t.freeMu.Lock()
 	defer t.freeMu.Unlock()
 	for key, entries := range t.freeAttempts {
@@ -98,7 +97,7 @@ func (t *Telegram) allowFreeChallenge(id int64, now time.Time) bool {
 			delete(t.freeChallenges, key)
 		}
 	}
-	if len(t.freeAttempts[id]) >= 3 {
+	if len(t.freeAttempts[id]) >= maximum {
 		return false
 	}
 	if t.freeAttempts == nil {
@@ -129,6 +128,7 @@ type telegramFreeJob struct {
 
 type telegramFreeMenuSlot struct {
 	action, value string
+	delay         time.Duration
 	cooldown      time.Time
 }
 
@@ -136,7 +136,7 @@ func (t *Telegram) runFreeWorkers(ctx context.Context) func() {
 	ctx, cancel := context.WithCancel(ctx)
 	var wg sync.WaitGroup
 	t.opMu.Lock()
-	t.freeNotices = make(chan telegramFreeNotice, freeQueueLimit)
+	t.freeNotices = make(chan telegramFreeNotice, maxFreePending)
 	t.freeReplies = make(chan telegramFreeJob, 64)
 	t.freeReplyPending = nil
 	t.freeBusy = make(chan telegramFreeJob, 8)
@@ -147,9 +147,9 @@ func (t *Telegram) runFreeWorkers(ctx context.Context) func() {
 	wg.Go(func() { t.runFreeDelivery(ctx) })
 	wg.Go(func() { t.runFreeBusy(ctx) })
 	for i := range t.freeQueues {
-		capacity, workers := 24, 1
+		capacity, workers := maxFreeActionQueue, 1
 		if i == 2 {
-			capacity, workers = freeMenuCapacity, freeMenuWorkers
+			capacity, workers = maxFreeMenuQueue, freeMenuWorkers
 		}
 		queue := make(chan telegramFreeJob, capacity)
 		t.freeQueues[i] = queue
@@ -197,7 +197,7 @@ func (t *Telegram) runFreeWorkers(ctx context.Context) func() {
 						delete(t.freeReplyPending, job.from.ID)
 					} else if i == 2 {
 						slot := t.freeMenus[job.from.ID]
-						slot.cooldown = time.Now().Add(freeMenuCooldown)
+						slot.cooldown = time.Now().Add(slot.delay)
 						t.freeMenus[job.from.ID] = slot
 					} else {
 						delete(t.freeReserved[i], job.from.ID)
@@ -250,7 +250,7 @@ func freeMenuAction(action string, u telegramUpdate) bool {
 		action == "request" && u.Callback != nil
 }
 
-func (t *Telegram) queueFreeMenu(job telegramFreeJob, action, value string) {
+func (t *Telegram) queueFreeMenu(job telegramFreeJob, action, value string, limits freeLimits) {
 	t.freeMu.Lock()
 	defer t.freeMu.Unlock()
 	now := time.Now()
@@ -270,9 +270,13 @@ func (t *Telegram) queueFreeMenu(job telegramFreeJob, action, value string) {
 		}
 	}
 	job.expires = now.Add(freeMenuLifetime)
+	if len(t.freeQueues[2]) >= limits.MenuQueue {
+		t.rejectFreeJob(job)
+		return
+	}
 	select {
 	case t.freeQueues[2] <- job:
-		t.freeMenus[job.from.ID] = telegramFreeMenuSlot{action: action, value: value}
+		t.freeMenus[job.from.ID] = telegramFreeMenuSlot{action: action, value: value, delay: time.Duration(limits.MenuDelayMS) * time.Millisecond}
 		t.freeTraffic.admitted.Add(1)
 	default:
 		t.rejectFreeJob(job)
@@ -325,16 +329,29 @@ func (t *Telegram) dispatchFree(ctx context.Context, c TelegramConfig, from tele
 			t.rejectFreeJob(job)
 		}
 		return
-	} else if freeReadAction(action) && t.h.store.hasFreeOwner(from.ID) {
+	}
+	catalog, err := t.h.store.freeCatalog()
+	if err != nil {
+		t.freeTraffic.failed.Add(1)
+		return
+	}
+	limits := catalog.limits()
+	capacity := limits.ApplicationQueue
+	if freeReadAction(action) && t.h.store.hasFreeOwner(from.ID) {
 		index = 1
+		capacity = limits.OwnerQueue
 	} else if freeMenuAction(action, u) {
-		t.queueFreeMenu(job, action, value)
+		t.queueFreeMenu(job, action, value, limits)
 		return
 	}
 	t.freeMu.Lock()
 	defer t.freeMu.Unlock()
 	if _, exists := t.freeReserved[index][from.ID]; exists {
 		t.freeTraffic.merged.Add(1)
+		return
+	}
+	if len(t.freeQueues[index]) >= capacity {
+		t.rejectFreeJob(job)
 		return
 	}
 	select {

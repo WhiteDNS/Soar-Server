@@ -262,7 +262,11 @@ func (t *Telegram) runFreeDelivery(ctx context.Context) {
 						case req.AccountID != "":
 							text, fa = "Your configuration was approved or updated. Open My account to get the link or QR code when ready.", "کانفیگ شما تأیید یا به‌روز شد. پس از آماده‌شدن، لینک یا کد QR را در «حساب من» بگیرید."
 						case !req.Cancelled:
-							enDate, faDate := freeRetryDate(req.retryAt())
+							catalog, err := t.h.store.freeCatalog()
+							if err != nil {
+								break
+							}
+							enDate, faDate := freeRetryDate(req.retryAt(catalog.limits()))
 							text, fa = "The administrator declined your request. You can apply again from "+enDate+".", "مدیر درخواست را رد کرد. از "+faDate+" می‌توانید دوباره درخواست بدهید."
 						}
 					}

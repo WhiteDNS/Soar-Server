@@ -82,11 +82,18 @@ func (t *Telegram) handleFreeUpdate(ctx context.Context, c TelegramConfig, from 
 	if action == "reply" && (challenge.Prompt == 0 || u.Message.Reply.ID != challenge.Prompt || !now.Before(challenge.Expires)) {
 		return
 	}
+	store := t.h.store
+	catalog, err := store.freeCatalog()
+	if err != nil {
+		t.freeTraffic.failed.Add(1)
+		return
+	}
+	limits := catalog.limits()
 	owned := freeReadAction(action) && t.h.store.hasFreeOwner(from.ID)
 	menu := action == "request" && u.Callback != nil || oneOf(action, "menu", "status", "guide", "terms", "language")
 	lane, _ := ctx.Value(freeLaneKey{}).(freeLane)
 	queuedReply := lane == freeAdmissionLane && action == "reply"
-	if lane != freeMenuLane && !queuedReply && !t.allowFreeJob(from.ID, now, action, owned, menu) {
+	if lane != freeMenuLane && !queuedReply && !t.allowFreeJob(from.ID, now, action, owned, menu, limits) {
 		revision, _ := ctx.Value(freePublicConfigKey{}).(uint64)
 		t.rejectFreeJob(telegramFreeJob{config: c, revision: revision, from: from})
 		return
@@ -104,13 +111,7 @@ func (t *Telegram) handleFreeUpdate(ctx context.Context, c TelegramConfig, from 
 	if u.Callback != nil {
 		ctx = withTelegramMenu(ctx, c.ChatID, u.Callback.Message.ID)
 	}
-	store := t.h.store
 	member, err := store.freeMember(from.ID)
-	if err != nil {
-		t.freeTraffic.failed.Add(1)
-		return
-	}
-	catalog, err := store.freeCatalog()
 	if err != nil {
 		t.freeTraffic.failed.Add(1)
 		return
@@ -235,7 +236,8 @@ func (t *Telegram) handleFreeUpdate(ctx context.Context, c TelegramConfig, from 
 	case "cancel":
 		t.clearFreeChallenge(from.ID)
 		if cancelled, e := store.cancelFree(from.ID, now); e == nil && cancelled {
-			send("You cancelled your pending request. You can apply again in 24 hours.", "درخواست شما لغو شد. ۲۴ ساعت دیگر می‌توانید دوباره درخواست بدهید.", nil)
+			send(fmt.Sprintf("You cancelled your pending request. You can apply again in %d hours.", limits.RetryHours),
+				telegramPersianDigits.Replace(fmt.Sprintf("درخواست شما لغو شد. %d ساعت دیگر می‌توانید دوباره درخواست بدهید.", limits.RetryHours)), nil)
 		} else if e == nil {
 			send("There is no pending request to cancel. Open My account to see your current status.", "درخواست بازی برای لغو ندارید. وضعیت را در «حساب من» ببینید.", nil)
 		}
@@ -246,7 +248,7 @@ func (t *Telegram) handleFreeUpdate(ctx context.Context, c TelegramConfig, from 
 		send("Service unavailable. Try again later.", "سرویس موقتاً در دسترس نیست. بعداً امتحان کنید.", nil)
 		return
 	}
-	retryEN, retryFA := freeRetryDate(req.retryAt())
+	retryEN, retryFA := freeRetryDate(req.retryAt(limits))
 	var account Client
 	if req.AccountID != "" {
 		account, err = store.Get(req.AccountID)
@@ -382,25 +384,25 @@ func (t *Telegram) handleFreeUpdate(ctx context.Context, c TelegramConfig, from 
 			return
 		}
 		pending, _, e := store.freeQueue(now)
-		if e != nil || pending >= freeQueueLimit {
+		if e != nil || pending >= limits.Pending {
 			send("The review queue is full. Try again later.", "صف بررسی پر است. بعداً امتحان کنید.", nil)
 			return
 		}
-		if !t.allowFreeChallenge(from.ID, now) {
+		if !t.allowFreeChallenge(from.ID, now, limits.CodesHour) {
 			send("You have reached the challenge limit. Try again later.", "سقف دریافت کد را پر کرده‌اید. بعداً امتحان کنید.", nil)
 			return
 		}
 		code := token()[:8]
 		details := freePlanSummary(plan, tr) + "\n\n"
-		prompt := send(details+"Reply to this message with the following code, a space and a short reason (15–240 characters). The code expires in five minutes.\n\n"+code,
-			details+"در پاسخ به همین پیام، کد زیر را بنویسید و بعد از یک فاصله دلیل درخواستتان را در ۱۵ تا ۲۴۰ نویسه بگویید. کد تا پنج دقیقه اعتبار دارد.\n\n"+code,
+		prompt := send(details+fmt.Sprintf("Reply to this message with the following code, a space and a short reason (15–240 characters). The code expires in %d minutes.", limits.CodeMinutes)+"\n\n"+code,
+			details+telegramPersianDigits.Replace(fmt.Sprintf("در پاسخ به همین پیام، کد زیر را بنویسید و بعد از یک فاصله دلیل درخواستتان را در ۱۵ تا ۲۴۰ نویسه بگویید. کد تا %d دقیقه اعتبار دارد.", limits.CodeMinutes))+"\n\n"+code,
 			map[string]bool{"force_reply": true})
 		if prompt > 0 {
 			t.freeMu.Lock()
 			if t.freeChallenges == nil {
 				t.freeChallenges = make(map[int64]telegramFreeChallenge)
 			}
-			t.freeChallenges[from.ID] = telegramFreeChallenge{Code: code, Prompt: prompt, Expires: now.Add(freeChallengeLifetime), Plan: plan}
+			t.freeChallenges[from.ID] = telegramFreeChallenge{Code: code, Prompt: prompt, Expires: t.now().Add(time.Duration(limits.CodeMinutes) * time.Minute), Plan: plan}
 			t.freeMu.Unlock()
 		}
 	case "reply":
@@ -428,6 +430,8 @@ func (t *Telegram) handleFreeUpdate(ctx context.Context, c TelegramConfig, from 
 				telegramKeyboard{Rows: [][]telegramButton{{button("Track request", "پیگیری درخواست", "status")}}})
 		case errFreeQueueFull:
 			send("The review queue is full. Try again later.", "صف بررسی پر است. بعداً امتحان کنید.", nil)
+		case errFreeAdmissionLimit:
+			send("The 24-hour application limit is full. Try again later.", "سقف ثبت درخواست در ۲۴ ساعت پر است. بعداً امتحان کنید.", nil)
 		case errFreePlanUnavailable, errFreePaused:
 			send("The plan changed or requests are paused. Open the plan list again.", "پلن عوض شده یا پذیرش متوقف است. فهرست پلن‌ها را دوباره باز کنید.", nil)
 		case ErrConflict:
